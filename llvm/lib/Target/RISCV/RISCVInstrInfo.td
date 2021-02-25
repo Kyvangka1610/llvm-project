@@ -848,15 +848,11 @@ def IsOrAdd: PatFrag<(ops node:$A, node:$B), (or node:$A, node:$B), [{
 def assertsexti32 : PatFrag<(ops node:$src), (assertsext node:$src), [{
   return cast<VTSDNode>(N->getOperand(1))->getVT().bitsLE(MVT::i32);
 }]>;
-def sexti32 : PatFrags<(ops node:$src),
-                       [(sext_inreg node:$src, i32),
-                        (assertsexti32 node:$src)]>;
+def sexti32 : ComplexPattern<i64, 1, "selectSExti32">;
 def assertzexti32 : PatFrag<(ops node:$src), (assertzext node:$src), [{
   return cast<VTSDNode>(N->getOperand(1))->getVT().bitsLE(MVT::i32);
 }]>;
-def zexti32 : PatFrags<(ops node:$src),
-                       [(and node:$src, 0xffffffff),
-                        (assertzexti32 node:$src)]>;
+def zexti32 : ComplexPattern<i64, 1, "selectZExti32">;
 
 def SRLIWPat : PatFrag<(ops node:$A, node:$B),
                        (srl (and node:$A, imm), node:$B), [{
