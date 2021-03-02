@@ -2157,8 +2157,10 @@ void ScopeHandler::ApplyImplicitRules(
   if (allowForwardReference && ImplicitlyTypeForwardRef(symbol)) {
     return;
   }
-  Say(symbol.name(), "No explicit type declared for '%s'"_err_en_US);
-  context().SetError(symbol);
+  if (!context().HasError(symbol)) {
+    Say(symbol.name(), "No explicit type declared for '%s'"_err_en_US);
+    context().SetError(symbol);
+  }
 }
 
 // Extension: Allow forward references to scalar integer dummy arguments
@@ -3650,7 +3652,7 @@ bool DeclarationVisitor::HasCycle(
     haveInterface = false;
     if (const Symbol * interfaceSymbol{thisInterface->symbol()}) {
       if (procsInCycle.count(*interfaceSymbol) > 0) {
-        for (const auto procInCycle : procsInCycle) {
+        for (const auto &procInCycle : procsInCycle) {
           Say(procInCycle->name(),
               "The interface for procedure '%s' is recursively "
               "defined"_err_en_US,
