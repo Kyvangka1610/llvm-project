@@ -1182,11 +1182,11 @@ def int_experimental_gc_statepoint : Intrinsic<[llvm_token_ty],
                                 ImmArg<ArgIndex<4>>]>;
 
 def int_experimental_gc_result   : Intrinsic<[llvm_any_ty], [llvm_token_ty],
-                                             [IntrReadMem]>;
+                                             [IntrNoMem]>;
 def int_experimental_gc_relocate : Intrinsic<[llvm_any_ty],
                                              [llvm_token_ty, llvm_i32_ty,
                                               llvm_i32_ty],
-                                             [IntrReadMem, ImmArg<ArgIndex<1>>,
+                                             [IntrNoMem, ImmArg<ArgIndex<1>>,
                                               ImmArg<ArgIndex<2>>]>;
 
 //===------------------------ Coroutine Intrinsics ---------------===//
@@ -1222,7 +1222,8 @@ def int_coro_async_resume : Intrinsic<[llvm_ptr_ty],
     []>;
 def int_coro_async_size_replace : Intrinsic<[], [llvm_ptr_ty, llvm_ptr_ty], []>;
 def int_coro_suspend_async
-    : Intrinsic<[llvm_any_ty], [llvm_ptr_ty, llvm_ptr_ty, llvm_vararg_ty], []>;
+    : Intrinsic<[llvm_any_ty],
+                [llvm_i32_ty, llvm_ptr_ty, llvm_ptr_ty, llvm_vararg_ty], []>;
 def int_coro_prepare_async : Intrinsic<[llvm_ptr_ty], [llvm_ptr_ty],
                                        [IntrNoMem]>;
 def int_coro_begin : Intrinsic<[llvm_ptr_ty], [llvm_token_ty, llvm_ptr_ty],

@@ -1019,6 +1019,11 @@ MCSymbol *MCStreamer::emitDwarfUnitLength(const Twine &Prefix,
   return Hi;
 }
 
+void MCStreamer::emitDwarfLineStartLabel(MCSymbol *StartSym) {
+  // Set the value of the symbol, as we are at the start of the line table.
+  emitLabel(StartSym);
+}
+
 void MCStreamer::emitAssignment(MCSymbol *Symbol, const MCExpr *Value) {
   visitUsedExpr(*Value);
   Symbol->setVariableValue(Value);
@@ -1155,8 +1160,8 @@ void MCStreamer::emitXCOFFRenameDirective(const MCSymbol *Name,
 }
 
 void MCStreamer::emitELFSize(MCSymbol *Symbol, const MCExpr *Value) {}
-void MCStreamer::emitELFSymverDirective(StringRef AliasName,
-                                        const MCSymbol *Aliasee) {}
+void MCStreamer::emitELFSymverDirective(const MCSymbol *OriginalSym,
+                                        StringRef Name, bool KeepOriginalSym) {}
 void MCStreamer::emitLocalCommonSymbol(MCSymbol *Symbol, uint64_t Size,
                                        unsigned ByteAlignment) {}
 void MCStreamer::emitTBSSSymbol(MCSection *Section, MCSymbol *Symbol,

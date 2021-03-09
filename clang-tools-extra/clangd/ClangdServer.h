@@ -13,9 +13,9 @@
 #include "CodeComplete.h"
 #include "ConfigProvider.h"
 #include "DraftStore.h"
+#include "FeatureModule.h"
 #include "GlobalCompilationDatabase.h"
 #include "Hover.h"
-#include "Module.h"
 #include "Protocol.h"
 #include "SemanticHighlighting.h"
 #include "TUScheduler.h"
@@ -28,6 +28,7 @@
 #include "support/Cancellation.h"
 #include "support/Function.h"
 #include "support/MemoryTree.h"
+#include "support/Path.h"
 #include "support/ThreadsafeFS.h"
 #include "clang/Tooling/CompilationDatabase.h"
 #include "clang/Tooling/Core/Replacement.h"
@@ -74,6 +75,14 @@ public:
     /// Not called concurrently.
     virtual void
     onBackgroundIndexProgress(const BackgroundQueue::Stats &Stats) {}
+
+    /// Called when the meaning of a source code may have changed without an
+    /// edit. Usually clients assume that responses to requests are valid until
+    /// they next edit the file. If they're invalidated at other times, we
+    /// should tell the client. In particular, when an asynchronous preamble
+    /// build finishes, we can provide more accurate semantic tokens, so we
+    /// should tell the client to refresh.
+    virtual void onSemanticsMaybeChanged(PathRef File) {}
   };
   /// Creates a context provider that loads and installs config.
   /// Errors in loading config are reported as diagnostics via Callbacks.
@@ -144,7 +153,7 @@ public:
     /// Enable preview of FoldingRanges feature.
     bool FoldingRanges = false;
 
-    ModuleSet *Modules = nullptr;
+    FeatureModuleSet *FeatureModules = nullptr;
 
     explicit operator TUScheduler::Options() const;
   };
@@ -163,13 +172,13 @@ public:
                const Options &Opts, Callbacks *Callbacks = nullptr);
   ~ClangdServer();
 
-  /// Gets the installed module of a given type, if any.
-  /// This exposes access the public interface of modules that have one.
-  template <typename Mod> Mod *getModule() {
-    return Modules ? Modules->get<Mod>() : nullptr;
+  /// Gets the installed feature module of a given type, if any.
+  /// This exposes access the public interface of feature modules that have one.
+  template <typename Mod> Mod *featureModule() {
+    return FeatureModules ? FeatureModules->get<Mod>() : nullptr;
   }
-  template <typename Mod> const Mod *getModule() const {
-    return Modules ? Modules->get<Mod>() : nullptr;
+  template <typename Mod> const Mod *featureModule() const {
+    return FeatureModules ? FeatureModules->get<Mod>() : nullptr;
   }
 
   /// Add a \p File to the list of tracked C++ files or update the contents if
@@ -352,7 +361,7 @@ public:
   void profile(MemoryTree &MT) const;
 
 private:
-  ModuleSet *Modules;
+  FeatureModuleSet *FeatureModules;
   const GlobalCompilationDatabase &CDB;
   const ThreadsafeFS &TFS;
 
