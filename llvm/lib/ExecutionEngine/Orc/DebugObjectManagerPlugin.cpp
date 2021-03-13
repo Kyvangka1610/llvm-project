@@ -18,6 +18,7 @@
 #include "llvm/Object/ELFObjectFile.h"
 #include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/Errc.h"
+#include "llvm/Support/MSVCErrorWorkarounds.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Process.h"
 #include "llvm/Support/raw_ostream.h"
@@ -50,6 +51,8 @@ public:
   void setTargetMemoryRange(SectionRange Range) override;
   void dump(raw_ostream &OS, StringRef Name) override;
 
+  Error validateInBounds(StringRef Buffer, const char *Name) const;
+
 private:
   typename ELFT::Shdr *Header;
 
@@ -65,15 +68,6 @@ void ELFDebugObjectSection<ELFT>::setTargetMemoryRange(SectionRange Range) {
 }
 
 template <typename ELFT>
-void ELFDebugObjectSection<ELFT>::dump(raw_ostream &OS, StringRef Name) {
-  if (auto Addr = static_cast<JITTargetAddress>(Header->sh_addr)) {
-    OS << formatv("  {0:x16} {1}\n", Addr, Name);
-  } else {
-    OS << formatv("                     {0}\n", Name);
-  }
-}
-
-template <typename ELFT>
 bool ELFDebugObjectSection<ELFT>::isTextOrDataSection() const {
   switch (Header->sh_type) {
   case ELF::SHT_PROGBITS:
@@ -81,6 +75,37 @@ bool ELFDebugObjectSection<ELFT>::isTextOrDataSection() const {
     return Header->sh_flags & (ELF::SHF_EXECINSTR | ELF::SHF_ALLOC);
   }
   return false;
+}
+
+template <typename ELFT>
+Error ELFDebugObjectSection<ELFT>::validateInBounds(StringRef Buffer,
+                                                    const char *Name) const {
+  const uint8_t *Start = Buffer.bytes_begin();
+  const uint8_t *End = Buffer.bytes_end();
+  const uint8_t *HeaderPtr = reinterpret_cast<uint8_t *>(Header);
+  if (HeaderPtr < Start || HeaderPtr + sizeof(typename ELFT::Shdr) > End)
+    return make_error<StringError>(
+        formatv("{0} section header at {1:x16} not within bounds of the "
+                "given debug object buffer [{2:x16} - {3:x16}]",
+                Name, &Header->sh_addr, Start, End),
+        inconvertibleErrorCode());
+  if (Header->sh_offset + Header->sh_size > Buffer.size())
+    return make_error<StringError>(
+        formatv("{0} section data [{1:x16} - {2:x16}] not within bounds of "
+                "the given debug object buffer [{3:x16} - {4:x16}]",
+                Name, Start + Header->sh_offset,
+                Start + Header->sh_offset + Header->sh_size, Start, End),
+        inconvertibleErrorCode());
+  return Error::success();
+}
+
+template <typename ELFT>
+void ELFDebugObjectSection<ELFT>::dump(raw_ostream &OS, StringRef Name) {
+  if (auto Addr = static_cast<JITTargetAddress>(Header->sh_addr)) {
+    OS << formatv("  {0:x16} {1}\n", Addr, Name);
+  } else {
+    OS << formatv("                     {0}\n", Name);
+  }
 }
 
 static constexpr sys::Memory::ProtectionFlags ReadOnly =
@@ -99,6 +124,7 @@ enum class Requirement {
 class DebugObject {
 public:
   DebugObject(JITLinkContext &Ctx) : Ctx(Ctx) {}
+  virtual ~DebugObject() = default;
 
   void set(Requirement Req) { Reqs.insert(Req); }
   bool has(Requirement Req) const { return Reqs.count(Req) > 0; }
@@ -106,9 +132,14 @@ public:
   using FinalizeContinuation = std::function<void(Expected<sys::MemoryBlock>)>;
   void finalizeAsync(FinalizeContinuation OnFinalize);
 
+  Error deallocate() {
+    if (Alloc)
+      return Alloc->deallocate();
+    return Error::success();
+  }
+
   virtual void reportSectionTargetMemoryRange(StringRef Name,
                                               SectionRange TargetMem) {}
-  virtual ~DebugObject() {}
 
 protected:
   using Allocation = JITLinkMemoryManager::Allocation;
@@ -156,12 +187,15 @@ public:
   void reportSectionTargetMemoryRange(StringRef Name,
                                       SectionRange TargetMem) override;
 
+  StringRef getBuffer() const { return Buffer->getMemBufferRef().getBuffer(); }
+
 protected:
   Expected<std::unique_ptr<Allocation>>
   finalizeWorkingMemory(JITLinkContext &Ctx) override;
 
+  template <typename ELFT>
   Error recordSection(StringRef Name,
-                      std::unique_ptr<DebugObjectSection> Section);
+                      std::unique_ptr<ELFDebugObjectSection<ELFT>> Section);
   DebugObjectSection *getSection(StringRef Name);
 
 private:
@@ -169,8 +203,8 @@ private:
   static Expected<std::unique_ptr<ELFDebugObject>>
   CreateArchType(MemoryBufferRef Buffer, JITLinkContext &Ctx);
 
-  static Expected<std::unique_ptr<WritableMemoryBuffer>>
-  CopyBuffer(MemoryBufferRef Buffer);
+  static std::unique_ptr<WritableMemoryBuffer>
+  CopyBuffer(MemoryBufferRef Buffer, Error &Err);
 
   ELFDebugObject(std::unique_ptr<WritableMemoryBuffer> Buffer,
                  JITLinkContext &Ctx)
@@ -193,16 +227,18 @@ static bool isDwarfSection(StringRef SectionName) {
   return DwarfSectionNames.count(SectionName) == 1;
 }
 
-Expected<std::unique_ptr<WritableMemoryBuffer>>
-ELFDebugObject::CopyBuffer(MemoryBufferRef Buffer) {
+std::unique_ptr<WritableMemoryBuffer>
+ELFDebugObject::CopyBuffer(MemoryBufferRef Buffer, Error &Err) {
+  ErrorAsOutParameter _(&Err);
   size_t Size = Buffer.getBufferSize();
   StringRef Name = Buffer.getBufferIdentifier();
-  auto Copy = WritableMemoryBuffer::getNewUninitMemBuffer(Size, Name);
-  if (!Copy)
-    return errorCodeToError(make_error_code(errc::not_enough_memory));
+  if (auto Copy = WritableMemoryBuffer::getNewUninitMemBuffer(Size, Name)) {
+    memcpy(Copy->getBufferStart(), Buffer.getBufferStart(), Size);
+    return Copy;
+  }
 
-  memcpy(Copy->getBufferStart(), Buffer.getBufferStart(), Size);
-  return std::move(Copy);
+  Err = errorCodeToError(make_error_code(errc::not_enough_memory));
+  return nullptr;
 }
 
 template <typename ELFT>
@@ -210,7 +246,13 @@ Expected<std::unique_ptr<ELFDebugObject>>
 ELFDebugObject::CreateArchType(MemoryBufferRef Buffer, JITLinkContext &Ctx) {
   using SectionHeader = typename ELFT::Shdr;
 
-  Expected<ELFFile<ELFT>> ObjRef = ELFFile<ELFT>::create(Buffer.getBuffer());
+  Error Err = Error::success();
+  std::unique_ptr<ELFDebugObject> DebugObj(
+      new ELFDebugObject(CopyBuffer(Buffer, Err), Ctx));
+  if (Err)
+    return std::move(Err);
+
+  Expected<ELFFile<ELFT>> ObjRef = ELFFile<ELFT>::create(DebugObj->getBuffer());
   if (!ObjRef)
     return ObjRef.takeError();
 
@@ -222,13 +264,6 @@ ELFDebugObject::CreateArchType(MemoryBufferRef Buffer, JITLinkContext &Ctx) {
   Expected<ArrayRef<SectionHeader>> Sections = ObjRef->sections();
   if (!Sections)
     return Sections.takeError();
-
-  Expected<std::unique_ptr<WritableMemoryBuffer>> Copy = CopyBuffer(Buffer);
-  if (!Copy)
-    return Copy.takeError();
-
-  std::unique_ptr<ELFDebugObject> DebugObj(
-      new ELFDebugObject(std::move(*Copy), Ctx));
 
   bool HasDwarfSection = false;
   for (const SectionHeader &Header : *Sections) {
@@ -316,8 +351,11 @@ void ELFDebugObject::reportSectionTargetMemoryRange(StringRef Name,
     DebugObjSection->setTargetMemoryRange(TargetMem);
 }
 
+template <typename ELFT>
 Error ELFDebugObject::recordSection(
-    StringRef Name, std::unique_ptr<DebugObjectSection> Section) {
+    StringRef Name, std::unique_ptr<ELFDebugObjectSection<ELFT>> Section) {
+  if (Error Err = Section->validateInBounds(this->getBuffer(), Name.data()))
+    return Err;
   auto ItInserted = Sections.try_emplace(Name, std::move(Section));
   if (!ItInserted.second)
     return make_error<StringError>("Duplicate section",
@@ -361,7 +399,18 @@ DebugObjectManagerPlugin::DebugObjectManagerPlugin(
     ExecutionSession &ES, std::unique_ptr<DebugObjectRegistrar> Target)
     : ES(ES), Target(std::move(Target)) {}
 
-DebugObjectManagerPlugin::~DebugObjectManagerPlugin() {}
+DebugObjectManagerPlugin::~DebugObjectManagerPlugin() {
+  for (auto &KV : PendingObjs) {
+    std::unique_ptr<DebugObject> &DebugObj = KV.second;
+    if (Error Err = DebugObj->deallocate())
+      ES.reportError(std::move(Err));
+  }
+  for (auto &KV : RegisteredObjs) {
+    for (std::unique_ptr<DebugObject> &DebugObj : KV.second)
+      if (Error Err = DebugObj->deallocate())
+        ES.reportError(std::move(Err));
+  }
+}
 
 void DebugObjectManagerPlugin::notifyMaterializing(
     MaterializationResponsibility &MR, LinkGraph &G, JITLinkContext &Ctx,
@@ -383,7 +432,7 @@ void DebugObjectManagerPlugin::notifyMaterializing(
 }
 
 void DebugObjectManagerPlugin::modifyPassConfig(
-    MaterializationResponsibility &MR, const Triple &TT,
+    MaterializationResponsibility &MR, LinkGraph &G,
     PassConfiguration &PassConfig) {
   // Not all link artifacts have associated debug objects.
   std::lock_guard<std::mutex> Lock(PendingObjsLock);
@@ -415,26 +464,38 @@ Error DebugObjectManagerPlugin::notifyEmitted(
   DebugObject *UnownedDebugObj = It->second.release();
   PendingObjs.erase(It);
 
+  // During finalization the debug object is registered with the target.
+  // Materialization must wait for this process to finish. Otherwise we might
+  // start running code before the debugger processed the corresponding debug
+  // info.
+  std::promise<MSVCPError> FinalizePromise;
+  std::future<MSVCPError> FinalizeErr = FinalizePromise.get_future();
+
   // FIXME: We released ownership of the DebugObject, so we can easily capture
   // the raw pointer in the continuation function, which re-owns it immediately.
   if (UnownedDebugObj)
     UnownedDebugObj->finalizeAsync(
-        [this, Key, UnownedDebugObj](Expected<sys::MemoryBlock> TargetMem) {
+        [this, Key, UnownedDebugObj,
+         &FinalizePromise](Expected<sys::MemoryBlock> TargetMem) {
           std::unique_ptr<DebugObject> ReownedDebugObj(UnownedDebugObj);
           if (!TargetMem) {
-            ES.reportError(TargetMem.takeError());
+            FinalizePromise.set_value(TargetMem.takeError());
             return;
           }
           if (Error Err = Target->registerDebugObject(*TargetMem)) {
-            ES.reportError(std::move(Err));
+            FinalizePromise.set_value(std::move(Err));
             return;
           }
+
+          // Registration successful, notifyEmitted() can return now and
+          // materialization can finish.
+          FinalizePromise.set_value(Error::success());
 
           std::lock_guard<std::mutex> Lock(RegisteredObjsLock);
           RegisteredObjs[Key].push_back(std::move(ReownedDebugObj));
         });
 
-  return Error::success();
+  return FinalizeErr.get();
 }
 
 Error DebugObjectManagerPlugin::notifyFailed(

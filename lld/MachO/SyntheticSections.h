@@ -38,6 +38,7 @@ constexpr const char binding[] = "__binding";
 constexpr const char weakBinding[] = "__weak_binding";
 constexpr const char lazyBinding[] = "__lazy_binding";
 constexpr const char export_[] = "__export";
+constexpr const char functionStarts_[] = "__functionStarts";
 constexpr const char symbolTable[] = "__symbol_table";
 constexpr const char indirectSymbolTable[] = "__ind_sym_tab";
 constexpr const char stringTable[] = "__string_table";
@@ -72,6 +73,9 @@ public:
   }
 
   const StringRef segname;
+  // This fake InputSection makes it easier for us to write code that applies
+  // generically to both user inputs and synthetics.
+  InputSection *isec;
 };
 
 // All sections in __LINKEDIT should inherit from this.
@@ -164,16 +168,13 @@ public:
                                   section_names::threadPtrs) {}
 };
 
-using SectionPointerUnion =
-    llvm::PointerUnion<const InputSection *, const OutputSection *>;
-
 struct Location {
-  SectionPointerUnion section = nullptr;
-  uint64_t offset = 0;
+  const InputSection *isec;
+  uint64_t offset;
 
-  Location(SectionPointerUnion section, uint64_t offset)
-      : section(section), offset(offset) {}
-  uint64_t getVA() const;
+  Location(const InputSection *isec, uint64_t offset)
+      : isec(isec), offset(offset) {}
+  uint64_t getVA() const { return isec->getVA() + offset; }
 };
 
 // Stores rebase opcodes, which tell dyld where absolute addresses have been
@@ -187,9 +188,9 @@ public:
   bool isNeeded() const override { return !locations.empty(); }
   void writeTo(uint8_t *buf) const override;
 
-  void addEntry(SectionPointerUnion section, uint64_t offset) {
+  void addEntry(const InputSection *isec, uint64_t offset) {
     if (config->isPic)
-      locations.push_back({section, offset});
+      locations.push_back({isec, offset});
   }
 
 private:
@@ -214,9 +215,9 @@ public:
   bool isNeeded() const override { return !bindings.empty(); }
   void writeTo(uint8_t *buf) const override;
 
-  void addEntry(const DylibSymbol *dysym, SectionPointerUnion section,
+  void addEntry(const DylibSymbol *dysym, const InputSection *isec,
                 uint64_t offset, int64_t addend = 0) {
-    bindings.emplace_back(dysym, addend, Location(section, offset));
+    bindings.emplace_back(dysym, addend, Location(isec, offset));
   }
 
 private:
@@ -253,9 +254,9 @@ public:
 
   void writeTo(uint8_t *buf) const override;
 
-  void addEntry(const Symbol *symbol, SectionPointerUnion section,
-                uint64_t offset, int64_t addend = 0) {
-    bindings.emplace_back(symbol, addend, Location(section, offset));
+  void addEntry(const Symbol *symbol, const InputSection *isec, uint64_t offset,
+                int64_t addend = 0) {
+    bindings.emplace_back(symbol, addend, Location(isec, offset));
   }
 
   bool hasEntry() const { return !bindings.empty(); }
@@ -276,7 +277,7 @@ private:
 bool needsBinding(const Symbol *);
 
 // Add bindings for symbols that need weak or non-lazy bindings.
-void addNonLazyBindingEntries(const Symbol *, SectionPointerUnion,
+void addNonLazyBindingEntries(const Symbol *, const InputSection *,
                               uint64_t offset, int64_t addend = 0);
 
 // The following sections implement lazy symbol binding -- very similar to the
@@ -395,6 +396,17 @@ public:
 private:
   TrieBuilder trieBuilder;
   size_t size = 0;
+};
+
+class FunctionStartsSection : public LinkEditSection {
+public:
+  FunctionStartsSection();
+  void finalizeContents();
+  uint64_t getRawSize() const override { return contents.size(); }
+  void writeTo(uint8_t *buf) const override;
+
+private:
+  SmallVector<char, 128> contents;
 };
 
 // Stores the strings referenced by the symbol table.
@@ -517,6 +529,7 @@ struct InStruct {
   WeakBindingSection *weakBinding = nullptr;
   LazyBindingSection *lazyBinding = nullptr;
   ExportSection *exports = nullptr;
+  FunctionStartsSection *functionStarts = nullptr;
   GotSection *got = nullptr;
   TlvPointerSection *tlvPointers = nullptr;
   LazyPointerSection *lazyPointers = nullptr;

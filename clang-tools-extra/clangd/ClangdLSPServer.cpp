@@ -467,11 +467,10 @@ void ClangdLSPServer::onInitialize(const InitializeParams &Params,
   if (Server)
     return Reply(llvm::make_error<LSPError>("server already initialized",
                                             ErrorCode::InvalidRequest));
-  if (const auto &Dir = Params.initializationOptions.compilationDatabasePath)
-    Opts.CompileCommandsDir = Dir;
   if (Opts.UseDirBasedCDB) {
     DirectoryBasedGlobalCompilationDatabase::Options CDBOpts(TFS);
-    CDBOpts.CompileCommandsDir = Opts.CompileCommandsDir;
+    if (const auto &Dir = Params.initializationOptions.compilationDatabasePath)
+      CDBOpts.CompileCommandsDir = Dir;
     CDBOpts.ContextProvider = Opts.ContextProvider;
     BaseCDB =
         std::make_unique<DirectoryBasedGlobalCompilationDatabase>(CDBOpts);
@@ -666,8 +665,9 @@ void ClangdLSPServer::onDocumentDidChange(
     log("Trying to incrementally change non-added document: {0}", File);
     return;
   }
+  std::string NewCode(*Code);
   for (const auto &Change : Params.contentChanges) {
-    if (auto Err = applyChange(*Code, Change)) {
+    if (auto Err = applyChange(NewCode, Change)) {
       // If this fails, we are most likely going to be not in sync anymore with
       // the client.  It is better to remove the draft and let further
       // operations fail rather than giving wrong results.
@@ -676,7 +676,7 @@ void ClangdLSPServer::onDocumentDidChange(
       return;
     }
   }
-  Server->addDocument(File, *Code, encodeVersion(Params.textDocument.version),
+  Server->addDocument(File, NewCode, encodeVersion(Params.textDocument.version),
                       WantDiags, Params.forceRebuild);
 }
 
