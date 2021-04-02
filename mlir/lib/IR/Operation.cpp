@@ -182,7 +182,17 @@ Operation::Operation(Location location, OperationName name, unsigned numResults,
 // allocated via malloc.
 Operation::~Operation() {
   assert(block == nullptr && "operation destroyed but still in a block");
-
+#ifndef NDEBUG
+  if (!use_empty()) {
+    {
+      InFlightDiagnostic diag =
+          emitOpError("operation destroyed but still has uses");
+      for (Operation *user : getUsers())
+        diag.attachNote(user->getLoc()) << "- use: " << *user << "\n";
+    }
+    llvm::report_fatal_error("operation destroyed but still has uses");
+  }
+#endif
   // Explicitly run the destructors for the operands.
   if (hasOperandStorage)
     getOperandStorage().~OperandStorage();
@@ -1001,8 +1011,10 @@ static LogicalResult verifyValueSizeAttr(Operation *op, StringRef attrName,
     return op->emitOpError("requires 1D vector attribute '") << attrName << "'";
 
   auto sizeAttrType = sizeAttr.getType().dyn_cast<VectorType>();
-  if (!sizeAttrType || sizeAttrType.getRank() != 1)
-    return op->emitOpError("requires 1D vector attribute '") << attrName << "'";
+  if (!sizeAttrType || sizeAttrType.getRank() != 1 ||
+      !sizeAttrType.getElementType().isInteger(32))
+    return op->emitOpError("requires 1D vector of i32 attribute '")
+           << attrName << "'";
 
   if (llvm::any_of(sizeAttr.getIntValues(), [](const APInt &element) {
         return !element.isNonNegative();
@@ -1051,15 +1063,6 @@ LogicalResult OpTrait::impl::verifyNoRegionArguments(Operation *op) {
   return success();
 }
 
-/// Checks if two ShapedTypes are the same, ignoring the element type.
-static bool areSameShapedTypeIgnoringElementType(ShapedType a, ShapedType b) {
-  if (a.getTypeID() != b.getTypeID())
-    return false;
-  if (!a.hasRank())
-    return !b.hasRank();
-  return a.getShape() == b.getShape();
-}
-
 LogicalResult OpTrait::impl::verifyElementwise(Operation *op) {
   auto isMappableType = [](Type type) {
     return type.isa<VectorType, TensorType>();
@@ -1088,15 +1091,14 @@ LogicalResult OpTrait::impl::verifyElementwise(Operation *op) {
     return op->emitOpError(
         "if an operand is non-scalar, then all results must be non-scalar");
 
-  auto mustMatchType = operandMappableTypes[0].cast<ShapedType>();
-  for (auto type :
-       llvm::concat<Type>(resultMappableTypes, operandMappableTypes)) {
-    if (!areSameShapedTypeIgnoringElementType(type.cast<ShapedType>(),
-                                              mustMatchType)) {
-      return op->emitOpError() << "all non-scalar operands/results must have "
-                                  "the same shape and base type: found "
-                               << type << " and " << mustMatchType;
-    }
+  SmallVector<Type, 4> types = llvm::to_vector<2>(
+      llvm::concat<Type>(operandMappableTypes, resultMappableTypes));
+  TypeID expectedBaseTy = types.front().getTypeID();
+  if (!llvm::all_of(types,
+                    [&](Type t) { return t.getTypeID() == expectedBaseTy; }) ||
+      failed(verifyCompatibleShapes(types))) {
+    return op->emitOpError() << "all non-scalar operands/results must have the "
+                                "same shape and base type";
   }
 
   return success();

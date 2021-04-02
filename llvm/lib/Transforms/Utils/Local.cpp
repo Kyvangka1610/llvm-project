@@ -258,7 +258,7 @@ bool llvm::ConstantFoldTerminator(BasicBlock *BB, bool DeleteDeadConditions,
       Builder.CreateBr(TheOnlyDest);
       BasicBlock *BB = SI->getParent();
 
-      SmallSetVector<BasicBlock *, 8> RemovedSuccessors;
+      SmallSet<BasicBlock *, 8> RemovedSuccessors;
 
       // Remove entries from PHI nodes which we no longer branch to...
       BasicBlock *SuccToKeep = TheOnlyDest;
@@ -330,7 +330,7 @@ bool llvm::ConstantFoldTerminator(BasicBlock *BB, bool DeleteDeadConditions,
     if (auto *BA =
           dyn_cast<BlockAddress>(IBI->getAddress()->stripPointerCasts())) {
       BasicBlock *TheOnlyDest = BA->getBasicBlock();
-      SmallSetVector<BasicBlock *, 8> RemovedSuccessors;
+      SmallSet<BasicBlock *, 8> RemovedSuccessors;
 
       // Insert the new branch.
       Builder.CreateBr(TheOnlyDest);
@@ -1614,8 +1614,8 @@ void llvm::insertDebugValuesForPHIs(BasicBlock *BB,
   // so that if a dbg.value is being rewritten to use more than one of the
   // inserted PHIs in the same destination BB, we can update the same dbg.value
   // with all the new PHIs instead of creating one copy for each.
-  SmallDenseMap<std::pair<BasicBlock *, DbgVariableIntrinsic *>,
-                DbgVariableIntrinsic *>
+  MapVector<std::pair<BasicBlock *, DbgVariableIntrinsic *>,
+            DbgVariableIntrinsic *>
       NewDbgValueMap;
   // Then iterate through the new PHIs and look to see if they use one of the
   // previously mapped PHIs. If so, create a new dbg.value intrinsic that will
@@ -2132,7 +2132,7 @@ unsigned llvm::changeToUnreachable(Instruction *I, bool UseLLVMTrap,
   if (MSSAU)
     MSSAU->changeToUnreachable(I);
 
-  SmallSetVector<BasicBlock *, 8> UniqueSuccessors;
+  SmallSet<BasicBlock *, 8> UniqueSuccessors;
 
   // Loop over all of the successors, removing BB's entry from any PHI
   // nodes.
@@ -2393,7 +2393,7 @@ static bool markAliveBlocks(Function &F,
         }
       };
 
-      SmallMapVector<BasicBlock *, int, 8> NumPerSuccessorCases;
+      SmallDenseMap<BasicBlock *, int, 8> NumPerSuccessorCases;
       // Set of unique CatchPads.
       SmallDenseMap<CatchPadInst *, detail::DenseSetEmpty, 4,
                     CatchPadDenseMapInfo, detail::DenseSetPair<CatchPadInst *>>
@@ -2403,22 +2403,25 @@ static bool markAliveBlocks(Function &F,
                                              E = CatchSwitch->handler_end();
            I != E; ++I) {
         BasicBlock *HandlerBB = *I;
-        ++NumPerSuccessorCases[HandlerBB];
+        if (DTU)
+          ++NumPerSuccessorCases[HandlerBB];
         auto *CatchPad = cast<CatchPadInst>(HandlerBB->getFirstNonPHI());
         if (!HandlerSet.insert({CatchPad, Empty}).second) {
-          --NumPerSuccessorCases[HandlerBB];
+          if (DTU)
+            --NumPerSuccessorCases[HandlerBB];
           CatchSwitch->removeHandler(I);
           --I;
           --E;
           Changed = true;
         }
       }
-      std::vector<DominatorTree::UpdateType> Updates;
-      for (const std::pair<BasicBlock *, int> &I : NumPerSuccessorCases)
-        if (I.second == 0)
-          Updates.push_back({DominatorTree::Delete, BB, I.first});
-      if (DTU)
+      if (DTU) {
+        std::vector<DominatorTree::UpdateType> Updates;
+        for (const std::pair<BasicBlock *, int> &I : NumPerSuccessorCases)
+          if (I.second == 0)
+            Updates.push_back({DominatorTree::Delete, BB, I.first});
         DTU->applyUpdates(Updates);
+      }
     }
 
     Changed |= ConstantFoldTerminator(BB, true, nullptr, DTU);
@@ -2504,7 +2507,7 @@ bool llvm::removeUnreachableBlocks(Function &F, DomTreeUpdater *DTU,
   // their internal references. Update DTU if available.
   std::vector<DominatorTree::UpdateType> Updates;
   for (auto *BB : BlocksToRemove) {
-    SmallSetVector<BasicBlock *, 8> UniqueSuccessors;
+    SmallSet<BasicBlock *, 8> UniqueSuccessors;
     for (BasicBlock *Successor : successors(BB)) {
       // Only remove references to BB in reachable successors of BB.
       if (Reachable.count(Successor))

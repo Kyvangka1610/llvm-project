@@ -311,7 +311,7 @@ func @triang_loop(%arg0: index, %arg1: memref<?x?xi32>) {
   %c = constant 0 : i32       // CHECK: %{{.*}} = constant 0 : i32
   affine.for %i0 = 1 to %arg0 {      // CHECK: affine.for %{{.*}} = 1 to %{{.*}} {
     affine.for %i1 = affine_map<(d0)[]->(d0)>(%i0)[] to %arg0 {  // CHECK:   affine.for %{{.*}} = #map{{[0-9]+}}(%{{.*}}) to %{{.*}} {
-      store %c, %arg1[%i0, %i1] : memref<?x?xi32>  // CHECK: store %{{.*}}, %{{.*}}[%{{.*}}, %{{.*}}]
+      memref.store %c, %arg1[%i0, %i1] : memref<?x?xi32>  // CHECK: memref.store %{{.*}}, %{{.*}}[%{{.*}}, %{{.*}}]
     }          // CHECK:     }
   }            // CHECK:   }
   return       // CHECK:   return
@@ -1411,3 +1411,7 @@ test.graph_region {
   %2 = "bar"(%1) : (i64) -> i64
   "unregistered_terminator"() : () -> ()
 }) {sym_name = "unregistered_op_dominance_violation_ok", type = () -> i1} : () -> ()
+
+// This is an unregister operation, the printing/parsing is handled by the dialect.
+// CHECK: test.dialect_custom_printer custom_format
+test.dialect_custom_printer custom_format

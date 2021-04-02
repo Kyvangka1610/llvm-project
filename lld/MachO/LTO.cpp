@@ -36,6 +36,8 @@ static lto::Config createConfig() {
   c.PreCodeGenPassesHook = [](legacy::PassManager &pm) {
     pm.add(createObjCARCContractPass());
   };
+  c.TimeTraceEnabled = config->timeTraceEnabled;
+  c.TimeTraceGranularity = config->timeTraceGranularity;
   return c;
 }
 
@@ -99,9 +101,8 @@ std::vector<ObjFile *> BitcodeCompiler::compile() {
 
   std::vector<ObjFile *> ret;
   for (unsigned i = 0; i != maxTasks; ++i) {
-    if (buf[i].empty()) {
+    if (buf[i].empty())
       continue;
-    }
     SmallString<261> filePath("/tmp/lto.tmp");
     uint32_t modTime = 0;
     if (!config->ltoObjPath.empty()) {

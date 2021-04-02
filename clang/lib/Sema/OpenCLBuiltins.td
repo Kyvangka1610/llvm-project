@@ -579,8 +579,9 @@ foreach name = ["half_divide", "half_powr",
 foreach name = ["abs"] in {
   def : Builtin<name, [AI2UGenTypeN, AIGenTypeN], Attr.Const>;
 }
-foreach name = ["clz", "popcount"] in {
-  def : Builtin<name, [AIGenTypeN, AIGenTypeN], Attr.Const>;
+def : Builtin<"clz", [AIGenTypeN, AIGenTypeN], Attr.Const>;
+let MinVersion = CL12 in {
+  def : Builtin<"popcount", [AIGenTypeN, AIGenTypeN], Attr.Const>;
 }
 let MinVersion = CL20 in {
   foreach name = ["ctz"] in {
@@ -1100,7 +1101,6 @@ let MinVersion = CL20 in {
 
   foreach TypePair = [[AtomicInt, Int, Int], [AtomicUInt, UInt, UInt],
                       [AtomicLong, Long, Long], [AtomicULong, ULong, ULong],
-                      [AtomicIntPtr, IntPtr, PtrDiff],
                       [AtomicUIntPtr, UIntPtr, PtrDiff]] in {
     foreach ModOp = ["add", "sub"] in {
       def : Builtin<"atomic_fetch_" # ModOp,
@@ -1112,9 +1112,7 @@ let MinVersion = CL20 in {
     }
   }
   foreach TypePair = [[AtomicInt, Int, Int], [AtomicUInt, UInt, UInt],
-                      [AtomicLong, Long, Long], [AtomicULong, ULong, ULong],
-                      [AtomicIntPtr, IntPtr, IntPtr],
-                      [AtomicUIntPtr, UIntPtr, UIntPtr]] in {
+                      [AtomicLong, Long, Long], [AtomicULong, ULong, ULong]] in {
     foreach ModOp = ["or", "xor", "and", "min", "max"] in {
       def : Builtin<"atomic_fetch_" # ModOp,
           [TypePair[1], PointerType<VolatileType<TypePair[0]>, GenericAS>, TypePair[2]]>;

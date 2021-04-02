@@ -43,7 +43,7 @@ public:
 
   virtual ~Symbol() {}
 
-  Kind kind() const { return static_cast<Kind>(symbolKind); }
+  Kind kind() const { return symbolKind; }
 
   StringRef getName() const {
     if (nameSize == (uint32_t)-1)
@@ -95,11 +95,11 @@ protected:
 
 class Defined : public Symbol {
 public:
-  Defined(StringRefZ name, InputFile *file, InputSection *isec, uint32_t value,
-          bool isWeakDef, bool isExternal, bool isPrivateExtern)
-      : Symbol(DefinedKind, name, file), isec(isec), value(value),
+  Defined(StringRefZ name, InputFile *file, InputSection *isec, uint64_t value,
+          uint64_t size, bool isWeakDef, bool isExternal, bool isPrivateExtern)
+      : Symbol(DefinedKind, name, file), isec(isec), value(value), size(size),
         overridesWeakDef(false), privateExtern(isPrivateExtern),
-        linkerInternal(false), weakDef(isWeakDef), external(isExternal) {}
+        includeInSymtab(true), weakDef(isWeakDef), external(isExternal) {}
 
   bool isWeakDef() const override { return weakDef; }
   bool isExternalWeakDef() const {
@@ -119,13 +119,14 @@ public:
 
   InputFile *file;
   InputSection *isec;
-  uint32_t value;
+  uint64_t value;
+  uint64_t size;
 
   bool overridesWeakDef : 1;
   // Whether this symbol should appear in the output binary's export trie.
   bool privateExtern : 1;
-  // Whether this symbol should appear in the output binary's symbol table.
-  bool linkerInternal : 1;
+  // Whether this symbol should appear in the output symbol table.
+  bool includeInSymtab : 1;
 
 private:
   const bool weakDef : 1;

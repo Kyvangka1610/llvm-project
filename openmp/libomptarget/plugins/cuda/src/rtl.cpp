@@ -114,9 +114,9 @@ int memcpyDtoD(const void *SrcPtr, void *DstPtr, int64_t Size,
       cuMemcpyDtoDAsync((CUdeviceptr)DstPtr, (CUdeviceptr)SrcPtr, Size, Stream);
 
   if (Err != CUDA_SUCCESS) {
-    REPORT("Error when copying data from device to device. Pointers: src "
-           "= " DPxMOD ", dst = " DPxMOD ", size = %" PRId64 "\n",
-           DPxPTR(SrcPtr), DPxPTR(DstPtr), Size);
+    DP("Error when copying data from device to device. Pointers: src "
+       "= " DPxMOD ", dst = " DPxMOD ", size = %" PRId64 "\n",
+       DPxPTR(SrcPtr), DPxPTR(DstPtr), Size);
     CUDA_ERR_STRING(Err);
     return OFFLOAD_FAIL;
   }
@@ -823,9 +823,9 @@ public:
 
     Err = cuMemcpyHtoDAsync((CUdeviceptr)TgtPtr, HstPtr, Size, Stream);
     if (Err != CUDA_SUCCESS) {
-      REPORT("Error when copying data from host to device. Pointers: host "
-             "= " DPxMOD ", device = " DPxMOD ", size = %" PRId64 "\n",
-             DPxPTR(HstPtr), DPxPTR(TgtPtr), Size);
+      DP("Error when copying data from host to device. Pointers: host "
+         "= " DPxMOD ", device = " DPxMOD ", size = %" PRId64 "\n",
+         DPxPTR(HstPtr), DPxPTR(TgtPtr), Size);
       CUDA_ERR_STRING(Err);
       return OFFLOAD_FAIL;
     }
@@ -845,9 +845,9 @@ public:
 
     Err = cuMemcpyDtoHAsync(HstPtr, (CUdeviceptr)TgtPtr, Size, Stream);
     if (Err != CUDA_SUCCESS) {
-      REPORT("Error when copying data from device to host. Pointers: host "
-             "= " DPxMOD ", device = " DPxMOD ", size = %" PRId64 "\n",
-             DPxPTR(HstPtr), DPxPTR(TgtPtr), Size);
+      DP("Error when copying data from device to host. Pointers: host "
+         "= " DPxMOD ", device = " DPxMOD ", size = %" PRId64 "\n",
+         DPxPTR(HstPtr), DPxPTR(TgtPtr), Size);
       CUDA_ERR_STRING(Err);
       return OFFLOAD_FAIL;
     }
@@ -897,10 +897,9 @@ public:
       if (Err == CUDA_SUCCESS)
         return OFFLOAD_SUCCESS;
 
-      REPORT("Error returned from cuMemcpyPeerAsync. src_ptr = " DPxMOD
-             ", src_id =%" PRId32 ", dst_ptr = " DPxMOD ", dst_id =%" PRId32
-             "\n",
-             DPxPTR(SrcPtr), SrcDevId, DPxPTR(DstPtr), DstDevId);
+      DP("Error returned from cuMemcpyPeerAsync. src_ptr = " DPxMOD
+         ", src_id =%" PRId32 ", dst_ptr = " DPxMOD ", dst_id =%" PRId32 "\n",
+         DPxPTR(SrcPtr), SrcDevId, DPxPTR(DstPtr), DstDevId);
       CUDA_ERR_STRING(Err);
     }
 
@@ -1035,13 +1034,6 @@ public:
   int synchronize(const int DeviceId, __tgt_async_info *AsyncInfo) const {
     CUstream Stream = reinterpret_cast<CUstream>(AsyncInfo->Queue);
     CUresult Err = cuStreamSynchronize(Stream);
-    if (Err != CUDA_SUCCESS) {
-      REPORT("Error when synchronizing stream. stream = " DPxMOD
-             ", async info ptr = " DPxMOD "\n",
-             DPxPTR(Stream), DPxPTR(AsyncInfo));
-      CUDA_ERR_STRING(Err);
-      return OFFLOAD_FAIL;
-    }
 
     // Once the stream is synchronized, return it to stream pool and reset
     // AsyncInfo. This is to make sure the synchronization only works for its
@@ -1050,7 +1042,13 @@ public:
                                 reinterpret_cast<CUstream>(AsyncInfo->Queue));
     AsyncInfo->Queue = nullptr;
 
-    return OFFLOAD_SUCCESS;
+    if (Err != CUDA_SUCCESS) {
+      DP("Error when synchronizing stream. stream = " DPxMOD
+         ", async info ptr = " DPxMOD "\n",
+         DPxPTR(Stream), DPxPTR(AsyncInfo));
+      CUDA_ERR_STRING(Err);
+    }
+    return (Err == CUDA_SUCCESS) ? OFFLOAD_SUCCESS : OFFLOAD_FAIL;
   }
 };
 
@@ -1095,8 +1093,15 @@ __tgt_target_table *__tgt_rtl_load_binary(int32_t device_id,
   return DeviceRTL.loadBinary(device_id, image);
 }
 
-void *__tgt_rtl_data_alloc(int32_t device_id, int64_t size, void *) {
+void *__tgt_rtl_data_alloc(int32_t device_id, int64_t size, void *,
+                           int32_t kind) {
   assert(DeviceRTL.isValidDeviceId(device_id) && "device_id is invalid");
+
+  if (kind != TARGET_ALLOC_DEFAULT) {
+    REPORT("Invalid target data allocation kind or requested allocator not "
+           "implemented yet\n");
+    return NULL;
+  }
 
   return DeviceRTL.dataAlloc(device_id, size);
 }
