@@ -53,7 +53,7 @@ define void @pr26232(i64 %a, <16 x i1> %b) {
 ; AVX-NEXT:    vpand %xmm0, %xmm2, %xmm2
 ; AVX-NEXT:    vpsllw $7, %xmm2, %xmm2
 ; AVX-NEXT:    vpmovmskb %xmm2, %eax
-; AVX-NEXT:    testw %ax, %ax
+; AVX-NEXT:    testl %eax, %eax
 ; AVX-NEXT:    jne .LBB1_1
 ; AVX-NEXT:  # %bb.2: # %for_exit600
 ; AVX-NEXT:    retq
@@ -102,4 +102,24 @@ for_loop599:                                      ; preds = %for_loop599, %for_t
 
 for_exit600:                                      ; preds = %for_loop599
   ret void
+}
+
+define <4 x i32> @pcmpgt(<4 x i8> %x) {
+; AVX-LABEL: pcmpgt:
+; AVX:       # %bb.0:
+; AVX-NEXT:    vpmovzxbd {{.*#+}} xmm0 = xmm0[0],zero,zero,zero,xmm0[1],zero,zero,zero,xmm0[2],zero,zero,zero,xmm0[3],zero,zero,zero
+; AVX-NEXT:    vpxor %xmm1, %xmm1, %xmm1
+; AVX-NEXT:    vpcmpgtd %xmm1, %xmm0, %xmm0
+; AVX-NEXT:    retq
+;
+; KNL-32-LABEL: pcmpgt:
+; KNL-32:       # %bb.0:
+; KNL-32-NEXT:    vpmovzxbd {{.*#+}} xmm0 = xmm0[0],zero,zero,zero,xmm0[1],zero,zero,zero,xmm0[2],zero,zero,zero,xmm0[3],zero,zero,zero
+; KNL-32-NEXT:    vpxor %xmm1, %xmm1, %xmm1
+; KNL-32-NEXT:    vpcmpgtd %xmm1, %xmm0, %xmm0
+; KNL-32-NEXT:    retl
+  %zext = zext <4 x i8> %x to <4 x i32>
+  %icmp = icmp ne <4 x i32> %zext, zeroinitializer
+  %sext = sext <4 x i1> %icmp to <4 x i32>
+  ret <4 x i32> %sext
 }

@@ -1173,6 +1173,27 @@ TEST_F(ComputeKnownBitsTest, ComputeKnownMulBits) {
   expectKnownBits(/*zero*/ 95u, /*one*/ 32u);
 }
 
+TEST_F(ValueTrackingTest, isNonZeroRecurrence) {
+  parseAssembly(R"(
+    define i1 @test(i8 %n, i8 %r) {
+    entry:
+      br label %loop
+    loop:
+      %p = phi i8 [ -1, %entry ], [ %next, %loop ]
+      %next = add nsw i8 %p, -1
+      %cmp1 = icmp eq i8 %p, %n
+      br i1 %cmp1, label %exit, label %loop
+    exit:
+      %A = or i8 %p, %r
+      %CxtI = icmp eq i8 %A, 0
+      ret i1 %CxtI
+    }
+  )");
+  DataLayout DL = M->getDataLayout();
+  AssumptionCache AC(*F);
+  EXPECT_TRUE(isKnownNonZero(A, DL, 0, &AC, CxtI));
+}
+
 TEST_F(ValueTrackingTest, KnownNonZeroFromDomCond) {
   parseAssembly(R"(
     declare i8* @f_i8()
@@ -1838,8 +1859,8 @@ const std::pair<const char *, const char *> IsBytewiseValueTests[] = {
     },
 };
 
-INSTANTIATE_TEST_CASE_P(IsBytewiseValueParamTests, IsBytewiseValueTest,
-                        ::testing::ValuesIn(IsBytewiseValueTests),);
+INSTANTIATE_TEST_SUITE_P(IsBytewiseValueParamTests, IsBytewiseValueTest,
+                         ::testing::ValuesIn(IsBytewiseValueTests));
 
 TEST_P(IsBytewiseValueTest, IsBytewiseValue) {
   auto M = parseModule(std::string("@test = global ") + GetParam().second);
@@ -2161,5 +2182,5 @@ TEST_P(FindAllocaForValueTest, findAllocaForValueZeroOffset) {
   EXPECT_EQ(!!AI, GetParam().ZeroOffsetResult);
 }
 
-INSTANTIATE_TEST_CASE_P(FindAllocaForValueTest, FindAllocaForValueTest,
-                        ::testing::ValuesIn(FindAllocaForValueTests), );
+INSTANTIATE_TEST_SUITE_P(FindAllocaForValueTest, FindAllocaForValueTest,
+                         ::testing::ValuesIn(FindAllocaForValueTests));

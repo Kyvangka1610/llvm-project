@@ -136,6 +136,7 @@ def AffineLoopFusion : FunctionPass<"affine-loop-fusion"> {
     Option<"maximalFusion", "fusion-maximal", "bool", /*default=*/"false",
            "Enables maximal loop fusion">,
   ];
+  let dependentDialects = ["memref::MemRefDialect"];
 }
 
 def AffinePipelineDataTransfer
@@ -361,7 +362,11 @@ def Canonicalizer : Pass<"canonicalize"> {
     details.
   }];
   let constructor = "mlir::createCanonicalizerPass()";
-  let dependentDialects = ["memref::MemRefDialect"];
+  let options = [
+    Option<"topDownProcessingEnabled", "top-down", "bool",
+           /*default=*/"false",
+           "Seed the worklist in general top-down order">
+  ];
 }
 
 def CSE : Pass<"cse"> {
@@ -626,6 +631,7 @@ def NormalizeMemRefs : Pass<"normalize-memrefs", "ModuleOp"> {
   ```
   }];
   let constructor = "mlir::createNormalizeMemRefsPass()";
+  let dependentDialects = ["AffineDialect"];
 }
 
 def ParallelLoopCollapsing : Pass<"parallel-loop-collapsing"> {
@@ -725,7 +731,7 @@ def SymbolDCE : Pass<"symbol-dce"> {
   let constructor = "mlir::createSymbolDCEPass()";
 }
 
-def ViewOpGraphPass : Pass<"symbol-dce", "ModuleOp"> {
+def ViewOpGraphPass : Pass<"view-op-graph", "ModuleOp"> {
   let summary = "Print graphviz view of module";
   let description = [{
     This pass prints a graphviz per block of a module.

@@ -454,30 +454,33 @@ ExtractRuntimeGlobalSymbol(Process *process, ConstString name,
     error.SetErrorString("no process");
     return default_value;
   }
+
   if (!module_sp) {
     error.SetErrorString("no module");
     return default_value;
   }
+
   if (!byte_size)
     byte_size = process->GetAddressByteSize();
   const Symbol *symbol =
       module_sp->FindFirstSymbolWithNameAndType(name, lldb::eSymbolTypeData);
-  if (symbol && symbol->ValueIsAddress()) {
-    lldb::addr_t symbol_load_addr =
-        symbol->GetAddressRef().GetLoadAddress(&process->GetTarget());
-    if (symbol_load_addr != LLDB_INVALID_ADDRESS) {
-      if (read_value)
-        return process->ReadUnsignedIntegerFromMemory(
-            symbol_load_addr, byte_size, default_value, error);
-      return symbol_load_addr;
-    } else {
-      error.SetErrorString("symbol address invalid");
-      return default_value;
-    }
-  } else {
+
+  if (!symbol || !symbol->ValueIsAddress()) {
     error.SetErrorString("no symbol");
     return default_value;
   }
+
+  lldb::addr_t symbol_load_addr =
+      symbol->GetAddressRef().GetLoadAddress(&process->GetTarget());
+  if (symbol_load_addr == LLDB_INVALID_ADDRESS) {
+    error.SetErrorString("symbol address invalid");
+    return default_value;
+  }
+
+  if (read_value)
+    return process->ReadUnsignedIntegerFromMemory(symbol_load_addr, byte_size,
+                                                  default_value, error);
+  return symbol_load_addr;
 }
 
 static void RegisterObjCExceptionRecognizer(Process *process);
@@ -571,8 +574,8 @@ LanguageRuntime *AppleObjCRuntimeV2::CreateInstance(Process *process,
         ObjCRuntimeVersions::eAppleObjC_V2)
       return new AppleObjCRuntimeV2(process, objc_module_sp);
     return nullptr;
-  } else
-    return nullptr;
+  }
+  return nullptr;
 }
 
 static constexpr OptionDefinition g_objc_classtable_dump_options[] = {
@@ -660,8 +663,8 @@ protected:
     case 0:
       break;
     case 1: {
-      regex_up = std::make_unique<RegularExpression>(
-          llvm::StringRef::withNullAsEmpty(command.GetArgumentAtIndex(0)));
+      regex_up =
+          std::make_unique<RegularExpression>(command.GetArgumentAtIndex(0));
       if (!regex_up->IsValid()) {
         result.AppendError(
             "invalid argument - please provide a valid regular expression");
@@ -1436,7 +1439,8 @@ AppleObjCRuntimeV2::DynamicClassInfoExtractor::GetClassInfoUtilityFunction(
                                           g_get_dynamic_class_info2_name);
     return m_objc_copyRealizedClassList_helper.utility_function.get();
   }
-  };
+  }
+  llvm_unreachable("Unexpected helper");
 }
 
 lldb::addr_t &
@@ -1447,6 +1451,7 @@ AppleObjCRuntimeV2::DynamicClassInfoExtractor::GetClassInfoArgs(Helper helper) {
   case objc_copyRealizedClassList:
     return m_objc_copyRealizedClassList_helper.args;
   }
+  llvm_unreachable("Unexpected helper");
 }
 
 AppleObjCRuntimeV2::DynamicClassInfoExtractor::Helper

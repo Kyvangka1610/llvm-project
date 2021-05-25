@@ -199,6 +199,27 @@ private:
 
   void Write(const unsigned i) { *OS << i << '\n'; }
 
+  // NOLINTNEXTLINE(readability-identifier-naming)
+  void Write(const Attribute *A) {
+    if (!A)
+      return;
+    *OS << A->getAsString() << '\n';
+  }
+
+  // NOLINTNEXTLINE(readability-identifier-naming)
+  void Write(const AttributeSet *AS) {
+    if (!AS)
+      return;
+    *OS << AS->getAsString() << '\n';
+  }
+
+  // NOLINTNEXTLINE(readability-identifier-naming)
+  void Write(const AttributeList *AL) {
+    if (!AL)
+      return;
+    AL->print(*OS);
+  }
+
   template <typename T> void Write(ArrayRef<T> Vs) {
     for (const T &V : Vs)
       Write(V);
@@ -306,6 +327,9 @@ class Verifier : public InstVisitor<Verifier>, VerifierSupport {
 
   /// Cache of declarations of the llvm.experimental.deoptimize.<ty> intrinsic.
   SmallVector<const Function *, 4> DeoptimizeDeclarations;
+
+  /// Cache of attribute lists verified.
+  SmallPtrSet<const void *, 32> AttributeListsVisited;
 
   // Verify that this GlobalValue is only used in this module.
   // This map is used to avoid visiting uses twice. We can arrive at a user
@@ -1637,6 +1661,7 @@ static bool isFuncOnlyAttr(Attribute::AttrKind Kind) {
   case Attribute::NoCfCheck:
   case Attribute::NoUnwind:
   case Attribute::NoInline:
+  case Attribute::NoSanitizeCoverage:
   case Attribute::AlwaysInline:
   case Attribute::OptimizeForSize:
   case Attribute::StackProtect:
@@ -1648,7 +1673,6 @@ static bool isFuncOnlyAttr(Attribute::AttrKind Kind) {
   case Attribute::NoImplicitFloat:
   case Attribute::Naked:
   case Attribute::InlineHint:
-  case Attribute::StackAlignment:
   case Attribute::UWTable:
   case Attribute::VScaleRange:
   case Attribute::NonLazyBind:
@@ -1691,14 +1715,27 @@ static bool isFuncOnlyAttr(Attribute::AttrKind Kind) {
 static bool isFuncOrArgAttr(Attribute::AttrKind Kind) {
   return Kind == Attribute::ReadOnly || Kind == Attribute::WriteOnly ||
          Kind == Attribute::ReadNone || Kind == Attribute::NoFree ||
-         Kind == Attribute::Preallocated;
+         Kind == Attribute::Preallocated || Kind == Attribute::StackAlignment;
 }
 
 void Verifier::verifyAttributeTypes(AttributeSet Attrs, bool IsFunction,
                                     const Value *V) {
   for (Attribute A : Attrs) {
-    if (A.isStringAttribute())
+
+    if (A.isStringAttribute()) {
+#define GET_ATTR_NAMES
+#define ATTRIBUTE_ENUM(ENUM_NAME, DISPLAY_NAME)
+#define ATTRIBUTE_STRBOOL(ENUM_NAME, DISPLAY_NAME)                             \
+  if (A.getKindAsString() == #DISPLAY_NAME) {                                  \
+    auto V = A.getValueAsString();                                             \
+    if (!(V.empty() || V == "true" || V == "false"))                           \
+      CheckFailed("invalid value for '" #DISPLAY_NAME "' attribute: " + V +    \
+                  "");                                                         \
+  }
+
+#include "llvm/IR/Attributes.inc"
       continue;
+    }
 
     if (A.isIntAttribute() !=
         Attribute::doesAttrKindHaveArgument(A.getKindAsEnum())) {
@@ -1857,10 +1894,24 @@ void Verifier::verifyFunctionAttrs(FunctionType *FT, AttributeList Attrs,
   if (Attrs.isEmpty())
     return;
 
+  if (AttributeListsVisited.insert(Attrs.getRawPointer()).second) {
+    Assert(Attrs.hasParentContext(Context),
+           "Attribute list does not match Module context!", &Attrs, V);
+    for (const auto &AttrSet : Attrs) {
+      Assert(!AttrSet.hasAttributes() || AttrSet.hasParentContext(Context),
+             "Attribute set does not match Module context!", &AttrSet, V);
+      for (const auto &A : AttrSet) {
+        Assert(A.hasParentContext(Context),
+               "Attribute does not match Module context!", &A, V);
+      }
+    }
+  }
+
   bool SawNest = false;
   bool SawReturned = false;
   bool SawSRet = false;
   bool SawSwiftSelf = false;
+  bool SawSwiftAsync = false;
   bool SawSwiftError = false;
 
   // Verify return value attributes.
@@ -1875,11 +1926,12 @@ void Verifier::verifyFunctionAttrs(FunctionType *FT, AttributeList Attrs,
           !RetAttrs.hasAttribute(Attribute::Preallocated) &&
           !RetAttrs.hasAttribute(Attribute::ByRef) &&
           !RetAttrs.hasAttribute(Attribute::SwiftSelf) &&
+          !RetAttrs.hasAttribute(Attribute::SwiftAsync) &&
           !RetAttrs.hasAttribute(Attribute::SwiftError)),
          "Attributes 'byval', 'inalloca', 'preallocated', 'byref', "
          "'nest', 'sret', 'nocapture', 'nofree', "
-         "'returned', 'swiftself', and 'swifterror' do not apply to return "
-         "values!",
+         "'returned', 'swiftself', 'swiftasync', and 'swifterror'"
+         " do not apply to return values!",
          V);
   Assert((!RetAttrs.hasAttribute(Attribute::ReadOnly) &&
           !RetAttrs.hasAttribute(Attribute::WriteOnly) &&
@@ -1925,6 +1977,11 @@ void Verifier::verifyFunctionAttrs(FunctionType *FT, AttributeList Attrs,
     if (ArgAttrs.hasAttribute(Attribute::SwiftSelf)) {
       Assert(!SawSwiftSelf, "Cannot have multiple 'swiftself' parameters!", V);
       SawSwiftSelf = true;
+    }
+
+    if (ArgAttrs.hasAttribute(Attribute::SwiftAsync)) {
+      Assert(!SawSwiftAsync, "Cannot have multiple 'swiftasync' parameters!", V);
+      SawSwiftAsync = true;
     }
 
     if (ArgAttrs.hasAttribute(Attribute::SwiftError)) {
@@ -2444,6 +2501,8 @@ void Verifier::visitFunction(const Function &F) {
              "Function takes metadata but isn't an intrinsic", &Arg, &F);
       Assert(!Arg.getType()->isTokenTy(),
              "Function takes token but isn't an intrinsic", &Arg, &F);
+      Assert(!Arg.getType()->isX86_AMXTy(),
+             "Function takes x86_amx but isn't an intrinsic", &Arg, &F);
     }
 
     // Check that swifterror argument is only used by loads and stores.
@@ -2453,9 +2512,12 @@ void Verifier::visitFunction(const Function &F) {
     ++i;
   }
 
-  if (!isLLVMdotName)
+  if (!isLLVMdotName) {
     Assert(!F.getReturnType()->isTokenTy(),
-           "Functions returns a token but isn't an intrinsic", &F);
+           "Function returns a token but isn't an intrinsic", &F);
+    Assert(!F.getReturnType()->isX86_AMXTy(),
+           "Function returns a x86_amx but isn't an intrinsic", &F);
+  }
 
   // Get the function metadata attachments.
   SmallVector<std::pair<unsigned, MDNode *>, 4> MDs;
@@ -2725,6 +2787,8 @@ void Verifier::visitIndirectBrInst(IndirectBrInst &BI) {
 void Verifier::visitCallBrInst(CallBrInst &CBI) {
   Assert(CBI.isInlineAsm(), "Callbr is currently only used for asm-goto!",
          &CBI);
+  const InlineAsm *IA = cast<InlineAsm>(CBI.getCalledOperand());
+  Assert(!IA->canThrow(), "Unwinding from Callbr is not allowed");
   for (unsigned i = 0, e = CBI.getNumSuccessors(); i != e; ++i)
     Assert(CBI.getSuccessor(i)->getType()->isLabelTy(),
            "Callbr successors must all have pointer type!", &CBI);
@@ -3216,9 +3280,12 @@ void Verifier::visitCallBase(CallBase &Call) {
   }
 
   // Verify that indirect calls don't return tokens.
-  if (!Call.getCalledFunction())
+  if (!Call.getCalledFunction()) {
     Assert(!FTy->getReturnType()->isTokenTy(),
            "Return type cannot be token for indirect call!");
+    Assert(!FTy->getReturnType()->isX86_AMXTy(),
+           "Return type cannot be x86_amx for indirect call!");
+  }
 
   if (Function *F = Call.getCalledFunction())
     if (Intrinsic::ID ID = (Intrinsic::ID)F->getIntrinsicID())
@@ -3311,9 +3378,10 @@ static bool isTypeCongruent(Type *L, Type *R) {
 
 static AttrBuilder getParameterABIAttributes(int I, AttributeList Attrs) {
   static const Attribute::AttrKind ABIAttrs[] = {
-      Attribute::StructRet,    Attribute::ByVal,     Attribute::InAlloca,
-      Attribute::InReg,        Attribute::SwiftSelf, Attribute::SwiftError,
-      Attribute::Preallocated, Attribute::ByRef};
+      Attribute::StructRet,  Attribute::ByVal,          Attribute::InAlloca,
+      Attribute::InReg,      Attribute::StackAlignment, Attribute::SwiftSelf,
+      Attribute::SwiftAsync, Attribute::SwiftError,     Attribute::Preallocated,
+      Attribute::ByRef};
   AttrBuilder Copy;
   for (auto AK : ABIAttrs) {
     if (Attrs.hasParamAttribute(I, AK))
@@ -3686,8 +3754,8 @@ void Verifier::visitLoadInst(LoadInst &LI) {
 void Verifier::visitStoreInst(StoreInst &SI) {
   PointerType *PTy = dyn_cast<PointerType>(SI.getOperand(1)->getType());
   Assert(PTy, "Store operand must be a pointer.", &SI);
-  Type *ElTy = PTy->getElementType();
-  Assert(ElTy == SI.getOperand(0)->getType(),
+  Type *ElTy = SI.getOperand(0)->getType();
+  Assert(PTy->isOpaqueOrPointeeTypeMatches(ElTy),
          "Stored value type does not match pointer operand type!", &SI, ElTy);
   Assert(SI.getAlignment() <= Value::MaximumAlignment,
          "huge alignment values are unsupported", &SI);
@@ -3744,11 +3812,6 @@ void Verifier::verifySwiftErrorValue(const Value *SwiftErrorVal) {
 
 void Verifier::visitAllocaInst(AllocaInst &AI) {
   SmallPtrSet<Type*, 4> Visited;
-  PointerType *PTy = AI.getType();
-  // TODO: Relax this restriction?
-  Assert(PTy->getAddressSpace() == DL.getAllocaAddrSpace(),
-         "Allocation instruction pointer not in the stack address space!",
-         &AI);
   Assert(AI.getAllocatedType()->isSized(&Visited),
          "Cannot allocate unsized type", &AI);
   Assert(AI.getArraySize()->getType()->isIntegerTy(),
@@ -3764,47 +3827,18 @@ void Verifier::visitAllocaInst(AllocaInst &AI) {
 }
 
 void Verifier::visitAtomicCmpXchgInst(AtomicCmpXchgInst &CXI) {
-
-  // FIXME: more conditions???
-  Assert(CXI.getSuccessOrdering() != AtomicOrdering::NotAtomic,
-         "cmpxchg instructions must be atomic.", &CXI);
-  Assert(CXI.getFailureOrdering() != AtomicOrdering::NotAtomic,
-         "cmpxchg instructions must be atomic.", &CXI);
-  Assert(CXI.getSuccessOrdering() != AtomicOrdering::Unordered,
-         "cmpxchg instructions cannot be unordered.", &CXI);
-  Assert(CXI.getFailureOrdering() != AtomicOrdering::Unordered,
-         "cmpxchg instructions cannot be unordered.", &CXI);
-  Assert(!isStrongerThan(CXI.getFailureOrdering(), CXI.getSuccessOrdering()),
-         "cmpxchg instructions failure argument shall be no stronger than the "
-         "success argument",
-         &CXI);
-  Assert(CXI.getFailureOrdering() != AtomicOrdering::Release &&
-             CXI.getFailureOrdering() != AtomicOrdering::AcquireRelease,
-         "cmpxchg failure ordering cannot include release semantics", &CXI);
-
-  PointerType *PTy = dyn_cast<PointerType>(CXI.getOperand(0)->getType());
-  Assert(PTy, "First cmpxchg operand must be a pointer.", &CXI);
-  Type *ElTy = PTy->getElementType();
+  Type *ElTy = CXI.getOperand(1)->getType();
   Assert(ElTy->isIntOrPtrTy(),
          "cmpxchg operand must have integer or pointer type", ElTy, &CXI);
   checkAtomicMemAccessSize(ElTy, &CXI);
-  Assert(ElTy == CXI.getOperand(1)->getType(),
-         "Expected value type does not match pointer operand type!", &CXI,
-         ElTy);
-  Assert(ElTy == CXI.getOperand(2)->getType(),
-         "Stored value type does not match pointer operand type!", &CXI, ElTy);
   visitInstruction(CXI);
 }
 
 void Verifier::visitAtomicRMWInst(AtomicRMWInst &RMWI) {
-  Assert(RMWI.getOrdering() != AtomicOrdering::NotAtomic,
-         "atomicrmw instructions must be atomic.", &RMWI);
   Assert(RMWI.getOrdering() != AtomicOrdering::Unordered,
          "atomicrmw instructions cannot be unordered.", &RMWI);
   auto Op = RMWI.getOperation();
-  PointerType *PTy = dyn_cast<PointerType>(RMWI.getOperand(0)->getType());
-  Assert(PTy, "First atomicrmw operand must be a pointer.", &RMWI);
-  Type *ElTy = PTy->getElementType();
+  Type *ElTy = RMWI.getOperand(1)->getType();
   if (Op == AtomicRMWInst::Xchg) {
     Assert(ElTy->isIntegerTy() || ElTy->isFloatingPointTy(), "atomicrmw " +
            AtomicRMWInst::getOperationName(Op) +
@@ -3822,9 +3856,6 @@ void Verifier::visitAtomicRMWInst(AtomicRMWInst &RMWI) {
            &RMWI, ElTy);
   }
   checkAtomicMemAccessSize(ElTy, &RMWI);
-  Assert(ElTy == RMWI.getOperand(1)->getType(),
-         "Argument value type does not match pointer operand type!", &RMWI,
-         ElTy);
   Assert(AtomicRMWInst::FIRST_BINOP <= Op && Op <= AtomicRMWInst::LAST_BINOP,
          "Invalid binary operation!", &RMWI);
   visitInstruction(RMWI);
@@ -4415,6 +4446,10 @@ void Verifier::visitInstruction(Instruction &I) {
       Assert(
           !F->isIntrinsic() || isa<CallInst>(I) ||
               F->getIntrinsicID() == Intrinsic::donothing ||
+              F->getIntrinsicID() == Intrinsic::seh_try_begin ||
+              F->getIntrinsicID() == Intrinsic::seh_try_end ||
+              F->getIntrinsicID() == Intrinsic::seh_scope_begin ||
+              F->getIntrinsicID() == Intrinsic::seh_scope_end ||
               F->getIntrinsicID() == Intrinsic::coro_resume ||
               F->getIntrinsicID() == Intrinsic::coro_destroy ||
               F->getIntrinsicID() == Intrinsic::experimental_patchpoint_void ||
@@ -4587,9 +4622,13 @@ void Verifier::visitIntrinsicCall(Intrinsic::ID ID, CallBase &Call) {
 
   // If the intrinsic takes MDNode arguments, verify that they are either global
   // or are local to *this* function.
-  for (Value *V : Call.args())
+  for (Value *V : Call.args()) {
     if (auto *MD = dyn_cast<MetadataAsValue>(V))
       visitMetadataAsValue(*MD, Call.getCaller());
+    if (auto *Const = dyn_cast<Constant>(V))
+      Assert(!Const->getType()->isX86_AMXTy(),
+             "const x86_amx is not allowed in argument!");
+  }
 
   switch (ID) {
   default:

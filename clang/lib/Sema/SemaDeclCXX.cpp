@@ -976,15 +976,20 @@ static bool checkComplexDecomposition(Sema &S,
 }
 
 static std::string printTemplateArgs(const PrintingPolicy &PrintingPolicy,
-                                     TemplateArgumentListInfo &Args) {
+                                     TemplateArgumentListInfo &Args,
+                                     const TemplateParameterList *Params) {
   SmallString<128> SS;
   llvm::raw_svector_ostream OS(SS);
   bool First = true;
+  unsigned I = 0;
   for (auto &Arg : Args.arguments()) {
     if (!First)
       OS << ", ";
-    Arg.getArgument().print(PrintingPolicy, OS);
+    Arg.getArgument().print(
+        PrintingPolicy, OS,
+        TemplateParameterList::shouldIncludeTypeForArgument(Params, I));
     First = false;
+    I++;
   }
   return std::string(OS.str());
 }
@@ -996,7 +1001,7 @@ static bool lookupStdTypeTraitMember(Sema &S, LookupResult &TraitMemberLookup,
   auto DiagnoseMissing = [&] {
     if (DiagID)
       S.Diag(Loc, DiagID) << printTemplateArgs(S.Context.getPrintingPolicy(),
-                                               Args);
+                                               Args, /*Params*/ nullptr);
     return true;
   };
 
@@ -1034,7 +1039,8 @@ static bool lookupStdTypeTraitMember(Sema &S, LookupResult &TraitMemberLookup,
     if (DiagID)
       S.RequireCompleteType(
           Loc, TraitTy, DiagID,
-          printTemplateArgs(S.Context.getPrintingPolicy(), Args));
+          printTemplateArgs(S.Context.getPrintingPolicy(), Args,
+                            TraitTD->getTemplateParameters()));
     return true;
   }
 
@@ -1089,7 +1095,8 @@ static IsTupleLike isTupleLike(Sema &S, SourceLocation Loc, QualType T,
     Sema::SemaDiagnosticBuilder diagnoseNotICE(Sema &S,
                                                SourceLocation Loc) override {
       return S.Diag(Loc, diag::err_decomp_decl_std_tuple_size_not_constant)
-          << printTemplateArgs(S.Context.getPrintingPolicy(), Args);
+             << printTemplateArgs(S.Context.getPrintingPolicy(), Args,
+                                  /*Params*/ nullptr);
     }
   } Diagnoser(R, Args);
 
@@ -1125,7 +1132,8 @@ static QualType getTupleLikeElementType(Sema &S, SourceLocation Loc,
   if (!TD) {
     R.suppressDiagnostics();
     S.Diag(Loc, diag::err_decomp_decl_std_tuple_element_not_specialized)
-      << printTemplateArgs(S.Context.getPrintingPolicy(), Args);
+        << printTemplateArgs(S.Context.getPrintingPolicy(), Args,
+                             /*Params*/ nullptr);
     if (!R.empty())
       S.Diag(R.getRepresentativeDecl()->getLocation(), diag::note_declared_at);
     return QualType();
@@ -2500,6 +2508,14 @@ Sema::CheckBaseSpecifier(CXXRecordDecl *Class,
       }
     }
 
+    // Make sure that we don't make an ill-formed AST where the type of the
+    // Class is non-dependent and its attached base class specifier is an
+    // dependent type, which violates invariants in many clang code paths (e.g.
+    // constexpr evaluator). If this case happens (in errory-recovery mode), we
+    // explicitly mark the Class decl invalid. The diagnostic was already
+    // emitted.
+    if (!Class->getTypeForDecl()->isDependentType())
+      Class->setInvalidDecl();
     return new (Context) CXXBaseSpecifier(SpecifierRange, Virtual,
                                           Class->getTagKind() == TTK_Class,
                                           Access, TInfo, EllipsisLoc);
@@ -10874,26 +10890,6 @@ static void DiagnoseNamespaceInlineMismatch(Sema &S, SourceLocation KeywordLoc,
                                             NamespaceDecl *PrevNS) {
   assert(*IsInline != PrevNS->isInline());
 
-  // HACK: Work around a bug in libstdc++4.6's <atomic>, where
-  // std::__atomic[0,1,2] are defined as non-inline namespaces, then reopened as
-  // inline namespaces, with the intention of bringing names into namespace std.
-  //
-  // We support this just well enough to get that case working; this is not
-  // sufficient to support reopening namespaces as inline in general.
-  if (*IsInline && II && II->getName().startswith("__atomic") &&
-      S.getSourceManager().isInSystemHeader(Loc)) {
-    // Mark all prior declarations of the namespace as inline.
-    for (NamespaceDecl *NS = PrevNS->getMostRecentDecl(); NS;
-         NS = NS->getPreviousDecl())
-      NS->setInline(*IsInline);
-    // Patch up the lookup table for the containing namespace. This isn't really
-    // correct, but it's good enough for this particular case.
-    for (auto *I : PrevNS->decls())
-      if (auto *ND = dyn_cast<NamedDecl>(I))
-        PrevNS->getParent()->makeDeclVisibleInContext(ND);
-    return;
-  }
-
   if (PrevNS->isInline())
     // The user probably just forgot the 'inline', so suggest that it
     // be added back.
@@ -12134,10 +12130,9 @@ NamedDecl *Sema::BuildUsingDeclaration(
   // invalid).
   if (R.empty() &&
       NameInfo.getName().getNameKind() != DeclarationName::CXXConstructorName) {
-    // HACK: Work around a bug in libstdc++'s detection of ::gets. Sometimes
-    // it will believe that glibc provides a ::gets in cases where it does not,
-    // and will try to pull it into namespace std with a using-declaration.
-    // Just ignore the using-declaration in that case.
+    // HACK 2017-01-08: Work around an issue with libstdc++'s detection of
+    // ::gets. Sometimes it believes that glibc provides a ::gets in cases where
+    // it does not. The issue was fixed in libstdc++ 6.3 (2016-12-21) and later.
     auto *II = NameInfo.getName().getAsIdentifierInfo();
     if (getLangOpts().CPlusPlus14 && II && II->isStr("gets") &&
         CurContext->isStdNamespace() &&
@@ -14048,12 +14043,20 @@ static void diagnoseDeprecatedCopyOperation(Sema &S, CXXMethodDecl *CopyOp) {
     assert(UserDeclaredOperation);
   }
 
-  if (UserDeclaredOperation && UserDeclaredOperation->isUserProvided()) {
-    S.Diag(UserDeclaredOperation->getLocation(),
-           isa<CXXDestructorDecl>(UserDeclaredOperation)
-               ? diag::warn_deprecated_copy_dtor_operation
-               : diag::warn_deprecated_copy_operation)
-        << RD << /*copy assignment*/ !isa<CXXConstructorDecl>(CopyOp);
+  if (UserDeclaredOperation) {
+    bool UDOIsUserProvided = UserDeclaredOperation->isUserProvided();
+    bool UDOIsDestructor = isa<CXXDestructorDecl>(UserDeclaredOperation);
+    bool IsCopyAssignment = !isa<CXXConstructorDecl>(CopyOp);
+    unsigned DiagID =
+        (UDOIsUserProvided && UDOIsDestructor)
+            ? diag::warn_deprecated_copy_with_user_provided_dtor
+        : (UDOIsUserProvided && !UDOIsDestructor)
+            ? diag::warn_deprecated_copy_with_user_provided_copy
+        : (!UDOIsUserProvided && UDOIsDestructor)
+            ? diag::warn_deprecated_copy_with_dtor
+            : diag::warn_deprecated_copy;
+    S.Diag(UserDeclaredOperation->getLocation(), DiagID)
+        << RD << IsCopyAssignment;
   }
 }
 
@@ -14912,9 +14915,9 @@ void Sema::DefineImplicitLambdaToFunctionPointerConversion(
   SynthesizedFunctionScope Scope(*this, Conv);
   assert(!Conv->getReturnType()->isUndeducedType());
 
-  QualType ConvRT = Conv->getType()->getAs<FunctionType>()->getReturnType();
+  QualType ConvRT = Conv->getType()->castAs<FunctionType>()->getReturnType();
   CallingConv CC =
-      ConvRT->getPointeeType()->getAs<FunctionType>()->getCallConv();
+      ConvRT->getPointeeType()->castAs<FunctionType>()->getCallConv();
 
   CXXRecordDecl *Lambda = Conv->getParent();
   FunctionDecl *CallOp = Lambda->getLambdaCallOperator();
@@ -16790,6 +16793,8 @@ NamedDecl *Sema::ActOnFriendFunctionDecl(Scope *S, Declarator &D,
       FrD->setUnsupportedFriend(true);
     }
   }
+
+  warnOnReservedIdentifier(ND);
 
   return ND;
 }

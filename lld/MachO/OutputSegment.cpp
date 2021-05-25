@@ -37,7 +37,7 @@ static uint32_t initProt(StringRef name) {
 }
 
 static uint32_t maxProt(StringRef name) {
-  assert(config->target.Arch != AK_i386 &&
+  assert(config->arch() != AK_i386 &&
          "TODO: i386 has different maxProt requirements");
   return initProt(name);
 }
@@ -52,6 +52,10 @@ size_t OutputSegment::numNonHiddenSections() const {
 void OutputSegment::addOutputSection(OutputSection *osec) {
   osec->parent = this;
   sections.push_back(osec);
+
+  for (const SectionAlign &sectAlign : config->sectionAlignments)
+    if (sectAlign.segName == name && sectAlign.sectName == osec->name)
+      osec->align = sectAlign.align;
 }
 
 static DenseMap<StringRef, OutputSegment *> nameToOutputSegment;

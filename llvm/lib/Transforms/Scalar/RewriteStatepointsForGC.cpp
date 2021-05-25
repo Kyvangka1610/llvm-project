@@ -706,6 +706,39 @@ public:
   bool isUnknown() const { return getStatus() == Unknown; }
   bool isConflict() const { return getStatus() == Conflict; }
 
+  // Values of type BDVState form a lattice, and this function implements the
+  // meet
+  // operation.
+  void meet(const BDVState &Other) {
+    auto markConflict = [&]() {
+      Status = BDVState::Conflict;
+      BaseValue = nullptr;
+    };
+    // Conflict is a final state.
+    if (isConflict())
+      return;
+    // if we are not known - just take other state.
+    if (isUnknown()) {
+      Status = Other.getStatus();
+      BaseValue = Other.getBaseValue();
+      return;
+    }
+    // We are base.
+    assert(isBase() && "Unknown state");
+    // If other is unknown - just keep our state.
+    if (Other.isUnknown())
+      return;
+    // If other is conflict - it is a final state.
+    if (Other.isConflict())
+      return markConflict();
+    // Other is base as well.
+    assert(Other.isBase() && "Unknown state");
+    // If bases are different - Conflict.
+    if (getBaseValue() != Other.getBaseValue())
+      return markConflict();
+    // We are identical, do nothing.
+  }
+
   bool operator==(const BDVState &Other) const {
     return OriginalValue == OriginalValue && BaseValue == Other.BaseValue &&
       Status == Other.Status;
@@ -750,43 +783,6 @@ static raw_ostream &operator<<(raw_ostream &OS, const BDVState &State) {
   return OS;
 }
 #endif
-
-static BDVState::StatusTy meet(const BDVState::StatusTy &LHS,
-                               const BDVState::StatusTy &RHS) {
-  switch (LHS) {
-  case BDVState::Unknown:
-    return RHS;
-  case BDVState::Base:
-    switch (RHS) {
-    case BDVState::Unknown:
-    case BDVState::Base:
-      return BDVState::Base;
-    case BDVState::Conflict:
-      return BDVState::Conflict;
-    };
-    llvm_unreachable("covered switch");
-  case BDVState::Conflict:
-    return BDVState::Conflict;
-  }
-  llvm_unreachable("covered switch");
-}
-
-// Values of type BDVState form a lattice, and this function implements the meet
-// operation.
-static BDVState meetBDVState(const BDVState &LHS, const BDVState &RHS) {
-  auto NewStatus = meet(LHS.getStatus(), RHS.getStatus());
-  assert(NewStatus == meet(RHS.getStatus(), LHS.getStatus()));
-
-  Value *BaseValue = LHS.getStatus() == BDVState::Base ?
-    LHS.getBaseValue() : RHS.getBaseValue();
-  if (LHS.getStatus() == BDVState::Base && RHS.getStatus() == BDVState::Base &&
-      LHS.getBaseValue() != RHS.getBaseValue()) {
-    NewStatus = BDVState::Conflict;
-  }
-  if (NewStatus == BDVState::Conflict)
-    BaseValue = nullptr;
-  return BDVState(LHS.getOriginalValue(), NewStatus, BaseValue);
-}
 
 /// For a given value or instruction, figure out what base ptr its derived from.
 /// For gc objects, this is simply itself.  On success, returns a value which is
@@ -971,10 +967,10 @@ static Value *findBasePointer(Value *I, DefiningValueMapTy &Cache) {
                  "why did it get added?");
 
       BDVState NewState(BDV);
-      visitBDVOperands(BDV, [&] (Value *Op) {
+      visitBDVOperands(BDV, [&](Value *Op) {
         Value *BDV = findBaseOrBDV(Op, Cache);
         auto OpState = GetStateForBDV(BDV, Op);
-        NewState = meetBDVState(NewState, OpState);
+        NewState.meet(OpState);
       });
 
       BDVState OldState = States[BDV];
@@ -1337,6 +1333,27 @@ normalizeForInvokeSafepoint(BasicBlock *BB, BasicBlock *InvokeParent,
   return Ret;
 }
 
+// List of all function attributes which must be stripped when lowering from
+// abstract machine model to physical machine model.  Essentially, these are
+// all the effects a safepoint might have which we ignored in the abstract
+// machine model for purposes of optimization.  We have to strip these on
+// both function declarations and call sites.
+static constexpr Attribute::AttrKind FnAttrsToStrip[] =
+  {Attribute::ReadNone, Attribute::ReadOnly, Attribute::WriteOnly,
+   Attribute::ArgMemOnly, Attribute::InaccessibleMemOnly,
+   Attribute::InaccessibleMemOrArgMemOnly,
+   Attribute::NoSync, Attribute::NoFree};
+
+// List of all parameter and return attributes which must be stripped when
+// lowering from the abstract machine model.  Note that we list attributes
+// here which aren't valid as return attributes, that is okay.  There are
+// also some additional attributes with arguments which are handled
+// explicitly and are not in this list.
+static constexpr Attribute::AttrKind ParamAttrsToStrip[] =
+  {Attribute::ReadNone, Attribute::ReadOnly, Attribute::WriteOnly,
+   Attribute::NoAlias, Attribute::NoFree};
+
+
 // Create new attribute set containing only attributes which can be transferred
 // from original call to the safepoint.
 static AttributeList legalizeCallAttributes(LLVMContext &Ctx,
@@ -1346,8 +1363,9 @@ static AttributeList legalizeCallAttributes(LLVMContext &Ctx,
 
   // Remove the readonly, readnone, and statepoint function attributes.
   AttrBuilder FnAttrs = AL.getFnAttributes();
-  FnAttrs.removeAttribute(Attribute::ReadNone);
-  FnAttrs.removeAttribute(Attribute::ReadOnly);
+  for (auto Attr : FnAttrsToStrip)
+    FnAttrs.removeAttribute(Attr);
+
   for (Attribute A : AL.getFnAttributes()) {
     if (isStatepointDirectiveAttr(A))
       FnAttrs.remove(A);
@@ -2585,8 +2603,9 @@ static void RemoveNonValidAttrAtIndex(LLVMContext &Ctx, AttrHolder &AH,
   if (AH.getDereferenceableOrNullBytes(Index))
     R.addAttribute(Attribute::get(Ctx, Attribute::DereferenceableOrNull,
                                   AH.getDereferenceableOrNullBytes(Index)));
-  if (AH.getAttributes().hasAttribute(Index, Attribute::NoAlias))
-    R.addAttribute(Attribute::NoAlias);
+  for (auto Attr : ParamAttrsToStrip)
+    if (AH.getAttributes().hasAttribute(Index, Attr))
+      R.addAttribute(Attr);
 
   if (!R.empty())
     AH.setAttributes(AH.getAttributes().removeAttributes(Ctx, Index, R));
@@ -2595,6 +2614,16 @@ static void RemoveNonValidAttrAtIndex(LLVMContext &Ctx, AttrHolder &AH,
 static void stripNonValidAttributesFromPrototype(Function &F) {
   LLVMContext &Ctx = F.getContext();
 
+  // Intrinsics are very delicate.  Lowering sometimes depends the presence
+  // of certain attributes for correctness, but we may have also inferred
+  // additional ones in the abstract machine model which need stripped.  This
+  // assumes that the attributes defined in Intrinsic.td are conservatively
+  // correct for both physical and abstract model.
+  if (Intrinsic::ID id = F.getIntrinsicID()) {
+    F.setAttributes(Intrinsic::getAttributes(Ctx, id));
+    return;
+  }
+
   for (Argument &A : F.args())
     if (isa<PointerType>(A.getType()))
       RemoveNonValidAttrAtIndex(Ctx, F,
@@ -2602,6 +2631,9 @@ static void stripNonValidAttributesFromPrototype(Function &F) {
 
   if (isa<PointerType>(F.getReturnType()))
     RemoveNonValidAttrAtIndex(Ctx, F, AttributeList::ReturnIndex);
+
+  for (auto Attr : FnAttrsToStrip)
+    F.removeFnAttr(Attr);
 }
 
 /// Certain metadata on instructions are invalid after running RS4GC.

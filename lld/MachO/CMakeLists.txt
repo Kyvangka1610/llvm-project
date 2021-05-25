@@ -5,8 +5,11 @@ add_public_tablegen_target(MachOOptionsTableGen)
 include_directories(${LLVM_MAIN_SRC_DIR}/../libunwind/include)
 
 add_lld_library(lldMachO2
-  Arch/X86_64.cpp
+  Arch/ARM.cpp
   Arch/ARM64.cpp
+  Arch/ARM64Common.cpp
+  Arch/ARM64_32.cpp
+  Arch/X86_64.cpp
   UnwindInfoSection.cpp
   Driver.cpp
   DriverUtils.cpp
@@ -45,6 +48,7 @@ add_lld_library(lldMachO2
   LINK_LIBS
   lldCommon
   ${LLVM_PTHREAD_LIB}
+  ${XAR_LIB}
 
   DEPENDS
   MachOOptionsTableGen
