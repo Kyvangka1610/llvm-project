@@ -19,7 +19,7 @@
 
 using namespace mlir;
 
-Identifier Builder::getIdentifier(StringRef str) {
+Identifier Builder::getIdentifier(const Twine &str) {
   return Identifier::get(str, context);
 }
 
@@ -52,6 +52,8 @@ FloatType Builder::getF128Type() { return FloatType::getF128(context); }
 IndexType Builder::getIndexType() { return IndexType::get(context); }
 
 IntegerType Builder::getI1Type() { return IntegerType::get(context, 1); }
+
+IntegerType Builder::getI8Type() { return IntegerType::get(context, 8); }
 
 IntegerType Builder::getI32Type() { return IntegerType::get(context, 32); }
 
@@ -200,7 +202,7 @@ FloatAttr Builder::getFloatAttr(Type type, const APFloat &value) {
   return FloatAttr::get(type, value);
 }
 
-StringAttr Builder::getStringAttr(StringRef bytes) {
+StringAttr Builder::getStringAttr(const Twine &bytes) {
   return StringAttr::get(context, bytes);
 }
 

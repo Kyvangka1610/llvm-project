@@ -324,6 +324,9 @@ public:
   /// name is not found.
   GlobalValue *getNamedValue(StringRef Name) const;
 
+  /// Return the number of global values in the module.
+  unsigned getNumNamedValues() const;
+
   /// Return a unique non-zero ID for the specified metadata kind. This ID is
   /// uniqued across modules in the current LLVMContext.
   unsigned getMDKindID(StringRef Name) const;
@@ -908,6 +911,10 @@ public:
   /// Get/set what offset from the stack protector to use.
   int getStackProtectorGuardOffset() const;
   void setStackProtectorGuardOffset(int Offset);
+
+  /// Get/set the stack alignment overridden from the default.
+  unsigned getOverrideStackAlignment() const;
+  void setOverrideStackAlignment(unsigned Align);
 
   /// @name Utility functions for querying and setting the build SDK version
   /// @{

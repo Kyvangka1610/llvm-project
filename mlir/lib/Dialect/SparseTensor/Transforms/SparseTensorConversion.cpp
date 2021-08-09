@@ -27,7 +27,26 @@ using namespace mlir::sparse_tensor;
 
 namespace {
 
-/// Returns internal type encoding for overhead storage.
+/// Returns internal type encoding for primary storage. Keep these
+/// values consistent with the sparse runtime support library.
+static unsigned getPrimaryTypeEncoding(Type tp) {
+  if (tp.isF64())
+    return 1;
+  if (tp.isF32())
+    return 2;
+  if (tp.isInteger(64))
+    return 3;
+  if (tp.isInteger(32))
+    return 4;
+  if (tp.isInteger(16))
+    return 5;
+  if (tp.isInteger(8))
+    return 6;
+  return 0;
+}
+
+/// Returns internal type encoding for overhead storage. Keep these
+/// values consistent with the sparse runtime support library.
 static unsigned getOverheadTypeEncoding(unsigned width) {
   switch (width) {
   default:
@@ -41,7 +60,8 @@ static unsigned getOverheadTypeEncoding(unsigned width) {
   }
 }
 
-/// Returns internal dimension level type encoding.
+/// Returns internal dimension level type encoding. Keep these
+/// values consistent with the sparse runtime support library.
 static unsigned
 getDimLevelTypeEncoding(SparseTensorEncodingAttr::DimLevelType dlt) {
   switch (dlt) {
@@ -52,6 +72,7 @@ getDimLevelTypeEncoding(SparseTensorEncodingAttr::DimLevelType dlt) {
   case SparseTensorEncodingAttr::DimLevelType::Singleton:
     return 2;
   }
+  llvm_unreachable("Unknown SparseTensorEncodingAttr::DimLevelType");
 }
 
 /// Returns integers of given width and values as a constant tensor.
@@ -98,11 +119,11 @@ public:
 
 /// Sparse conversion rule for dimension accesses.
 class SparseTensorToDimSizeConverter
-    : public OpConversionPattern<memref::DimOp> {
+    : public OpConversionPattern<tensor::DimOp> {
 public:
   using OpConversionPattern::OpConversionPattern;
   LogicalResult
-  matchAndRewrite(memref::DimOp op, ArrayRef<Value> operands,
+  matchAndRewrite(tensor::DimOp op, ArrayRef<Value> operands,
                   ConversionPatternRewriter &rewriter) const override {
     if (!operands[0].getType().isa<LLVM::LLVMPointerType>())
       return failure();
@@ -156,18 +177,8 @@ class SparseTensorNewConverter : public OpConversionPattern<NewOp> {
     // Secondary and primary types encoding.
     unsigned secPtr = getOverheadTypeEncoding(enc.getPointerBitWidth());
     unsigned secInd = getOverheadTypeEncoding(enc.getIndexBitWidth());
-    unsigned primary;
-    if (eltType.isF64())
-      primary = 1;
-    else if (eltType.isF32())
-      primary = 2;
-    else if (eltType.isInteger(32))
-      primary = 3;
-    else if (eltType.isInteger(16))
-      primary = 4;
-    else if (eltType.isInteger(8))
-      primary = 5;
-    else
+    unsigned primary = getPrimaryTypeEncoding(eltType);
+    if (!primary)
       return failure();
     params.push_back(
         rewriter.create<ConstantOp>(loc, rewriter.getI64IntegerAttr(secPtr)));
@@ -181,6 +192,17 @@ class SparseTensorNewConverter : public OpConversionPattern<NewOp> {
     rewriter.replaceOpWithNewOp<CallOp>(
         op, ptrType, getFunc(op, name, ptrType, params), params);
     return success();
+  }
+};
+
+/// Sparse conversion rule for the convert operator.
+class SparseTensorConvertConverter : public OpConversionPattern<ConvertOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(ConvertOp op, ArrayRef<Value> operands,
+                  ConversionPatternRewriter &rewriter) const override {
+    // TODO: implement conversions lowering
+    return failure();
   }
 };
 
@@ -255,6 +277,8 @@ public:
       name = "sparseValuesF64";
     else if (eltType.isF32())
       name = "sparseValuesF32";
+    else if (eltType.isInteger(64))
+      name = "sparseValuesI64";
     else if (eltType.isInteger(32))
       name = "sparseValuesI32";
     else if (eltType.isInteger(16))
@@ -269,6 +293,36 @@ public:
   }
 };
 
+/// Sparse conversion rule for tensor reconstruction.
+class SparseTensorToTensorConverter : public OpConversionPattern<ToTensorOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  // Simply fold the operator into the pointer to the sparse storage scheme.
+  matchAndRewrite(ToTensorOp op, ArrayRef<Value> operands,
+                  ConversionPatternRewriter &rewriter) const override {
+    // Check that all arguments of the tensor reconstruction operators are calls
+    // into the support library that query exactly the same opaque pointer.
+    Value ptr;
+    for (Value op : operands) {
+      if (auto call = op.getDefiningOp<CallOp>()) {
+        Value arg = call.getOperand(0);
+        if (!arg.getType().isa<LLVM::LLVMPointerType>())
+          return failure();
+        if (!ptr)
+          ptr = arg;
+        else if (arg != ptr)
+          return failure();
+      }
+    }
+    // If a single opaque pointer is found, perform the folding.
+    if (!ptr)
+      return failure();
+    rewriter.replaceOp(op, ptr);
+    return success();
+  }
+};
+
 } // namespace
 
 /// Populates the given patterns list with conversion rules required for
@@ -276,7 +330,8 @@ public:
 void mlir::populateSparseTensorConversionPatterns(TypeConverter &typeConverter,
                                                   RewritePatternSet &patterns) {
   patterns.add<SparseReturnConverter, SparseTensorToDimSizeConverter,
-               SparseTensorNewConverter, SparseTensorToPointersConverter,
-               SparseTensorToIndicesConverter, SparseTensorToValuesConverter>(
+               SparseTensorNewConverter, SparseTensorConvertConverter,
+               SparseTensorToPointersConverter, SparseTensorToIndicesConverter,
+               SparseTensorToValuesConverter, SparseTensorToTensorConverter>(
       typeConverter, patterns.getContext());
 }

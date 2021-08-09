@@ -15,7 +15,8 @@
 #include "VCSVersion.inc"
 
 // Returns a version string, e.g.:
-// lld 9.0.0 (https://github.com/llvm/llvm-project.git 9efdd7ac5e914d3c9fa1ef)
+// LLD 14.0.0 (https://github.com/llvm/llvm-project.git
+// 2d9759c7902c5cbc9a7e3ab623321d5578d51687)
 std::string lld::getLLDVersion() {
 return "LLD " LLD_VERSION_STRING;
 }

@@ -1741,11 +1741,13 @@ public:
   }
 
   /// Return the bits used for base discriminators.
-  static unsigned getBaseDiscriminatorBits() { return BASE_DIS_BIT_END; }
+  static unsigned getBaseDiscriminatorBits() { return getBaseFSBitEnd(); }
 
   /// Returns the base discriminator for a given encoded discriminator \p D.
-  static unsigned getBaseDiscriminatorFromDiscriminator(unsigned D) {
-    if (EnableFSDiscriminator)
+  static unsigned
+  getBaseDiscriminatorFromDiscriminator(unsigned D,
+                                        bool IsFSDiscriminator = false) {
+    if (IsFSDiscriminator)
       return getMaskedDiscriminator(D, getBaseDiscriminatorBits());
     return getUnsignedFromPrefixEncoding(D);
   }
@@ -2198,7 +2200,8 @@ DILocation::cloneWithDiscriminator(unsigned Discriminator) const {
 }
 
 unsigned DILocation::getBaseDiscriminator() const {
-  return getBaseDiscriminatorFromDiscriminator(getDiscriminator());
+  return getBaseDiscriminatorFromDiscriminator(getDiscriminator(),
+                                               EnableFSDiscriminator);
 }
 
 unsigned DILocation::getDuplicationFactor() const {
@@ -2873,6 +2876,12 @@ public:
     return getNumElements() > 0 &&
            getElement(0) == dwarf::DW_OP_LLVM_entry_value;
   }
+
+  /// Try to shorten an expression with an initial constant operand.
+  /// Returns a new expression and constant on success, or the original
+  /// expression and constant on failure.
+  std::pair<DIExpression *, const ConstantInt *>
+  constantFold(const ConstantInt *CI);
 };
 
 inline bool operator==(const DIExpression::FragmentInfo &A,

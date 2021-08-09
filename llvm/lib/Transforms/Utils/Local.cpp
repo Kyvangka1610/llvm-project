@@ -473,6 +473,11 @@ bool llvm::wouldInstructionBeTriviallyDead(Instruction *I,
 
       return false;
     }
+
+    if (auto *FPI = dyn_cast<ConstrainedFPIntrinsic>(I)) {
+      Optional<fp::ExceptionBehavior> ExBehavior = FPI->getExceptionBehavior();
+      return ExBehavior.getValue() != fp::ebStrict;
+    }
   }
 
   if (isAllocLikeFn(I, TLI))
@@ -485,6 +490,16 @@ bool llvm::wouldInstructionBeTriviallyDead(Instruction *I,
   if (auto *Call = dyn_cast<CallBase>(I))
     if (isMathLibCallNoop(Call, TLI))
       return true;
+
+  // To express possible interaction with floating point environment constrained
+  // intrinsics are described as if they access memory. So they look like having
+  // side effect but actually do not have it unless they raise floating point
+  // exception. If FP exceptions are ignored, the intrinsic may be deleted.
+  if (auto *CI = dyn_cast<ConstrainedFPIntrinsic>(I)) {
+    Optional<fp::ExceptionBehavior> EB = CI->getExceptionBehavior();
+    if (!EB || *EB == fp::ExceptionBehavior::ebIgnore)
+      return true;
+  }
 
   return false;
 }
@@ -1133,12 +1148,6 @@ bool llvm::TryToSimplifyUncondBranchFromEmptyBlock(BasicBlock *BB,
       for (BasicBlock *Pred : predecessors(BB))
         Pred->getTerminator()->setMetadata(LoopMDKind, LoopMD);
 
-  // For AutoFDO, since BB is going to be removed, we won't be able to sample
-  // it. To avoid assigning a zero weight for BB, move all its pseudo probes
-  // into Succ and mark them dangling. This should allow the counts inference a
-  // chance to get a more reasonable weight for BB.
-  moveAndDanglePseudoProbes(BB, &*Succ->getFirstInsertionPt());
-
   // Everything that jumped to BB now goes to Succ.
   BB->replaceAllUsesWith(Succ);
   if (!Succ->hasName()) Succ->takeName(BB);
@@ -1724,6 +1733,9 @@ void llvm::salvageDebugInfo(Instruction &I) {
 
 void llvm::salvageDebugInfoForDbgValues(
     Instruction &I, ArrayRef<DbgVariableIntrinsic *> DbgUsers) {
+  // This is an arbitrary chosen limit on the maximum number of values we can
+  // salvage up to in a DIArgList, used for performance reasons.
+  const unsigned MaxDebugArgs = 16;
   bool Salvaged = false;
 
   for (auto *DII : DbgUsers) {
@@ -1735,11 +1747,19 @@ void llvm::salvageDebugInfoForDbgValues(
     assert(
         is_contained(DIILocation, &I) &&
         "DbgVariableIntrinsic must use salvaged instruction as its location");
-    unsigned LocNo = std::distance(DIILocation.begin(), find(DIILocation, &I));
     SmallVector<Value *, 4> AdditionalValues;
-    DIExpression *SalvagedExpr = salvageDebugInfoImpl(
-        I, DII->getExpression(), StackValue, LocNo, AdditionalValues);
-
+    // `I` may appear more than once in DII's location ops, and each use of `I`
+    // must be updated in the DIExpression and potentially have additional
+    // values added; thus we call salvageDebugInfoImpl for each `I` instance in
+    // DIILocation.
+    DIExpression *SalvagedExpr = DII->getExpression();
+    auto LocItr = find(DIILocation, &I);
+    while (SalvagedExpr && LocItr != DIILocation.end()) {
+      unsigned LocNo = std::distance(DIILocation.begin(), LocItr);
+      SalvagedExpr = salvageDebugInfoImpl(I, SalvagedExpr, StackValue, LocNo,
+                                          AdditionalValues);
+      LocItr = std::find(++LocItr, DIILocation.end(), &I);
+    }
     // salvageDebugInfoImpl should fail on examining the first element of
     // DbgUsers, or none of them.
     if (!SalvagedExpr)
@@ -1748,11 +1768,15 @@ void llvm::salvageDebugInfoForDbgValues(
     DII->replaceVariableLocationOp(&I, I.getOperand(0));
     if (AdditionalValues.empty()) {
       DII->setExpression(SalvagedExpr);
-    } else if (isa<DbgValueInst>(DII)) {
+    } else if (isa<DbgValueInst>(DII) &&
+               DII->getNumVariableLocationOps() + AdditionalValues.size() <=
+                   MaxDebugArgs) {
       DII->addVariableLocationOps(AdditionalValues, SalvagedExpr);
     } else {
       // Do not salvage using DIArgList for dbg.addr/dbg.declare, as it is
       // currently only valid for stack value expressions.
+      // Also do not salvage if the resulting DIArgList would contain an
+      // unreasonably large number of values.
       Value *Undef = UndefValue::get(I.getOperand(0)->getType());
       DII->replaceVariableLocationOp(I.getOperand(0), Undef);
     }
@@ -1775,7 +1799,7 @@ bool getSalvageOpsForGEP(GetElementPtrInst *GEP, const DataLayout &DL,
                          SmallVectorImpl<Value *> &AdditionalValues) {
   unsigned BitWidth = DL.getIndexSizeInBits(GEP->getPointerAddressSpace());
   // Rewrite a GEP into a DIExpression.
-  SmallDenseMap<Value *, APInt, 8> VariableOffsets;
+  MapVector<Value *, APInt> VariableOffsets;
   APInt ConstantOffset(BitWidth, 0);
   if (!GEP->collectOffset(DL, BitWidth, VariableOffsets, ConstantOffset))
     return false;
@@ -2086,8 +2110,8 @@ llvm::removeAllNonTerminatorAndEHPadInstructions(BasicBlock *BB) {
   return {NumDeadInst, NumDeadDbgInst};
 }
 
-unsigned llvm::changeToUnreachable(Instruction *I, bool UseLLVMTrap,
-                                   bool PreserveLCSSA, DomTreeUpdater *DTU,
+unsigned llvm::changeToUnreachable(Instruction *I, bool PreserveLCSSA,
+                                   DomTreeUpdater *DTU,
                                    MemorySSAUpdater *MSSAU) {
   BasicBlock *BB = I->getParent();
 
@@ -2102,14 +2126,6 @@ unsigned llvm::changeToUnreachable(Instruction *I, bool UseLLVMTrap,
     Successor->removePredecessor(BB, PreserveLCSSA);
     if (DTU)
       UniqueSuccessors.insert(Successor);
-  }
-  // Insert a call to llvm.trap right before this.  This turns the undefined
-  // behavior into a hard fail instead of falling through into random code.
-  if (UseLLVMTrap) {
-    Function *TrapFn =
-      Intrinsic::getDeclaration(BB->getParent()->getParent(), Intrinsic::trap);
-    CallInst *CallTrap = CallInst::Create(TrapFn, "", I);
-    CallTrap->setDebugLoc(I->getDebugLoc());
   }
   auto *UI = new UnreachableInst(I->getContext(), I);
   UI->setDebugLoc(I->getDebugLoc());
@@ -2247,7 +2263,7 @@ static bool markAliveBlocks(Function &F,
           if (IntrinsicID == Intrinsic::assume) {
             if (match(CI->getArgOperand(0), m_CombineOr(m_Zero(), m_Undef()))) {
               // Don't insert a call to llvm.trap right before the unreachable.
-              changeToUnreachable(CI, false, false, DTU);
+              changeToUnreachable(CI, false, DTU);
               Changed = true;
               break;
             }
@@ -2263,8 +2279,7 @@ static bool markAliveBlocks(Function &F,
             // still be useful for widening.
             if (match(CI->getArgOperand(0), m_Zero()))
               if (!isa<UnreachableInst>(CI->getNextNode())) {
-                changeToUnreachable(CI->getNextNode(), /*UseLLVMTrap=*/false,
-                                    false, DTU);
+                changeToUnreachable(CI->getNextNode(), false, DTU);
                 Changed = true;
                 break;
               }
@@ -2272,7 +2287,7 @@ static bool markAliveBlocks(Function &F,
         } else if ((isa<ConstantPointerNull>(Callee) &&
                     !NullPointerIsDefined(CI->getFunction())) ||
                    isa<UndefValue>(Callee)) {
-          changeToUnreachable(CI, /*UseLLVMTrap=*/false, false, DTU);
+          changeToUnreachable(CI, false, DTU);
           Changed = true;
           break;
         }
@@ -2282,7 +2297,7 @@ static bool markAliveBlocks(Function &F,
           // though.
           if (!isa<UnreachableInst>(CI->getNextNode())) {
             // Don't insert a call to llvm.trap right before the unreachable.
-            changeToUnreachable(CI->getNextNode(), false, false, DTU);
+            changeToUnreachable(CI->getNextNode(), false, DTU);
             Changed = true;
           }
           break;
@@ -2301,7 +2316,7 @@ static bool markAliveBlocks(Function &F,
             (isa<ConstantPointerNull>(Ptr) &&
              !NullPointerIsDefined(SI->getFunction(),
                                    SI->getPointerAddressSpace()))) {
-          changeToUnreachable(SI, true, false, DTU);
+          changeToUnreachable(SI, false, DTU);
           Changed = true;
           break;
         }
@@ -2315,7 +2330,7 @@ static bool markAliveBlocks(Function &F,
       if ((isa<ConstantPointerNull>(Callee) &&
            !NullPointerIsDefined(BB->getParent())) ||
           isa<UndefValue>(Callee)) {
-        changeToUnreachable(II, true, false, DTU);
+        changeToUnreachable(II, false, DTU);
         Changed = true;
       } else if (II->doesNotThrow() && canSimplifyInvokeNoUnwind(&F)) {
         if (II->use_empty() && II->onlyReadsMemory()) {
@@ -2805,19 +2820,13 @@ void llvm::hoistAllInstructionsInto(BasicBlock *DomBlock, Instruction *InsertPt,
   // encode predicated DIExpressions that yield different results on different
   // code paths.
 
-  // A hoisted conditional probe should be treated as dangling so that it will
-  // not be over-counted when the samples collected on the non-conditional path
-  // are counted towards the conditional path. We leave it for the counts
-  // inference algorithm to figure out a proper count for a danglng probe.
-  moveAndDanglePseudoProbes(BB, InsertPt);
-
   for (BasicBlock::iterator II = BB->begin(), IE = BB->end(); II != IE;) {
     Instruction *I = &*II;
-    I->dropUnknownNonDebugMetadata();
+    I->dropUndefImplyingAttrsAndUnknownMetadata();
     if (I->isUsedByMetadata())
       dropDebugUsers(*I);
-    if (isa<DbgInfoIntrinsic>(I)) {
-      // Remove DbgInfo Intrinsics.
+    if (I->isDebugOrPseudoInst()) {
+      // Remove DbgInfo and pseudo probe Intrinsics.
       II = I->eraseFromParent();
       continue;
     }
