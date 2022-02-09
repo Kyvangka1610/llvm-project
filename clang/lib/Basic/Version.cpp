@@ -76,7 +76,7 @@ std::string getClangFullRepositoryVersion() {
       OS << LLVMRepo << ' ';
     OS << LLVMRev << ')';
   }
-  return OS.str();
+  return buf;
 }
 
 std::string getClangFullVersion() {
@@ -96,7 +96,7 @@ std::string getClangToolFullVersion(StringRef ToolName) {
     OS << " " << repo;
   }
 
-  return OS.str();
+  return buf;
 }
 
 std::string getClangFullCPPVersion() {
@@ -114,7 +114,7 @@ std::string getClangFullCPPVersion() {
     OS << " " << repo;
   }
 
-  return OS.str();
+  return buf;
 }
 
 } // end namespace clang

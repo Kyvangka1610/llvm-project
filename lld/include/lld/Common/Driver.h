@@ -9,6 +9,7 @@
 #ifndef LLD_COMMON_DRIVER_H
 #define LLD_COMMON_DRIVER_H
 
+#include "lld/Common/CommonLinkerContext.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -28,34 +29,34 @@ SafeReturn safeLldMain(int argc, const char **argv, llvm::raw_ostream &stdoutOS,
                        llvm::raw_ostream &stderrOS);
 
 namespace coff {
-bool link(llvm::ArrayRef<const char *> args, bool canExitEarly,
-          llvm::raw_ostream &stdoutOS, llvm::raw_ostream &stderrOS);
+bool link(llvm::ArrayRef<const char *> args, llvm::raw_ostream &stdoutOS,
+          llvm::raw_ostream &stderrOS, bool exitEarly, bool disableOutput);
 }
 
 namespace mingw {
-bool link(llvm::ArrayRef<const char *> args, bool canExitEarly,
-          llvm::raw_ostream &stdoutOS, llvm::raw_ostream &stderrOS);
+bool link(llvm::ArrayRef<const char *> args, llvm::raw_ostream &stdoutOS,
+          llvm::raw_ostream &stderrOS, bool exitEarly, bool disableOutput);
 }
 
 namespace elf {
-bool link(llvm::ArrayRef<const char *> args, bool canExitEarly,
-          llvm::raw_ostream &stdoutOS, llvm::raw_ostream &stderrOS);
-}
-
-namespace mach_o {
-bool link(llvm::ArrayRef<const char *> args, bool canExitEarly,
-          llvm::raw_ostream &stdoutOS, llvm::raw_ostream &stderrOS);
+bool link(llvm::ArrayRef<const char *> args, llvm::raw_ostream &stdoutOS,
+          llvm::raw_ostream &stderrOS, bool exitEarly, bool disableOutput);
 }
 
 namespace macho {
-bool link(llvm::ArrayRef<const char *> args, bool canExitEarly,
-          llvm::raw_ostream &stdoutOS, llvm::raw_ostream &stderrOS);
+bool link(llvm::ArrayRef<const char *> args, llvm::raw_ostream &stdoutOS,
+          llvm::raw_ostream &stderrOS, bool exitEarly, bool disableOutput);
 }
 
 namespace wasm {
-bool link(llvm::ArrayRef<const char *> args, bool canExitEarly,
-          llvm::raw_ostream &stdoutOS, llvm::raw_ostream &stderrOS);
+bool link(llvm::ArrayRef<const char *> args, llvm::raw_ostream &stdoutOS,
+          llvm::raw_ostream &stderrOS, bool exitEarly, bool disableOutput);
 }
-}
+
+// Temporary API that forces global state cleanup between explicit calls to
+// drivers above. DO NOT USE - this will be replaced by safeLldMain(). See
+// discussion in https://reviews.llvm.org/D119049.
+void cleanup();
+} // namespace lld
 
 #endif

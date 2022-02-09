@@ -57,6 +57,8 @@ public:
   /// Classes with a higher priority value are assigned first by register
   /// allocators using a greedy heuristic. The value is in the range [0,63].
   const uint8_t AllocationPriority;
+  /// Configurable target specific flags.
+  const uint8_t TSFlags;
   /// Whether the class supports two (or more) disjunct subregister indices.
   const bool HasDisjunctSubRegs;
   /// Whether a combination of subregisters can cover every register in the
@@ -565,6 +567,24 @@ public:
   virtual bool isCalleeSavedPhysReg(MCRegister PhysReg,
                                     const MachineFunction &MF) const;
 
+  /// Returns true if PhysReg can be used as an argument to a function.
+  virtual bool isArgumentRegister(const MachineFunction &MF,
+                                  MCRegister PhysReg) const {
+    return false;
+  }
+
+  /// Returns true if PhysReg is a fixed register.
+  virtual bool isFixedRegister(const MachineFunction &MF,
+                               MCRegister PhysReg) const {
+    return false;
+  }
+
+  /// Returns true if PhysReg is a general purpose register.
+  virtual bool isGeneralPurposeRegister(const MachineFunction &MF,
+                                        MCRegister PhysReg) const {
+    return false;
+  }
+
   /// Prior to adding the live-out mask to a stackmap or patchpoint
   /// instruction, provide the target the opportunity to adjust it (mainly to
   /// remove pseudo-registers that should be ignored).
@@ -871,10 +891,6 @@ public:
   /// (3) Bottom-up allocation is no longer guaranteed to optimally color.
   virtual bool reverseLocalAssignment() const { return false; }
 
-  /// Add the allocation priority to global and split ranges as well as the
-  /// local ranges when registers are added to the queue.
-  virtual bool addAllocPriorityToGlobalRanges() const { return false; }
-
   /// Allow the target to override the cost of using a callee-saved register for
   /// the first time. Default value of 0 means we will use a callee-saved
   /// register if it is available.
@@ -1095,6 +1111,13 @@ public:
   /// exist.
   inline MCRegister getSubReg(MCRegister Reg, unsigned Idx) const {
     return static_cast<const MCRegisterInfo *>(this)->getSubReg(Reg, Idx);
+  }
+
+  /// Some targets have non-allocatable registers that aren't technically part
+  /// of the explicit callee saved register list, but should be handled as such
+  /// in certain cases.
+  virtual bool isNonallocatableRegisterCalleeSave(MCRegister Reg) const {
+    return false;
   }
 };
 

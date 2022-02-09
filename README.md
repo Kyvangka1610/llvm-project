@@ -61,12 +61,12 @@ This is an example work-flow and configuration to get and build the LLVM source:
           solutions.
         * ``Xcode`` --- for generating Xcode projects.
 
-        Some Common options:
+        Some common options:
 
         * ``-DLLVM_ENABLE_PROJECTS='...'`` --- semicolon-separated list of the LLVM
           sub-projects you'd like to additionally build. Can include any of: clang,
-          clang-tools-extra, libcxx, libcxxabi, libunwind, lldb, compiler-rt, lld,
-          polly, or cross-project-tests.
+          clang-tools-extra, compiler-rt,cross-project-tests, flang, libc, libclc,
+          libcxx, libcxxabi, libunwind, lld, lldb, mlir, openmp, polly, or pstl.
 
           For example, to build LLVM, Clang, libcxx, and libcxxabi, use
           ``-DLLVM_ENABLE_PROJECTS="clang;libcxx;libcxxabi"``.
@@ -104,3 +104,10 @@ Consult the
 page for detailed information on configuring and compiling LLVM. You can visit
 [Directory Layout](https://llvm.org/docs/GettingStarted.html#directory-layout)
 to learn about the layout of the source code tree.
+
+## Getting in touch
+
+Join [LLVM Discourse forums](https://discourse.llvm.org/), [discord chat](https://discord.gg/xS7Z362) or #llvm IRC channel on [OFTC](https://oftc.net/).
+
+The LLVM project has adopted a [code of conduct](https://llvm.org/docs/CodeOfConduct.html) for
+participants to all modes of communication within the project.

@@ -182,7 +182,12 @@ OPTIONS
 
   Print just the file's name without any directories, instead of the
   absolute path.
-  
+
+.. option:: --build-id
+
+  Look up the object using the given build ID, specified as a hexadecimal
+  string. Mutually exclusive with :option:`--obj`.
+
 .. _llvm-symbolizer-opt-C:
 
 .. option:: --demangle, -C
@@ -232,7 +237,8 @@ OPTIONS
 .. option:: --obj <path>, --exe, -e
 
   Path to object file to be symbolized. If ``-`` is specified, read the object
-  directly from the standard input stream.
+  directly from the standard input stream. Mutually exclusive with
+  :option:`--build-id`.
 
 .. _llvm-symbolizer-opt-output-style:
 
@@ -241,7 +247,7 @@ OPTIONS
   Specify the preferred output style. Defaults to ``LLVM``. When the output
   style is set to ``GNU``, the tool follows the style of GNU's **addr2line**.
   The differences from the ``LLVM`` style are:
-  
+
   * Does not print the column of a source code location.
 
   * Does not add an empty line after the report for an address.
@@ -289,7 +295,7 @@ OPTIONS
             "FileName": "/tmp/test.cpp",
             "FunctionName": "baz()",
             "Line": 11,
-            "Source": "",
+            "StartAddress": "0x4004be",
             "StartFileName": "/tmp/test.cpp",
             "StartLine": 9
           },
@@ -299,7 +305,7 @@ OPTIONS
             "FileName": "/tmp/test.cpp",
             "FunctionName": "main",
             "Line": 15,
-            "Source": "",
+            "StartAddress": "0x4004be",
             "StartFileName": "/tmp/test.cpp",
             "StartLine": 14
           }
@@ -315,7 +321,7 @@ OPTIONS
             "FileName": "/tmp/test.cpp",
             "FunctionName": "foo()",
             "Line": 6,
-            "Source": "",
+            "StartAddress": "0x400486",
             "StartFileName": "/tmp/test.cpp",
             "StartLine": 5
           }

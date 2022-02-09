@@ -306,6 +306,9 @@ class RegisterClass<string namespace, list<ValueType> regTypes, int alignment,
   // the assembly matcher will provide a function to map from diagnostic types
   // to message strings.
   string DiagnosticString = "";
+
+  // Target-specific flags. This becomes the TSFlags field in TargetRegisterClass.
+  bits<8> TSFlags = 0;
 }
 
 // The memberList in a RegisterClass is a dag of set operations. TableGen
@@ -386,6 +389,14 @@ class RegisterTuples<list<SubRegIndex> Indices, list<dag> Regs,
   list<string> RegAsmNames = RegNames;
 }
 
+// RegisterCategory - This class is a list of RegisterClasses that belong to a
+// general cateogry --- e.g. "general purpose" or "fixed" registers. This is
+// useful for identifying registers in a generic way instead of having
+// information about a specific target's registers.
+class RegisterCategory<list<RegisterClass> classes> {
+  // Classes - A list of register classes that fall within the category.
+  list<RegisterClass> Classes = classes;
+}
 
 //===----------------------------------------------------------------------===//
 // DwarfRegNum - This class provides a mapping of the llvm register enumeration
@@ -650,6 +661,25 @@ class Instruction : InstructionEncoding {
   /// instruction selection predicates. FastISel cannot handle such cases, but
   /// SelectionDAG can.
   bit FastISelShouldIgnore = false;
+
+  /// HasPositionOrder: Indicate tablegen to sort the instructions by record
+  /// ID, so that instruction that is defined earlier can be sorted earlier
+  /// in the assembly matching table.
+  bit HasPositionOrder = false;
+}
+
+/// Defines a Pat match between compressed and uncompressed instruction.
+/// The relationship and helper function generation are handled by
+/// CompressInstEmitter backend.
+class CompressPat<dag input, dag output, list<Predicate> predicates = []> {
+  /// Uncompressed instruction description.
+  dag Input = input;
+  /// Compressed instruction description.
+  dag Output = output;
+  /// Predicates that must be true for this to match.
+  list<Predicate> Predicates = predicates;
+  /// Duplicate match when tied operand is just different.
+  bit isCompressOnly = false;
 }
 
 /// Defines an additional encoding that disassembles to the given instruction
@@ -971,7 +1001,7 @@ class InstrInfo {
   // by default, and TableGen will infer their value from the instruction
   // pattern when possible.
   //
-  // Normally, TableGen will issue an error it it can't infer the value of a
+  // Normally, TableGen will issue an error if it can't infer the value of a
   // property that hasn't been set explicitly. When guessInstructionProperties
   // is set, it will guess a safe value instead.
   //

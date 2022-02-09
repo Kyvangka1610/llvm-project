@@ -75,6 +75,7 @@
 #include "llvm/IR/DebugInfo.h"
 #include "llvm/IR/DebugLoc.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GetElementPtrTypeIterator.h"
 #include "llvm/IR/GlobalValue.h"
@@ -195,10 +196,8 @@ void FastISel::flushLocalValueMap() {
         EmitStartPt ? MachineBasicBlock::reverse_iterator(EmitStartPt)
                     : FuncInfo.MBB->rend();
     MachineBasicBlock::reverse_iterator RI(LastLocalValue);
-    for (; RI != RE;) {
-      MachineInstr &LocalMI = *RI;
-      // Increment before erasing what it points to.
-      ++RI;
+    for (MachineInstr &LocalMI :
+         llvm::make_early_inc_range(llvm::make_range(RI, RE))) {
       Register DefReg = findLocalRegDef(LocalMI);
       if (!DefReg)
         continue;
@@ -622,7 +621,7 @@ bool FastISel::selectGetElementPtr(const User *I) {
 
 bool FastISel::addStackMapLiveVars(SmallVectorImpl<MachineOperand> &Ops,
                                    const CallInst *CI, unsigned StartIdx) {
-  for (unsigned i = StartIdx, e = CI->getNumArgOperands(); i != e; ++i) {
+  for (unsigned i = StartIdx, e = CI->arg_size(); i != e; ++i) {
     Value *Val = CI->getArgOperand(i);
     // Check for constants and encode them with a StackMaps::ConstantOp prefix.
     if (const auto *C = dyn_cast<ConstantInt>(Val)) {
@@ -784,7 +783,7 @@ bool FastISel::selectPatchpoint(const CallInst *I) {
   // Skip the four meta args: <id>, <numNopBytes>, <target>, <numArgs>
   // This includes all meta-operands up to but not including CC.
   unsigned NumMetaOpers = PatchPointOpers::CCPos;
-  assert(I->getNumArgOperands() >= NumMetaOpers + NumArgs &&
+  assert(I->arg_size() >= NumMetaOpers + NumArgs &&
          "Not enough arguments provided to the patchpoint intrinsic");
 
   // For AnyRegCC the arguments are lowered later on manually.
@@ -1151,6 +1150,8 @@ bool FastISel::lowerCall(const CallInst *CI) {
   CLI.setCallee(RetTy, FuncTy, CI->getCalledOperand(), std::move(Args), *CI)
       .setTailCall(IsTailCall);
 
+  diagnoseDontCall(*CI);
+
   return lowerCallTo(CLI);
 }
 
@@ -1264,7 +1265,7 @@ bool FastISel::selectIntrinsicCall(const IntrinsicInst *II) {
       // If using instruction referencing, mutate this into a DBG_INSTR_REF,
       // to be later patched up by finalizeDebugInstrRefs. Tack a deref onto
       // the expression, we don't have an "indirect" flag in DBG_INSTR_REF.
-      if (TM.Options.ValueTrackingVariableLocations && Op->isReg()) {
+      if (FuncInfo.MF->useDebugInstrRef() && Op->isReg()) {
         Builder->setDesc(TII.get(TargetOpcode::DBG_INSTR_REF));
         Builder->getOperand(1).ChangeToImmediate(0);
         auto *NewExpr =
@@ -1323,7 +1324,7 @@ bool FastISel::selectIntrinsicCall(const IntrinsicInst *II) {
 
       // If using instruction referencing, mutate this into a DBG_INSTR_REF,
       // to be later patched up by finalizeDebugInstrRefs.
-      if (TM.Options.ValueTrackingVariableLocations) {
+      if (FuncInfo.MF->useDebugInstrRef()) {
         Builder->setDesc(TII.get(TargetOpcode::DBG_INSTR_REF));
         Builder->getOperand(1).ChangeToImmediate(0);
       }
@@ -1774,12 +1775,13 @@ bool FastISel::selectOperator(const User *I, unsigned Opcode) {
     return false;
 
   case Instruction::Call:
-    // On AIX, call lowering uses the DAG-ISEL path currently so that the
+    // On AIX, normal call lowering uses the DAG-ISEL path currently so that the
     // callee of the direct function call instruction will be mapped to the
     // symbol for the function's entry point, which is distinct from the
     // function descriptor symbol. The latter is the symbol whose XCOFF symbol
     // name is the C-linkage name of the source level function.
-    if (TM.getTargetTriple().isOSAIX())
+    // But fast isel still has the ability to do selection for intrinsics.
+    if (TM.getTargetTriple().isOSAIX() && !isa<IntrinsicInst>(I))
       return false;
     return selectCall(I);
 
@@ -1836,8 +1838,7 @@ FastISel::FastISel(FunctionLoweringInfo &FuncInfo,
       TII(*MF->getSubtarget().getInstrInfo()),
       TLI(*MF->getSubtarget().getTargetLowering()),
       TRI(*MF->getSubtarget().getRegisterInfo()), LibInfo(LibInfo),
-      SkipTargetIndependentISel(SkipTargetIndependentISel),
-      LastLocalValue(nullptr), EmitStartPt(nullptr) {}
+      SkipTargetIndependentISel(SkipTargetIndependentISel) {}
 
 FastISel::~FastISel() = default;
 
@@ -2307,8 +2308,7 @@ FastISel::createMachineMemOperandFor(const Instruction *I) const {
   bool IsDereferenceable = I->hasMetadata(LLVMContext::MD_dereferenceable);
   const MDNode *Ranges = I->getMetadata(LLVMContext::MD_range);
 
-  AAMDNodes AAInfo;
-  I->getAAMetadata(AAInfo);
+  AAMDNodes AAInfo = I->getAAMetadata();
 
   if (!Alignment) // Ensure that codegen never sees alignment 0.
     Alignment = DL.getABITypeAlign(ValTy);

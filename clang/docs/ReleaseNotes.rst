@@ -1,6 +1,6 @@
-========================================
-Clang 14.0.0 (In-Progress) Release Notes
-========================================
+===========================================
+Clang |release| |ReleaseNotesTitle|
+===========================================
 
 .. contents::
    :local:
@@ -8,17 +8,18 @@ Clang 14.0.0 (In-Progress) Release Notes
 
 Written by the `LLVM Team <https://llvm.org/>`_
 
-.. warning::
+.. only:: PreRelease
 
-   These are in-progress notes for the upcoming Clang 14 release.
-   Release notes for previous releases can be found on
-   `the Download Page <https://releases.llvm.org/download.html>`_.
+  .. warning::
+     These are in-progress notes for the upcoming Clang |version| release.
+     Release notes for previous releases can be found on
+     `the Download Page <https://releases.llvm.org/download.html>`_.
 
 Introduction
 ============
 
 This document contains the release notes for the Clang C/C++/Objective-C
-frontend, part of the LLVM Compiler Infrastructure, release 14.0.0. Here we
+frontend, part of the LLVM Compiler Infrastructure, release |release|. Here we
 describe the status of Clang in some detail, including major
 improvements from the previous release and new feature work. For the
 general LLVM release notes, see `the LLVM
@@ -35,8 +36,8 @@ main Clang web page, this document applies to the *next* release, not
 the current one. To see the release notes for a specific release, please
 see the `releases page <https://llvm.org/releases/>`_.
 
-What's New in Clang 14.0.0?
-===========================
+What's New in Clang |release|?
+==============================
 
 Some of the major new features and improvements to Clang are listed
 here. Generic improvements to Clang as a whole or to its underlying
@@ -51,32 +52,20 @@ Major New Features
 Improvements to Clang's diagnostics
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-- ...
-
 Non-comprehensive list of changes in this release
 -------------------------------------------------
-
-- ...
 
 New Compiler Flags
 ------------------
 
-- ...
-
 Deprecated Compiler Flags
 -------------------------
-
-- ...
 
 Modified Compiler Flags
 -----------------------
 
-- ...
-
 Removed Compiler Flags
 -------------------------
-
-- ...
 
 New Pragmas in Clang
 --------------------
@@ -86,15 +75,13 @@ New Pragmas in Clang
 Attribute Changes in Clang
 --------------------------
 
-- ...
+- Added support for parameter pack expansion in `clang::annotate`.
 
 Windows Support
 ---------------
 
 C Language Changes in Clang
 ---------------------------
-
-- ...
 
 C++ Language Changes in Clang
 -----------------------------
@@ -103,11 +90,14 @@ C++ Language Changes in Clang
 
 C++20 Feature Support
 ^^^^^^^^^^^^^^^^^^^^^
-...
 
 C++2b Feature Support
 ^^^^^^^^^^^^^^^^^^^^^
-...
+
+- Implemented `P2128R6: Multidimensional subscript operator <https://wg21.link/P2128R6>`_.
+
+CUDA Language Changes in Clang
+------------------------------
 
 Objective-C Language Changes in Clang
 -------------------------------------
@@ -123,7 +113,18 @@ ABI Changes in Clang
 OpenMP Support in Clang
 -----------------------
 
-- ...
+- ``clang-nvlink-wrapper`` tool introduced to support linking of cubin files
+  archived in an archive. See :doc:`ClangNvlinkWrapper`.
+- ``clang-linker-wrapper`` tool introduced to support linking using a new OpenMP
+  target offloading method. See :doc:`ClangLinkerWrapper`.
+- Support for a new driver for OpenMP target offloading has been added as an
+  opt-in feature. The new driver can be selected using ``-fopenmp-new-driver``
+  with clang. Device-side LTO can also be enabled using the new driver by
+  passing ``-foffload-lto=`` as well. The new driver supports the following
+  features:
+  - Linking AMDGPU and NVPTX offloading targets.
+  - Static linking using archive files.
+  - Device-side LTO.
 
 CUDA Support in Clang
 ---------------------
@@ -133,28 +134,32 @@ CUDA Support in Clang
 X86 Support in Clang
 --------------------
 
-- ...
+DWARF Support in Clang
+----------------------
+
+Arm and AArch64 Support in Clang
+--------------------------------
+
+Floating Point Support in Clang
+-------------------------------
 
 Internal API Changes
 --------------------
 
-- ...
+- Added a new attribute flag `AcceptsExprPack` that when set allows expression
+  pack expansions in the parsed arguments of the corresponding attribute.
+  Additionally it introduces delaying of attribute arguments, adding common
+  handling for creating attributes that cannot be fully initialized prior to
+  template instantiation.
 
 Build System Changes
 --------------------
 
-- ...
-
 AST Matchers
 ------------
 
-- ...
-
 clang-format
 ------------
-
-- Option ``AllowShortEnumsOnASingleLine: false`` has been improved, it now
-  correctly places the opening brace according to ``BraceWrapping.AfterEnum``.
 
 libclang
 --------

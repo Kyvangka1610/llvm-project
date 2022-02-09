@@ -145,10 +145,18 @@ const ParsedAttrInfo &ParsedAttrInfo::get(const AttributeCommonInfo &A) {
   return DefaultParsedAttrInfo;
 }
 
+ArrayRef<const ParsedAttrInfo *> ParsedAttrInfo::getAllBuiltin() {
+  return llvm::makeArrayRef(AttrInfoMap);
+}
+
 unsigned ParsedAttr::getMinArgs() const { return getInfo().NumArgs; }
 
 unsigned ParsedAttr::getMaxArgs() const {
   return getMinArgs() + getInfo().OptArgs;
+}
+
+unsigned ParsedAttr::getNumArgMembers() const {
+  return getInfo().NumArgMembers;
 }
 
 bool ParsedAttr::hasCustomParsing() const {
@@ -180,7 +188,10 @@ void ParsedAttr::getMatchRules(
 }
 
 bool ParsedAttr::diagnoseLangOpts(Sema &S) const {
-  return getInfo().diagLangOpts(S, *this);
+  if (getInfo().acceptsLangOpts(S.getLangOpts()))
+    return true;
+  S.Diag(getLoc(), diag::warn_attribute_ignored) << *this;
+  return false;
 }
 
 bool ParsedAttr::isTargetSpecificAttr() const {
@@ -201,6 +212,8 @@ bool ParsedAttr::isSupportedByPragmaAttribute() const {
   return getInfo().IsSupportedByPragmaAttribute;
 }
 
+bool ParsedAttr::acceptsExprPack() const { return getInfo().AcceptsExprPack; }
+
 unsigned ParsedAttr::getSemanticSpelling() const {
   return getInfo().spellingIndexToSemanticSpelling(*this);
 }
@@ -211,6 +224,14 @@ bool ParsedAttr::hasVariadicArg() const {
   // legitimately bumps up against that maximum, we can use another bit to track
   // whether it's truly variadic or not.
   return getInfo().OptArgs == 15;
+}
+
+bool ParsedAttr::isParamExpr(size_t N) const {
+  return getInfo().isParamExpr(N);
+}
+
+void ParsedAttr::handleAttrWithDelayedArgs(Sema &S, Decl *D) const {
+  ::handleAttrWithDelayedArgs(S, D, *this);
 }
 
 static unsigned getNumAttributeArgs(const ParsedAttr &AL) {

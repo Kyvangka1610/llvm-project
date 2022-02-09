@@ -18,9 +18,9 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Mangler.h"
 #include "llvm/IR/Module.h"
+#include "llvm/MC/TargetRegistry.h"
 #include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/MemoryBuffer.h"
-#include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace llvm;
 using namespace object;
@@ -32,7 +32,7 @@ IRObjectFile::IRObjectFile(MemoryBufferRef Object,
     SymTab.addModule(M.get());
 }
 
-IRObjectFile::~IRObjectFile() {}
+IRObjectFile::~IRObjectFile() = default;
 
 static ModuleSymbolTable::Symbol getSym(DataRefImpl &Symb) {
   return *reinterpret_cast<ModuleSymbolTable::Symbol *>(Symb.p);

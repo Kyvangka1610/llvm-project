@@ -15,6 +15,7 @@
 #define LLVM_CLANG_LEX_PREPROCESSOR_H
 
 #include "clang/Basic/Diagnostic.h"
+#include "clang/Basic/DiagnosticIDs.h"
 #include "clang/Basic/IdentifierTable.h"
 #include "clang/Basic/LLVM.h"
 #include "clang/Basic/LangOptions.h"
@@ -178,16 +179,11 @@ class Preprocessor {
   IdentifierInfo *Ident__is_target_vendor;         // __is_target_vendor
   IdentifierInfo *Ident__is_target_os;             // __is_target_os
   IdentifierInfo *Ident__is_target_environment;    // __is_target_environment
-  IdentifierInfo *Ident__FLT_EVAL_METHOD__ = nullptr; // __FLT_EVAL_METHOD__
 
   // Weak, only valid (and set) while InMacroArgs is true.
   Token* ArgMacro;
 
   SourceLocation DATELoc, TIMELoc;
-
-  // Corresponding to __FLT_EVAL_METHOD__. Initialized from TargetInfo
-  // or the command line. Implementation-defined values can be negative.
-  int CurrentFPEvalMethod = 0;
 
   // Next __COUNTER__ value, starts at 0.
   unsigned CounterValue = 0;
@@ -453,6 +449,8 @@ public:
           FoundNonSkipPortion(FoundNonSkipPortion), FoundElse(FoundElse),
           ElseLoc(ElseLoc) {}
   };
+
+  using IncludedFilesSet = llvm::DenseSet<const FileEntry *>;
 
 private:
   friend class ASTReader;
@@ -769,6 +767,9 @@ private:
   /// in a submodule.
   SubmoduleState *CurSubmoduleState;
 
+  /// The files that have been included.
+  IncludedFilesSet IncludedFiles;
+
   /// The set of known macros exported from modules.
   llvm::FoldingSet<ModuleMacro> ModuleMacros;
 
@@ -791,8 +792,41 @@ private:
   using WarnUnusedMacroLocsTy = llvm::SmallDenseSet<SourceLocation, 32>;
   WarnUnusedMacroLocsTy WarnUnusedMacroLocs;
 
-  /// Deprecation messages for macros provided in #pragma clang deprecated
-  llvm::DenseMap<const IdentifierInfo *, std::string> MacroDeprecationMsgs;
+  /// This is a pair of an optional message and source location used for pragmas
+  /// that annotate macros like pragma clang restrict_expansion and pragma clang
+  /// deprecated. This pair stores the optional message and the location of the
+  /// annotation pragma for use producing diagnostics and notes.
+  using MsgLocationPair = std::pair<std::string, SourceLocation>;
+
+  struct MacroAnnotationInfo {
+    SourceLocation Location;
+    std::string Message;
+  };
+
+  struct MacroAnnotations {
+    llvm::Optional<MacroAnnotationInfo> DeprecationInfo;
+    llvm::Optional<MacroAnnotationInfo> RestrictExpansionInfo;
+    llvm::Optional<SourceLocation> FinalAnnotationLoc;
+
+    static MacroAnnotations makeDeprecation(SourceLocation Loc,
+                                            std::string Msg) {
+      return MacroAnnotations{MacroAnnotationInfo{Loc, std::move(Msg)},
+                              llvm::None, llvm::None};
+    }
+
+    static MacroAnnotations makeRestrictExpansion(SourceLocation Loc,
+                                                  std::string Msg) {
+      return MacroAnnotations{
+          llvm::None, MacroAnnotationInfo{Loc, std::move(Msg)}, llvm::None};
+    }
+
+    static MacroAnnotations makeFinal(SourceLocation Loc) {
+      return MacroAnnotations{llvm::None, llvm::None, Loc};
+    }
+  };
+
+  /// Warning information for macro annotations.
+  llvm::DenseMap<const IdentifierInfo *, MacroAnnotations> AnnotationInfos;
 
   /// A "freelist" of MacroArg objects that can be
   /// reused for quick allocation.
@@ -1195,6 +1229,22 @@ public:
 
   /// \}
 
+  /// Mark the file as included.
+  /// Returns true if this is the first time the file was included.
+  bool markIncluded(const FileEntry *File) {
+    HeaderInfo.getFileInfo(File);
+    return IncludedFiles.insert(File).second;
+  }
+
+  /// Return true if this header has already been included.
+  bool alreadyIncluded(const FileEntry *File) const {
+    return IncludedFiles.count(File);
+  }
+
+  /// Get the set of included files.
+  IncludedFilesSet &getIncludedFiles() { return IncludedFiles; }
+  const IncludedFilesSet &getIncludedFiles() const { return IncludedFiles; }
+
   /// Return the name of the macro defined before \p Loc that has
   /// spelling \p Tokens.  If there are multiple macros with same spelling,
   /// return the last one defined.
@@ -1339,7 +1389,7 @@ public:
   ///
   /// Emits a diagnostic, doesn't enter the file, and returns true on error.
   bool EnterSourceFile(FileID FID, const DirectoryLookup *Dir,
-                       SourceLocation Loc);
+                       SourceLocation Loc, bool IsFirstIncludeOfFile = true);
 
   /// Add a Macro to the top of the include stack and start lexing
   /// tokens from it instead of the current buffer.
@@ -1997,8 +2047,6 @@ public:
   }
   unsigned getCounterValue() const { return CounterValue; }
   void setCounterValue(unsigned V) { CounterValue = V; }
-  int getCurrentFPEvalMethod() const { return CurrentFPEvalMethod; }
-  void setCurrentFPEvalMethod(int V) { CurrentFPEvalMethod = V; }
 
   /// Retrieves the module that we're currently building, if any.
   Module *getCurrentModule();
@@ -2024,7 +2072,7 @@ public:
   Optional<FileEntryRef>
   LookupFile(SourceLocation FilenameLoc, StringRef Filename, bool isAngled,
              const DirectoryLookup *FromDir, const FileEntry *FromFile,
-             const DirectoryLookup *&CurDir, SmallVectorImpl<char> *SearchPath,
+             const DirectoryLookup **CurDir, SmallVectorImpl<char> *SearchPath,
              SmallVectorImpl<char> *RelativePath,
              ModuleMap::KnownHeader *SuggestedModule, bool *IsMapped,
              bool *IsFrameworkFound, bool SkipCache = false);
@@ -2273,7 +2321,7 @@ private:
   };
 
   Optional<FileEntryRef> LookupHeaderIncludeOrImport(
-      const DirectoryLookup *&CurDir, StringRef &Filename,
+      const DirectoryLookup **CurDir, StringRef &Filename,
       SourceLocation FilenameLoc, CharSourceRange FilenameRange,
       const Token &FilenameTok, bool &IsFrameworkFound, bool IsImportDecl,
       bool &IsMapped, const DirectoryLookup *LookupFrom,
@@ -2398,20 +2446,57 @@ public:
   /// warnings.
   void markMacroAsUsed(MacroInfo *MI);
 
-  void addMacroDeprecationMsg(const IdentifierInfo *II, std::string Msg) {
-    MacroDeprecationMsgs.insert(std::make_pair(II, Msg));
+  void addMacroDeprecationMsg(const IdentifierInfo *II, std::string Msg,
+                              SourceLocation AnnotationLoc) {
+    auto Annotations = AnnotationInfos.find(II);
+    if (Annotations == AnnotationInfos.end())
+      AnnotationInfos.insert(std::make_pair(
+          II,
+          MacroAnnotations::makeDeprecation(AnnotationLoc, std::move(Msg))));
+    else
+      Annotations->second.DeprecationInfo =
+          MacroAnnotationInfo{AnnotationLoc, std::move(Msg)};
   }
 
-  llvm::Optional<std::string> getMacroDeprecationMsg(const IdentifierInfo *II) {
-    auto MsgEntry = MacroDeprecationMsgs.find(II);
-    if (MsgEntry == MacroDeprecationMsgs.end())
-      return llvm::None;
-    return MsgEntry->second;
+  void addRestrictExpansionMsg(const IdentifierInfo *II, std::string Msg,
+                               SourceLocation AnnotationLoc) {
+    auto Annotations = AnnotationInfos.find(II);
+    if (Annotations == AnnotationInfos.end())
+      AnnotationInfos.insert(
+          std::make_pair(II, MacroAnnotations::makeRestrictExpansion(
+                                 AnnotationLoc, std::move(Msg))));
+    else
+      Annotations->second.RestrictExpansionInfo =
+          MacroAnnotationInfo{AnnotationLoc, std::move(Msg)};
   }
 
-  void emitMacroExpansionWarnings(const Token &Identifier);
+  void addFinalLoc(const IdentifierInfo *II, SourceLocation AnnotationLoc) {
+    auto Annotations = AnnotationInfos.find(II);
+    if (Annotations == AnnotationInfos.end())
+      AnnotationInfos.insert(
+          std::make_pair(II, MacroAnnotations::makeFinal(AnnotationLoc)));
+    else
+      Annotations->second.FinalAnnotationLoc = AnnotationLoc;
+  }
+
+  const MacroAnnotations &getMacroAnnotations(const IdentifierInfo *II) const {
+    return AnnotationInfos.find(II)->second;
+  }
+
+  void emitMacroExpansionWarnings(const Token &Identifier) const {
+    if (Identifier.getIdentifierInfo()->isDeprecatedMacro())
+      emitMacroDeprecationWarning(Identifier);
+
+    if (Identifier.getIdentifierInfo()->isRestrictExpansion() &&
+        !SourceMgr.isInMainFile(Identifier.getLocation()))
+      emitRestrictExpansionWarning(Identifier);
+  }
 
 private:
+  void emitMacroDeprecationWarning(const Token &Identifier) const;
+  void emitRestrictExpansionWarning(const Token &Identifier) const;
+  void emitFinalMacroWarning(const Token &Identifier, bool IsUndef) const;
+
   Optional<unsigned>
   getSkippedRangeForExcludedConditionalBlock(SourceLocation HashLoc);
 
