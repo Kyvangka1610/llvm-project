@@ -408,6 +408,7 @@ def Tensor_GenerateOp : Tensor_Op<"generate",
 
   let hasCanonicalizer = 1;
   let hasVerifier = 1;
+  let hasRegionVerifier = 1;
 }
 
 //===----------------------------------------------------------------------===//
@@ -732,9 +733,12 @@ class Tensor_ReassociativeReshapeOp<string mnemonic, list<Trait> traits = []> :
     }
   }];
 
+  let assemblyFormat = [{
+    $src $reassociation attr-dict `:` type($src) `into` type($result)
+  }];
+
   let hasFolder = 1;
   let hasCanonicalizer = 1;
-  let hasCustomAssemblyFormat = 1;
   let hasVerifier = 1;
 }
 
@@ -980,6 +984,7 @@ def Tensor_PadOp : Tensor_Op<"pad", [AttrSizedOperandSegments, NoSideEffect,
   let hasCanonicalizer = 1;
   let hasFolder = 1;
   let hasVerifier = 1;
+  let hasRegionVerifier = 1;
 }
 
 //===----------------------------------------------------------------------===//

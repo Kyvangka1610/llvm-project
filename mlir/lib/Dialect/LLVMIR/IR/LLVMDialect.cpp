@@ -32,7 +32,6 @@
 #include "llvm/Support/Mutex.h"
 #include "llvm/Support/SourceMgr.h"
 
-#include <iostream>
 #include <numeric>
 
 using namespace mlir;
@@ -1341,6 +1340,7 @@ ParseResult ExtractValueOp::parse(OpAsmParser &parser, OperationState &result) {
 
 OpFoldResult LLVM::ExtractValueOp::fold(ArrayRef<Attribute> operands) {
   auto insertValueOp = getContainer().getDefiningOp<InsertValueOp>();
+  OpFoldResult result = {};
   while (insertValueOp) {
     if (getPosition() == insertValueOp.getPosition())
       return insertValueOp.getValue();
@@ -1358,10 +1358,16 @@ OpFoldResult LLVM::ExtractValueOp::fold(ArrayRef<Attribute> operands) {
     // ```
     if (getPosition().getValue().take_front(min) ==
         insertValueOp.getPosition().getValue().take_front(min))
-      return {};
+      return result;
+
+    // If neither a prefix, nor the exact position, we can extract out of the
+    // value being inserted into. Moreover, we can try again if that operand
+    // is itself an insertvalue expression.
+    getContainerMutable().assign(insertValueOp.getContainer());
+    result = getResult();
     insertValueOp = insertValueOp.getContainer().getDefiningOp<InsertValueOp>();
   }
-  return {};
+  return result;
 }
 
 LogicalResult ExtractValueOp::verify() {
@@ -1789,19 +1795,6 @@ LogicalResult GlobalOp::verify() {
           "attribute");
   }
 
-  if (Block *b = getInitializerBlock()) {
-    ReturnOp ret = cast<ReturnOp>(b->getTerminator());
-    if (ret.operand_type_begin() == ret.operand_type_end())
-      return emitOpError("initializer region cannot return void");
-    if (*ret.operand_type_begin() != getType())
-      return emitOpError("initializer region type ")
-             << *ret.operand_type_begin() << " does not match global type "
-             << getType();
-
-    if (getValueOrNull())
-      return emitOpError("cannot have both initializer value and region");
-  }
-
   if (getLinkage() == Linkage::Common) {
     if (Attribute value = getValueOrNull()) {
       if (!isZeroAttribute(value)) {
@@ -1825,6 +1818,30 @@ LogicalResult GlobalOp::verify() {
     uint64_t value = alignAttr.getValue();
     if (!llvm::isPowerOf2_64(value))
       return emitError() << "alignment attribute is not a power of 2";
+  }
+
+  return success();
+}
+
+LogicalResult GlobalOp::verifyRegions() {
+  if (Block *b = getInitializerBlock()) {
+    ReturnOp ret = cast<ReturnOp>(b->getTerminator());
+    if (ret.operand_type_begin() == ret.operand_type_end())
+      return emitOpError("initializer region cannot return void");
+    if (*ret.operand_type_begin() != getType())
+      return emitOpError("initializer region type ")
+             << *ret.operand_type_begin() << " does not match global type "
+             << getType();
+
+    for (Operation &op : *b) {
+      auto iface = dyn_cast<MemoryEffectOpInterface>(op);
+      if (!iface || !iface.hasNoEffect())
+        return op.emitError()
+               << "ops with side effects not allowed in global initializers";
+    }
+
+    if (getValueOrNull())
+      return emitOpError("cannot have both initializer value and region");
   }
 
   return success();
@@ -1881,8 +1898,9 @@ void LLVM::ShuffleVectorOp::build(OpBuilder &b, OperationState &result,
                                   Value v1, Value v2, ArrayAttr mask,
                                   ArrayRef<NamedAttribute> attrs) {
   auto containerType = v1.getType();
-  auto vType = LLVM::getFixedVectorType(
-      LLVM::getVectorElementType(containerType), mask.size());
+  auto vType = LLVM::getVectorType(
+      LLVM::getVectorElementType(containerType), mask.size(),
+      containerType.cast<VectorType>().isScalable());
   build(b, result, vType, v1, v2, mask);
   result.addAttributes(attrs);
 }
@@ -1914,8 +1932,9 @@ ParseResult ShuffleVectorOp::parse(OpAsmParser &parser,
   if (!LLVM::isCompatibleVectorType(typeV1))
     return parser.emitError(
         loc, "expected LLVM IR dialect vector type for operand #1");
-  auto vType = LLVM::getFixedVectorType(LLVM::getVectorElementType(typeV1),
-                                        maskAttr.size());
+  auto vType =
+      LLVM::getVectorType(LLVM::getVectorElementType(typeV1), maskAttr.size(),
+                          typeV1.cast<VectorType>().isScalable());
   result.addTypes(vType);
   return success();
 }
@@ -1925,6 +1944,11 @@ LogicalResult ShuffleVectorOp::verify() {
   Type type2 = getV2().getType();
   if (LLVM::getVectorElementType(type1) != LLVM::getVectorElementType(type2))
     return emitOpError("expected matching LLVM IR Dialect element types");
+  if (LLVM::isScalableVectorType(type1))
+    if (llvm::any_of(getMask(), [](Attribute attr) {
+          return attr.cast<IntegerAttr>().getInt() != 0;
+        }))
+      return emitOpError("expected a splat operation for scalable vectors");
   return success();
 }
 
@@ -2103,7 +2127,6 @@ LogicalResult LLVMFuncOp::verifyType() {
 // - functions don't have 'common' linkage
 // - external functions have 'external' or 'extern_weak' linkage;
 // - vararg is (currently) only supported for external functions;
-// - entry block arguments are of LLVM types and match the function signature.
 LogicalResult LLVMFuncOp::verify() {
   if (getLinkage() == LLVM::Linkage::Common)
     return emitOpError() << "functions cannot have '"
@@ -2131,6 +2154,15 @@ LogicalResult LLVMFuncOp::verify() {
 
   if (isVarArg())
     return emitOpError("only external functions can be variadic");
+
+  return success();
+}
+
+/// Verifies LLVM- and implementation-specific properties of the LLVM func Op:
+/// - entry block arguments are of LLVM types and match the function signature.
+LogicalResult LLVMFuncOp::verifyRegions() {
+  if (isExternal())
+    return success();
 
   unsigned numArguments = getType().getNumParams();
   Block &entryBlock = front();

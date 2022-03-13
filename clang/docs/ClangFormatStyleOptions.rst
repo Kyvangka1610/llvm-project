@@ -236,6 +236,9 @@ the configuration (without a prefix: ``Auto``).
   if not ``None``, when using initialization for an array of structs
   aligns the fields into columns.
 
+  NOTE: As of clang-format 15 this option only applied to arrays with equal
+  number of columns per row.
+
   Possible values:
 
   * ``AIAS_Left`` (in configuration: ``Left``)
@@ -603,7 +606,7 @@ the configuration (without a prefix: ``Auto``).
 
 
 
-**AlignOperands** (``OperandAlignmentStyle``) :versionbadge:`clang-format 12`
+**AlignOperands** (``OperandAlignmentStyle``) :versionbadge:`clang-format 3.5`
   If ``true``, horizontally align operands of binary and ternary
   expressions.
 
@@ -746,7 +749,7 @@ the configuration (without a prefix: ``Auto``).
                                               return;
                                             }
 
-**AllowShortEnumsOnASingleLine** (``Boolean``) :versionbadge:`clang-format 12`
+**AllowShortEnumsOnASingleLine** (``Boolean``) :versionbadge:`clang-format 11`
   Allow short enums on a single line.
 
   .. code-block:: c++
@@ -1988,17 +1991,33 @@ the configuration (without a prefix: ``Auto``).
 
 
 
-**BreakBeforeConceptDeclarations** (``Boolean``) :versionbadge:`clang-format 13`
-  If ``true``, concept will be placed on a new line.
+**BreakBeforeConceptDeclarations** (``BreakBeforeConceptDeclarationsStyle``) :versionbadge:`clang-format 12`
+  The concept declaration style to use.
 
-  .. code-block:: c++
+  Possible values:
 
-    true:
-     template<typename T>
-     concept ...
+  * ``BBCDS_Never`` (in configuration: ``Never``)
+    Keep the template declaration line together with ``concept``.
 
-    false:
-     template<typename T> concept ...
+    .. code-block:: c++
+
+      template <typename T> concept C = ...;
+
+  * ``BBCDS_Allowed`` (in configuration: ``Allowed``)
+    Breaking between template declaration and ``concept`` is allowed. The
+    actual behavior depends on the content and line breaking rules and
+    penalities.
+
+  * ``BBCDS_Always`` (in configuration: ``Always``)
+    Always break before ``concept``, putting it in the line after the
+    template declaration.
+
+    .. code-block:: c++
+
+      template <typename T>
+      concept C = ...;
+
+
 
 **BreakBeforeTernaryOperators** (``Boolean``) :versionbadge:`clang-format 3.7`
   If ``true``, ternary operators will be placed after line breaks.
@@ -2262,7 +2281,7 @@ the configuration (without a prefix: ``Auto``).
 
 
 
-**EmptyLineBeforeAccessModifier** (``EmptyLineBeforeAccessModifierStyle``) :versionbadge:`clang-format 13`
+**EmptyLineBeforeAccessModifier** (``EmptyLineBeforeAccessModifierStyle``) :versionbadge:`clang-format 12`
   Defines in which cases to put empty line before access modifiers.
 
   Possible values:
@@ -2587,7 +2606,7 @@ the configuration (without a prefix: ``Auto``).
        plop();                                  plop();
      }                                      }
 
-**IndentExternBlock** (``IndentExternBlockStyle``) :versionbadge:`clang-format 12`
+**IndentExternBlock** (``IndentExternBlockStyle``) :versionbadge:`clang-format 11`
   IndentExternBlockStyle is the type of indenting of extern blocks.
 
   Possible values:
@@ -2690,8 +2709,11 @@ the configuration (without a prefix: ``Auto``).
 
 
 
-**IndentRequires** (``Boolean``) :versionbadge:`clang-format 13`
-  Indent the requires clause in a template
+**IndentRequiresClause** (``Boolean``) :versionbadge:`clang-format 15`
+  Indent the requires clause in a template. This only applies when
+  ``RequiresClausePosition`` is ``OwnLine``, or ``WithFollowing``.
+
+  In clang-format 12, 13 and 14 it was named ``IndentRequires``.
 
   .. code-block:: c++
 
@@ -2737,7 +2759,40 @@ the configuration (without a prefix: ``Auto``).
      LoooooooooooooooooooooooooooooooooooooooongReturnType
      LoooooooooooooooooooooooooooooooongFunctionDeclaration();
 
-**InsertTrailingCommas** (``TrailingCommaStyle``) :versionbadge:`clang-format 12`
+**InsertBraces** (``Boolean``) :versionbadge:`clang-format 15`
+  Insert braces after control statements (``if``, ``else``, ``for``, ``do``,
+  and ``while``) in C++ unless the control statements are inside macro
+  definitions or the braces would enclose preprocessor directives.
+
+  .. warning:: 
+
+   Setting this option to `true` could lead to incorrect code formatting due
+   to clang-format's lack of complete semantic information. As such, extra
+   care should be taken to review code changes made by this option.
+
+  .. code-block:: c++
+
+    false:                                    true:
+
+    if (isa<FunctionDecl>(D))        vs.      if (isa<FunctionDecl>(D)) {
+      handleFunctionDecl(D);                    handleFunctionDecl(D);
+    else if (isa<VarDecl>(D))                 } else if (isa<VarDecl>(D)) {
+      handleVarDecl(D);                         handleVarDecl(D);
+    else                                      } else {
+      return;                                   return;
+                                              }
+
+    while (i--)                      vs.      while (i--) {
+      for (auto *A : D.attrs())                 for (auto *A : D.attrs()) {
+        handleAttr(A);                            handleAttr(A);
+                                                }
+                                              }
+
+    do                               vs.      do {
+      --i;                                      --i;
+    while (i);                                } while (i);
+
+**InsertTrailingCommas** (``TrailingCommaStyle``) :versionbadge:`clang-format 11`
   If set to ``TCS_Wrapped`` will insert trailing commas in container
   literals (arrays and objects) that wrap across multiple lines.
   It is currently only available for JavaScript
@@ -3095,7 +3150,7 @@ the configuration (without a prefix: ``Auto``).
          [self onOperationDone];
      }];
 
-**ObjCBreakBeforeNestedBlockParam** (``Boolean``) :versionbadge:`clang-format 12`
+**ObjCBreakBeforeNestedBlockParam** (``Boolean``) :versionbadge:`clang-format 11`
   Break parameters list into lines when there is nested block
   parameters in a function call.
 
@@ -3473,6 +3528,92 @@ the configuration (without a prefix: ``Auto``).
         e();
       }
     }
+
+**RequiresClausePosition** (``RequiresClausePositionStyle``) :versionbadge:`clang-format 15`
+  The position of the ``requires`` clause.
+
+  Possible values:
+
+  * ``RCPS_OwnLine`` (in configuration: ``OwnLine``)
+    Always put the ``requires`` clause on its own line.
+
+    .. code-block:: c++
+
+      template <typename T>
+      requires C<T>
+      struct Foo {...
+
+      template <typename T>
+      requires C<T>
+      void bar(T t) {...
+
+      template <typename T>
+      void baz(T t)
+      requires C<T>
+      {...
+
+  * ``RCPS_WithPreceding`` (in configuration: ``WithPreceding``)
+    Try to put the clause together with the preceding part of a declaration.
+    For class templates: stick to the template declaration.
+    For function templates: stick to the template declaration.
+    For function declaration followed by a requires clause: stick to the
+    parameter list.
+
+    .. code-block:: c++
+
+      template <typename T> requires C<T>
+      struct Foo {...
+
+      template <typename T> requires C<T>
+      void bar(T t) {...
+
+      template <typename T>
+      void baz(T t) requires C<T>
+      {...
+
+  * ``RCPS_WithFollowing`` (in configuration: ``WithFollowing``)
+    Try to put the ``requires`` clause together with the class or function
+    declaration.
+
+    .. code-block:: c++
+
+      template <typename T>
+      requires C<T> struct Foo {...
+
+      template <typename T>
+      requires C<T> void bar(T t) {...
+
+      template <typename T>
+      void baz(T t)
+      requires C<T> {...
+
+  * ``RCPS_SingleLine`` (in configuration: ``SingleLine``)
+    Try to put everything in the same line if possible. Otherwise normal
+    line breaking rules take over.
+
+    .. code-block:: c++
+
+      // Fitting:
+      template <typename T> requires C<T> struct Foo {...
+
+      template <typename T> requires C<T> void bar(T t) {...
+
+      template <typename T> void bar(T t) requires C<T> {...
+
+      // Not fitting, one possible example:
+      template <typename LongName>
+      requires C<LongName>
+      struct Foo {...
+
+      template <typename LongName>
+      requires C<LongName>
+      void bar(LongName ln) {
+
+      template <typename LongName>
+      void bar(LongName ln)
+          requires C<LongName> {
+
+
 
 **SeparateDefinitionBlocks** (``SeparateDefinitionStyle``) :versionbadge:`clang-format 14`
   Specifies the use of empty lines to separate definition blocks, including
@@ -3901,6 +4042,27 @@ the configuration (without a prefix: ``Auto``).
        void operator++ (int a);        vs.    void operator++(int a);
        object.operator++ (10);                object.operator++(10);
 
+  * ``bool AfterRequiresInClause`` If ``true``, put space between requires keyword in a requires clause and
+    opening parentheses, if there is one.
+
+    .. code-block:: c++
+
+       true:                                  false:
+       template<typename T>            vs.    template<typename T>
+       requires (A<T> && B<T>)                requires(A<T> && B<T>)
+       ...                                    ...
+
+  * ``bool AfterRequiresInExpression`` If ``true``, put space between requires keyword in a requires expression
+    and opening parentheses.
+
+    .. code-block:: c++
+
+       true:                                  false:
+       template<typename T>            vs.    template<typename T>
+       concept C = requires (T t) {           concept C = requires(T t) {
+                     ...                                    ...
+                   }                                      }
+
   * ``bool BeforeNonEmptyParentheses`` If ``true``, put a space before opening parentheses only if the
     parentheses are not empty.
 
@@ -4196,7 +4358,7 @@ the configuration (without a prefix: ``Auto``).
 
 
 
-**WhitespaceSensitiveMacros** (``List of Strings``) :versionbadge:`clang-format 12`
+**WhitespaceSensitiveMacros** (``List of Strings``) :versionbadge:`clang-format 11`
   A vector of macros which are whitespace-sensitive and should not
   be touched.
 

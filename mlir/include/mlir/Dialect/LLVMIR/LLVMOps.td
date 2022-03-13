@@ -296,8 +296,9 @@ def LLVM_AllocaOp : LLVM_Op<"alloca">, MemoryOpWithAlignmentBase {
                    OptionalAttr<I64Attr>:$alignment);
   let results = (outs Res<LLVM_AnyPointer, "", [MemAlloc<AutomaticAllocationScopeResource>]>:$res);
   string llvmBuilder = [{
+    auto addrSpace = $_resultType->getPointerAddressSpace();
     auto *inst = builder.CreateAlloca(
-      $_resultType->getPointerElementType(), $arraySize);
+        $_resultType->getPointerElementType(), addrSpace, $arraySize);
     }] # setAlignmentCode # [{
     $res = inst;
   }];
@@ -1139,6 +1140,7 @@ def LLVM_GlobalOp : LLVM_Op<"mlir.global",
 
   let hasCustomAssemblyFormat = 1;
   let hasVerifier = 1;
+  let hasRegionVerifier = 1;
 }
 
 def LLVM_GlobalCtorsOp : LLVM_Op<"mlir.global_ctors", [
@@ -1237,6 +1239,7 @@ def LLVM_LLVMFuncOp : LLVM_Op<"func", [
   let arguments = (ins DefaultValuedAttr<Linkage, "Linkage::External">:$linkage,
                    UnitAttr:$dso_local,
                    OptionalAttr<FlatSymbolRefAttr>:$personality,
+                   OptionalAttr<StrAttr>:$garbageCollector,
                    OptionalAttr<ArrayAttr>:$passthrough);
 
   let regions = (region AnyRegion:$body);
@@ -1275,6 +1278,7 @@ def LLVM_LLVMFuncOp : LLVM_Op<"func", [
 
   let hasCustomAssemblyFormat = 1;
   let hasVerifier = 1;
+  let hasRegionVerifier = 1;
 }
 
 def LLVM_NullOp

@@ -773,6 +773,40 @@ ExprResult Sema::UsualUnaryConversions(Expr *E) {
   QualType Ty = E->getType();
   assert(!Ty.isNull() && "UsualUnaryConversions - missing type");
 
+  LangOptions::FPEvalMethodKind EvalMethod = CurFPFeatures.getFPEvalMethod();
+  if (EvalMethod != LangOptions::FEM_Source && Ty->isFloatingType() &&
+      (getLangOpts().getFPEvalMethod() !=
+           LangOptions::FPEvalMethodKind::FEM_UnsetOnCommandLine ||
+       PP.getLastFPEvalPragmaLocation().isValid())) {
+    switch (EvalMethod) {
+    default:
+      llvm_unreachable("Unrecognized float evaluation method");
+      break;
+    case LangOptions::FEM_UnsetOnCommandLine:
+      llvm_unreachable("Float evaluation method should be set by now");
+      break;
+    case LangOptions::FEM_Double:
+      if (Context.getFloatingTypeOrder(Context.DoubleTy, Ty) > 0)
+        // Widen the expression to double.
+        return Ty->isComplexType()
+                   ? ImpCastExprToType(E,
+                                       Context.getComplexType(Context.DoubleTy),
+                                       CK_FloatingComplexCast)
+                   : ImpCastExprToType(E, Context.DoubleTy, CK_FloatingCast);
+      break;
+    case LangOptions::FEM_Extended:
+      if (Context.getFloatingTypeOrder(Context.LongDoubleTy, Ty) > 0)
+        // Widen the expression to long double.
+        return Ty->isComplexType()
+                   ? ImpCastExprToType(
+                         E, Context.getComplexType(Context.LongDoubleTy),
+                         CK_FloatingComplexCast)
+                   : ImpCastExprToType(E, Context.LongDoubleTy,
+                                       CK_FloatingCast);
+      break;
+    }
+  }
+
   // Half FP have to be promoted to float unless it is natively supported
   if (Ty->isHalfType() && !getLangOpts().NativeHalfType)
     return ImpCastExprToType(Res.get(), Context.FloatTy, CK_FloatingCast);
@@ -3022,7 +3056,7 @@ Sema::PerformObjectMemberConversion(Expr *From,
     QualType QType = QualType(Qualifier->getAsType(), 0);
     assert(QType->isRecordType() && "lookup done with non-record type");
 
-    QualType QRecordType = QualType(QType->getAs<RecordType>(), 0);
+    QualType QRecordType = QualType(QType->castAs<RecordType>(), 0);
 
     // In C++98, the qualifier type doesn't actually have to be a base
     // type of the object type, in which case we just ignore it.
@@ -3194,8 +3228,12 @@ ExprResult Sema::BuildDeclarationNameExpr(
          "Cannot refer unambiguously to a function template");
 
   SourceLocation Loc = NameInfo.getLoc();
-  if (CheckDeclInExpr(*this, Loc, D))
-    return ExprError();
+  if (CheckDeclInExpr(*this, Loc, D)) {
+    // Recovery from invalid cases (e.g. D is an invalid Decl).
+    // We use the dependent type for the RecoveryExpr to prevent bogus follow-up
+    // diagnostics, as invalid decls use int as a fallback type.
+    return CreateRecoveryExpr(NameInfo.getBeginLoc(), NameInfo.getEndLoc(), {});
+  }
 
   if (TemplateDecl *Template = dyn_cast<TemplateDecl>(D)) {
     // Specifically diagnose references to class templates that are missing
@@ -6416,6 +6454,38 @@ tryImplicitlyCaptureThisIfImplicitMemberFunctionAccessWithDependentArgs(
   }
 }
 
+// Once a call is fully resolved, warn for unqualified calls to specific
+// C++ standard functions, like move and forward.
+static void DiagnosedUnqualifiedCallsToStdFunctions(Sema &S, CallExpr *Call) {
+  // We are only checking unary move and forward so exit early here.
+  if (Call->getNumArgs() != 1)
+    return;
+
+  Expr *E = Call->getCallee()->IgnoreParenImpCasts();
+  if (!E || isa<UnresolvedLookupExpr>(E))
+    return;
+  DeclRefExpr *DRE = dyn_cast_or_null<DeclRefExpr>(E);
+  if (!DRE || !DRE->getLocation().isValid())
+    return;
+
+  if (DRE->getQualifier())
+    return;
+
+  NamedDecl *D = dyn_cast_or_null<NamedDecl>(Call->getCalleeDecl());
+  if (!D || !D->isInStdNamespace())
+    return;
+
+  // Only warn for some functions deemed more frequent or problematic.
+  static constexpr llvm::StringRef SpecialFunctions[] = {"move", "forward"};
+  auto it = llvm::find(SpecialFunctions, D->getName());
+  if (it == std::end(SpecialFunctions))
+    return;
+
+  S.Diag(DRE->getLocation(), diag::warn_unqualified_call_to_std_cast_function)
+      << D->getQualifiedNameAsString()
+      << FixItHint::CreateInsertion(DRE->getLocation(), "std::");
+}
+
 ExprResult Sema::ActOnCallExpr(Scope *Scope, Expr *Fn, SourceLocation LParenLoc,
                                MultiExprArg ArgExprs, SourceLocation RParenLoc,
                                Expr *ExecConfig) {
@@ -6440,7 +6510,11 @@ ExprResult Sema::ActOnCallExpr(Scope *Scope, Expr *Fn, SourceLocation LParenLoc,
   if (LangOpts.OpenMP)
     Call = ActOnOpenMPCall(Call, Scope, LParenLoc, ArgExprs, RParenLoc,
                            ExecConfig);
-
+  if (LangOpts.CPlusPlus) {
+    CallExpr *CE = dyn_cast<CallExpr>(Call.get());
+    if (CE)
+      DiagnosedUnqualifiedCallsToStdFunctions(*this, CE);
+  }
   return Call;
 }
 
@@ -10035,7 +10109,7 @@ static bool tryGCCVectorConvertAndSplat(Sema &S, ExprResult *Scalar,
                                         ExprResult *Vector) {
   QualType ScalarTy = Scalar->get()->getType().getUnqualifiedType();
   QualType VectorTy = Vector->get()->getType().getUnqualifiedType();
-  const VectorType *VT = VectorTy->getAs<VectorType>();
+  const auto *VT = VectorTy->castAs<VectorType>();
 
   assert(!isa<ExtVectorType>(VT) &&
          "ExtVectorTypes should not be handled here!");
@@ -10329,6 +10403,29 @@ QualType Sema::CheckVectorOperands(ExprResult &LHS, ExprResult &RHS,
   return QualType();
 }
 
+QualType Sema::CheckSizelessVectorOperands(ExprResult &LHS, ExprResult &RHS,
+                                           SourceLocation Loc) {
+  QualType LHSType = LHS.get()->getType().getUnqualifiedType();
+  QualType RHSType = RHS.get()->getType().getUnqualifiedType();
+
+  const BuiltinType *LHSVecType = LHSType->getAs<BuiltinType>();
+  const BuiltinType *RHSVecType = RHSType->getAs<BuiltinType>();
+
+  unsigned DiagID = diag::err_typecheck_invalid_operands;
+  if (LHSVecType->isSVEBool() || RHSVecType->isSVEBool()) {
+    Diag(Loc, DiagID) << LHSType << RHSType << LHS.get()->getSourceRange()
+                      << RHS.get()->getSourceRange();
+    return QualType();
+  }
+
+  if (Context.hasSameType(LHSType, RHSType))
+    return LHSType;
+
+  Diag(Loc, DiagID) << LHSType << RHSType << LHS.get()->getSourceRange()
+                    << RHS.get()->getSourceRange();
+  return QualType();
+}
+
 // checkArithmeticNull - Detect when a NULL constant is used improperly in an
 // expression.  These are mainly cases where the null pointer is used as an
 // integer instead of a pointer.
@@ -10438,8 +10535,10 @@ QualType Sema::CheckMultiplyDivideOperands(ExprResult &LHS, ExprResult &RHS,
   QualType RHSTy = RHS.get()->getType();
   if (LHSTy->isVectorType() || RHSTy->isVectorType())
     return CheckVectorOperands(LHS, RHS, Loc, IsCompAssign,
-                               /*AllowBothBool*/getLangOpts().AltiVec,
-                               /*AllowBoolConversions*/false);
+                               /*AllowBothBool*/ getLangOpts().AltiVec,
+                               /*AllowBoolConversions*/ false);
+  if (LHSTy->isVLSTBuiltinType() || RHSTy->isVLSTBuiltinType())
+    return CheckSizelessVectorOperands(LHS, RHS, Loc);
   if (!IsDiv &&
       (LHSTy->isConstantMatrixType() || RHSTy->isConstantMatrixType()))
     return CheckMatrixMultiplyOperands(LHS, RHS, Loc, IsCompAssign);
@@ -10474,6 +10573,21 @@ QualType Sema::CheckRemainderOperands(
       return CheckVectorOperands(LHS, RHS, Loc, IsCompAssign,
                                  /*AllowBothBool*/getLangOpts().AltiVec,
                                  /*AllowBoolConversions*/false);
+    return InvalidOperands(Loc, LHS, RHS);
+  }
+
+  if (LHS.get()->getType()->isVLSTBuiltinType() &&
+      RHS.get()->getType()->isVLSTBuiltinType()) {
+    if (LHS.get()
+            ->getType()
+            ->getSveEltType(Context)
+            ->hasIntegerRepresentation() &&
+        RHS.get()
+            ->getType()
+            ->getSveEltType(Context)
+            ->hasIntegerRepresentation())
+      return CheckSizelessVectorOperands(LHS, RHS, Loc);
+
     return InvalidOperands(Loc, LHS, RHS);
   }
 
@@ -10782,6 +10896,14 @@ QualType Sema::CheckAdditionOperands(ExprResult &LHS, ExprResult &RHS,
     return compType;
   }
 
+  if (LHS.get()->getType()->isVLSTBuiltinType() ||
+      RHS.get()->getType()->isVLSTBuiltinType()) {
+    QualType compType = CheckSizelessVectorOperands(LHS, RHS, Loc);
+    if (CompLHSTy)
+      *CompLHSTy = compType;
+    return compType;
+  }
+
   if (LHS.get()->getType()->isConstantMatrixType() ||
       RHS.get()->getType()->isConstantMatrixType()) {
     QualType compType =
@@ -10883,6 +11005,14 @@ QualType Sema::CheckSubtractionOperands(ExprResult &LHS, ExprResult &RHS,
         /*AllowBothBool*/getLangOpts().AltiVec,
         /*AllowBoolConversions*/getLangOpts().ZVector);
     if (CompLHSTy) *CompLHSTy = compType;
+    return compType;
+  }
+
+  if (LHS.get()->getType()->isVLSTBuiltinType() ||
+      RHS.get()->getType()->isVLSTBuiltinType()) {
+    QualType compType = CheckSizelessVectorOperands(LHS, RHS, Loc);
+    if (CompLHSTy)
+      *CompLHSTy = compType;
     return compType;
   }
 
@@ -16747,7 +16877,10 @@ ExprResult Sema::CheckForImmediateInvocation(ExprResult E, FunctionDecl *Decl) {
       ConstantExpr::getStorageKind(Decl->getReturnType().getTypePtr(),
                                    getASTContext()),
       /*IsImmediateInvocation*/ true);
-  ExprEvalContexts.back().ImmediateInvocationCandidates.emplace_back(Res, 0);
+  /// Value-dependent constant expressions should not be immediately
+  /// evaluated until they are instantiated.
+  if (!Res->isValueDependent())
+    ExprEvalContexts.back().ImmediateInvocationCandidates.emplace_back(Res, 0);
   return Res;
 }
 
@@ -17427,7 +17560,7 @@ MarkVarDeclODRUsed(VarDecl *Var, SourceLocation Loc, Sema &SemaRef,
     CaptureType, DeclRefType,
     FunctionScopeIndexToStopAt);
 
-  if (SemaRef.LangOpts.CUDA && Var && Var->hasGlobalStorage()) {
+  if (SemaRef.LangOpts.CUDA && Var->hasGlobalStorage()) {
     auto *FD = dyn_cast_or_null<FunctionDecl>(SemaRef.CurContext);
     auto VarTarget = SemaRef.IdentifyCUDATarget(Var);
     auto UserTarget = SemaRef.IdentifyCUDATarget(FD);

@@ -8,10 +8,12 @@
 
 #include "flang/Lower/Runtime.h"
 #include "flang/Lower/Bridge.h"
+#include "flang/Lower/StatementContext.h"
 #include "flang/Lower/Todo.h"
 #include "flang/Optimizer/Builder/FIRBuilder.h"
 #include "flang/Optimizer/Builder/Runtime/RTBuilder.h"
 #include "flang/Parser/parse-tree.h"
+#include "flang/Runtime/pointer.h"
 #include "flang/Runtime/stop.h"
 #include "flang/Semantics/tools.h"
 #include "llvm/Support/Debug.h"
@@ -38,13 +40,15 @@ void Fortran::lower::genStopStatement(
     const Fortran::parser::StopStmt &stmt) {
   fir::FirOpBuilder &builder = converter.getFirOpBuilder();
   mlir::Location loc = converter.getCurrentLocation();
+  Fortran::lower::StatementContext stmtCtx;
   llvm::SmallVector<mlir::Value> operands;
   mlir::FuncOp callee;
   mlir::FunctionType calleeType;
   // First operand is stop code (zero if absent)
   if (const auto &code =
           std::get<std::optional<Fortran::parser::StopCode>>(stmt.t)) {
-    auto expr = converter.genExprValue(*Fortran::semantics::GetExpr(*code));
+    auto expr =
+        converter.genExprValue(*Fortran::semantics::GetExpr(*code), stmtCtx);
     LLVM_DEBUG(llvm::dbgs() << "stop expression: "; expr.dump();
                llvm::dbgs() << '\n');
     expr.match(
@@ -88,7 +92,7 @@ void Fortran::lower::genStopStatement(
           std::get<std::optional<Fortran::parser::ScalarLogicalExpr>>(stmt.t)) {
     const SomeExpr *expr = Fortran::semantics::GetExpr(*quiet);
     assert(expr && "failed getting typed expression");
-    mlir::Value q = fir::getBase(converter.genExprValue(*expr));
+    mlir::Value q = fir::getBase(converter.genExprValue(*expr, stmtCtx));
     operands.push_back(
         builder.createConvert(loc, calleeType.getInput(operands.size()), q));
   } else {
@@ -108,4 +112,16 @@ void Fortran::lower::genPauseStatement(
   mlir::FuncOp callee =
       fir::runtime::getRuntimeFunc<mkRTKey(PauseStatement)>(loc, builder);
   builder.create<fir::CallOp>(loc, callee, llvm::None);
+}
+
+mlir::Value Fortran::lower::genAssociated(fir::FirOpBuilder &builder,
+                                          mlir::Location loc,
+                                          mlir::Value pointer,
+                                          mlir::Value target) {
+  mlir::FuncOp func =
+      fir::runtime::getRuntimeFunc<mkRTKey(PointerIsAssociatedWith)>(loc,
+                                                                     builder);
+  llvm::SmallVector<mlir::Value> args = fir::runtime::createArguments(
+      builder, loc, func.getType(), pointer, target);
+  return builder.create<fir::CallOp>(loc, func, args).getResult(0);
 }

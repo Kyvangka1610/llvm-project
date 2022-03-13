@@ -1209,10 +1209,10 @@ def C11NoReturn : InheritableAttr {
 }
 
 def CXX11NoReturn : InheritableAttr {
-  let Spellings = [CXX11<"", "noreturn", 200809>];
+  let Spellings = [CXX11<"", "noreturn", 200809>,
+                   C2x<"", "noreturn", 202202>, C2x<"", "_Noreturn", 202202>];
   let Subjects = SubjectList<[Function], ErrorDiag>;
   let Documentation = [CXX11NoReturnDocs];
-  let SimpleHandler = 1;
 }
 
 // Similar to CUDA, OpenCL attributes do not receive a [[]] spelling because
@@ -1390,7 +1390,6 @@ def : MutualExclusions<[Likely, Unlikely]>;
 def NoMerge : DeclOrStmtAttr {
   let Spellings = [Clang<"nomerge">];
   let Documentation = [NoMergeDocs];
-  let InheritEvenIfAlreadyPresent = 1;
   let Subjects = SubjectList<[Function, Stmt], ErrorDiag,
                              "functions and statements">;
   let SimpleHandler = 1;
@@ -1761,10 +1760,14 @@ def Convergent : InheritableAttr {
   let SimpleHandler = 1;
 }
 
-def NoInline : InheritableAttr {
-  let Spellings = [GCC<"noinline">, Declspec<"noinline">];
-  let Subjects = SubjectList<[Function]>;
-  let Documentation = [Undocumented];
+def NoInline : DeclOrStmtAttr {
+  let Spellings = [GCC<"noinline">, CXX11<"clang", "noinline">,
+                   C2x<"clang", "noinline">, Declspec<"noinline">];
+  let Accessors = [Accessor<"isClangNoInline", [CXX11<"clang", "noinline">,
+                                                C2x<"clang", "noinline">]>];
+  let Documentation = [NoInlineDocs];
+  let Subjects = SubjectList<[Function, Stmt], ErrorDiag,
+                             "functions and statements">;
   let SimpleHandler = 1;
 }
 

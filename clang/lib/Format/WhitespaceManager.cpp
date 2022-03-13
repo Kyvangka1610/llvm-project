@@ -331,6 +331,12 @@ AlignTokenSequence(const FormatStyle &Style, unsigned Start, unsigned End,
       FoundMatchOnLine = true;
       Shift = Column - Changes[i].StartOfTokenColumn;
       Changes[i].Spaces += Shift;
+      // FIXME: This is a workaround that should be removed when we fix
+      // http://llvm.org/PR53699. An assertion later below verifies this.
+      if (Changes[i].NewlinesBefore == 0)
+        Changes[i].Spaces =
+            std::max(Changes[i].Spaces,
+                     static_cast<int>(Changes[i].Tok->SpacesRequiredBefore));
     }
 
     // This is for function parameters that are split across multiple lines,
@@ -398,6 +404,12 @@ AlignTokenSequence(const FormatStyle &Style, unsigned Start, unsigned End,
 
     if (ContinuedStringLiteral)
       Changes[i].Spaces += Shift;
+
+    // We should not remove required spaces unless we break the line before.
+    assert(Shift >= 0 || Changes[i].NewlinesBefore > 0 ||
+           Changes[i].Spaces >=
+               static_cast<int>(Changes[i].Tok->SpacesRequiredBefore) ||
+           Changes[i].Tok->is(tok::eof));
 
     Changes[i].StartOfTokenColumn += Shift;
     if (i + 1 != Changes.size())
@@ -1020,11 +1032,13 @@ void WhitespaceManager::alignArrayInitializers(unsigned Start, unsigned End) {
 
 void WhitespaceManager::alignArrayInitializersRightJustified(
     CellDescriptions &&CellDescs) {
-  auto &Cells = CellDescs.Cells;
+  if (!CellDescs.isRectangular())
+    return;
 
+  auto &Cells = CellDescs.Cells;
   // Now go through and fixup the spaces.
   auto *CellIter = Cells.begin();
-  for (auto i = 0U; i < CellDescs.CellCount; ++i, ++CellIter) {
+  for (auto i = 0U; i < CellDescs.CellCounts[0]; ++i, ++CellIter) {
     unsigned NetWidth = 0U;
     if (isSplitCell(*CellIter))
       NetWidth = getNetWidth(Cells.begin(), CellIter, CellDescs.InitialSpaces);
@@ -1046,16 +1060,16 @@ void WhitespaceManager::alignArrayInitializersRightJustified(
       if (CellIter != Cells.begin()) {
         auto ThisNetWidth =
             getNetWidth(Cells.begin(), CellIter, CellDescs.InitialSpaces);
-        auto MaxNetWidth =
-            getMaximumNetWidth(Cells.begin(), CellIter, CellDescs.InitialSpaces,
-                               CellDescs.CellCount);
+        auto MaxNetWidth = getMaximumNetWidth(
+            Cells.begin(), CellIter, CellDescs.InitialSpaces,
+            CellDescs.CellCounts[0], CellDescs.CellCounts.size());
         if (ThisNetWidth < MaxNetWidth)
           Changes[CellIter->Index].Spaces = (MaxNetWidth - ThisNetWidth);
         auto RowCount = 1U;
         auto Offset = std::distance(Cells.begin(), CellIter);
         for (const auto *Next = CellIter->NextColumnElement; Next != nullptr;
              Next = Next->NextColumnElement) {
-          auto *Start = (Cells.begin() + RowCount * CellDescs.CellCount);
+          auto *Start = (Cells.begin() + RowCount * CellDescs.CellCounts[0]);
           auto *End = Start + Offset;
           ThisNetWidth = getNetWidth(Start, End, CellDescs.InitialSpaces);
           if (ThisNetWidth < MaxNetWidth)
@@ -1088,8 +1102,11 @@ void WhitespaceManager::alignArrayInitializersRightJustified(
 
 void WhitespaceManager::alignArrayInitializersLeftJustified(
     CellDescriptions &&CellDescs) {
-  auto &Cells = CellDescs.Cells;
 
+  if (!CellDescs.isRectangular())
+    return;
+
+  auto &Cells = CellDescs.Cells;
   // Now go through and fixup the spaces.
   auto *CellIter = Cells.begin();
   // The first cell needs to be against the left brace.
@@ -1098,9 +1115,10 @@ void WhitespaceManager::alignArrayInitializersLeftJustified(
   else
     Changes[CellIter->Index].Spaces = CellDescs.InitialSpaces;
   ++CellIter;
-  for (auto i = 1U; i < CellDescs.CellCount; i++, ++CellIter) {
+  for (auto i = 1U; i < CellDescs.CellCounts[0]; i++, ++CellIter) {
     auto MaxNetWidth = getMaximumNetWidth(
-        Cells.begin(), CellIter, CellDescs.InitialSpaces, CellDescs.CellCount);
+        Cells.begin(), CellIter, CellDescs.InitialSpaces,
+        CellDescs.CellCounts[0], CellDescs.CellCounts.size());
     auto ThisNetWidth =
         getNetWidth(Cells.begin(), CellIter, CellDescs.InitialSpaces);
     if (Changes[CellIter->Index].NewlinesBefore == 0) {
@@ -1112,7 +1130,10 @@ void WhitespaceManager::alignArrayInitializersLeftJustified(
     auto Offset = std::distance(Cells.begin(), CellIter);
     for (const auto *Next = CellIter->NextColumnElement; Next != nullptr;
          Next = Next->NextColumnElement) {
-      auto *Start = (Cells.begin() + RowCount * CellDescs.CellCount);
+      if (RowCount > CellDescs.CellCounts.size()) {
+        break;
+      }
+      auto *Start = (Cells.begin() + RowCount * CellDescs.CellCounts[0]);
       auto *End = Start + Offset;
       auto ThisNetWidth = getNetWidth(Start, End, CellDescs.InitialSpaces);
       if (Changes[Next->Index].NewlinesBefore == 0) {
@@ -1140,7 +1161,7 @@ WhitespaceManager::CellDescriptions WhitespaceManager::getCells(unsigned Start,
 
   unsigned Depth = 0;
   unsigned Cell = 0;
-  unsigned CellCount = 0;
+  SmallVector<unsigned> CellCounts;
   unsigned InitialSpaces = 0;
   unsigned InitialTokenLength = 0;
   unsigned EndSpaces = 0;
@@ -1180,7 +1201,8 @@ WhitespaceManager::CellDescriptions WhitespaceManager::getCells(unsigned Start,
         if (!Cells.empty())
           Cells.back().EndIndex = i;
         Cells.push_back(CellDescription{i, ++Cell, i + 1, false, nullptr});
-        CellCount = C.Tok->Previous->isNot(tok::comma) ? Cell + 1 : Cell;
+        CellCounts.push_back(C.Tok->Previous->isNot(tok::comma) ? Cell + 1
+                                                                : Cell);
         // Go to the next non-comment and ensure there is a break in front
         const auto *NextNonComment = C.Tok->getNextNonComment();
         while (NextNonComment->is(tok::comma))
@@ -1250,7 +1272,7 @@ WhitespaceManager::CellDescriptions WhitespaceManager::getCells(unsigned Start,
     }
   }
 
-  return linkCells({Cells, CellCount, InitialSpaces});
+  return linkCells({Cells, CellCounts, InitialSpaces});
 }
 
 unsigned WhitespaceManager::calculateCellWidth(unsigned Start, unsigned End,

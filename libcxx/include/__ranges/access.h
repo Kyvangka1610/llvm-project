@@ -14,9 +14,7 @@
 #include <__iterator/concepts.h>
 #include <__iterator/readable_traits.h>
 #include <__ranges/enable_borrowed_range.h>
-#include <__utility/as_const.h>
 #include <__utility/auto_cast.h>
-#include <concepts>
 #include <type_traits>
 
 #if !defined(_LIBCPP_HAS_NO_PRAGMA_SYSTEM_HEADER)
@@ -60,14 +58,14 @@ namespace __begin {
   struct __fn {
     template <class _Tp>
     [[nodiscard]] _LIBCPP_HIDE_FROM_ABI constexpr auto operator()(_Tp (&__t)[]) const noexcept
-      requires (sizeof(_Tp) != 0)  // Disallow incomplete element types.
+      requires (sizeof(_Tp) >= 0)  // Disallow incomplete element types.
     {
       return __t + 0;
     }
 
     template <class _Tp, size_t _Np>
     [[nodiscard]] _LIBCPP_HIDE_FROM_ABI constexpr auto operator()(_Tp (&__t)[_Np]) const noexcept
-      requires (sizeof(_Tp) != 0)  // Disallow incomplete element types.
+      requires (sizeof(_Tp) >= 0)  // Disallow incomplete element types.
     {
       return __t + 0;
     }
@@ -134,7 +132,7 @@ namespace __end {
   public:
     template <class _Tp, size_t _Np>
     [[nodiscard]] _LIBCPP_HIDE_FROM_ABI constexpr auto operator()(_Tp (&__t)[_Np]) const noexcept
-      requires (sizeof(_Tp) != 0)  // Disallow incomplete element types.
+      requires (sizeof(_Tp) >= 0)  // Disallow incomplete element types.
     {
       return __t + _Np;
     }
