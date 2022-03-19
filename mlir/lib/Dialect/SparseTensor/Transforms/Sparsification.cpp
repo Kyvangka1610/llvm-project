@@ -16,6 +16,7 @@
 #include "mlir/Dialect/Arithmetic/IR/Arithmetic.h"
 #include "mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Utils/Utils.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -466,7 +467,7 @@ static Value genOutputBuffer(CodeGen &codegen, PatternRewriter &rewriter,
   Value alloc = rewriter.create<memref::AllocOp>(loc, denseTp, args);
   if (isMaterializing(tensor)) {
     Value zero = constantZero(rewriter, loc, denseTp.getElementType());
-    rewriter.create<linalg::FillOp>(loc, zero, alloc);
+    rewriter.create<linalg::FillOp>(loc, ValueRange{zero}, ValueRange{alloc});
   } else {
     Value init =
         rewriter.create<bufferization::ToMemrefOp>(loc, denseTp, tensor);
