@@ -6,10 +6,10 @@
 // RV64ZBKX-NEXT:  entry:
 // RV64ZBKX-NEXT:    [[RS1_ADDR:%.*]] = alloca i64, align 8
 // RV64ZBKX-NEXT:    [[RS2_ADDR:%.*]] = alloca i64, align 8
-// RV64ZBKX-NEXT:    store i64 [[RS1:%.*]], i64* [[RS1_ADDR]], align 8
-// RV64ZBKX-NEXT:    store i64 [[RS2:%.*]], i64* [[RS2_ADDR]], align 8
-// RV64ZBKX-NEXT:    [[TMP0:%.*]] = load i64, i64* [[RS1_ADDR]], align 8
-// RV64ZBKX-NEXT:    [[TMP1:%.*]] = load i64, i64* [[RS2_ADDR]], align 8
+// RV64ZBKX-NEXT:    store i64 [[RS1:%.*]], ptr [[RS1_ADDR]], align 8
+// RV64ZBKX-NEXT:    store i64 [[RS2:%.*]], ptr [[RS2_ADDR]], align 8
+// RV64ZBKX-NEXT:    [[TMP0:%.*]] = load i64, ptr [[RS1_ADDR]], align 8
+// RV64ZBKX-NEXT:    [[TMP1:%.*]] = load i64, ptr [[RS2_ADDR]], align 8
 // RV64ZBKX-NEXT:    [[TMP2:%.*]] = call i64 @llvm.riscv.xperm8.i64(i64 [[TMP0]], i64 [[TMP1]])
 // RV64ZBKX-NEXT:    ret i64 [[TMP2]]
 //
@@ -22,10 +22,10 @@ long xperm8(long rs1, long rs2)
 // RV64ZBKX-NEXT:  entry:
 // RV64ZBKX-NEXT:    [[RS1_ADDR:%.*]] = alloca i64, align 8
 // RV64ZBKX-NEXT:    [[RS2_ADDR:%.*]] = alloca i64, align 8
-// RV64ZBKX-NEXT:    store i64 [[RS1:%.*]], i64* [[RS1_ADDR]], align 8
-// RV64ZBKX-NEXT:    store i64 [[RS2:%.*]], i64* [[RS2_ADDR]], align 8
-// RV64ZBKX-NEXT:    [[TMP0:%.*]] = load i64, i64* [[RS1_ADDR]], align 8
-// RV64ZBKX-NEXT:    [[TMP1:%.*]] = load i64, i64* [[RS2_ADDR]], align 8
+// RV64ZBKX-NEXT:    store i64 [[RS1:%.*]], ptr [[RS1_ADDR]], align 8
+// RV64ZBKX-NEXT:    store i64 [[RS2:%.*]], ptr [[RS2_ADDR]], align 8
+// RV64ZBKX-NEXT:    [[TMP0:%.*]] = load i64, ptr [[RS1_ADDR]], align 8
+// RV64ZBKX-NEXT:    [[TMP1:%.*]] = load i64, ptr [[RS2_ADDR]], align 8
 // RV64ZBKX-NEXT:    [[TMP2:%.*]] = call i64 @llvm.riscv.xperm4.i64(i64 [[TMP0]], i64 [[TMP1]])
 // RV64ZBKX-NEXT:    ret i64 [[TMP2]]
 //

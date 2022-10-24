@@ -14,7 +14,6 @@
 
 #include "llvm/CodeGen/GlobalISel/Legalizer.h"
 #include "llvm/ADT/PostOrderIterator.h"
-#include "llvm/ADT/SetVector.h"
 #include "llvm/Analysis/OptimizationRemarkEmitter.h"
 #include "llvm/CodeGen/GlobalISel/CSEInfo.h"
 #include "llvm/CodeGen/GlobalISel/CSEMIRBuilder.h"
@@ -226,6 +225,7 @@ Legalizer::legalizeMachineFunction(MachineFunction &MF, const LegalizerInfo &LI,
       assert(isPreISelGenericOpcode(MI.getOpcode()) &&
              "Expecting generic opcode");
       if (isTriviallyDead(MI, MRI)) {
+        salvageDebugInfo(MRI, MI);
         eraseInstr(MI, MRI, &LocObserver);
         continue;
       }
@@ -273,6 +273,7 @@ Legalizer::legalizeMachineFunction(MachineFunction &MF, const LegalizerInfo &LI,
       assert(isPreISelGenericOpcode(MI.getOpcode()) &&
              "Expecting generic opcode");
       if (isTriviallyDead(MI, MRI)) {
+        salvageDebugInfo(MRI, MI);
         eraseInstr(MI, MRI, &LocObserver);
         continue;
       }

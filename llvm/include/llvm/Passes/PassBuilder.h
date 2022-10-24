@@ -215,8 +215,9 @@ public:
   /// only intended for use when attempting to optimize code. If frontends
   /// require some transformations for semantic reasons, they should explicitly
   /// build them.
-  ModulePassManager buildModuleOptimizationPipeline(OptimizationLevel Level,
-                                                    bool LTOPreLink = false);
+  ModulePassManager
+  buildModuleOptimizationPipeline(OptimizationLevel Level,
+                                  ThinOrFullLTOPhase LTOPhase);
 
   /// Build a per-module default optimization pipeline.
   ///
@@ -373,12 +374,6 @@ public:
   /// returns false.
   Error parseAAPipeline(AAManager &AA, StringRef PipelineText);
 
-  /// Returns true if the pass name is the name of an alias analysis pass.
-  bool isAAPassName(StringRef PassName);
-
-  /// Returns true if the pass name is the name of a (non-alias) analysis pass.
-  bool isAnalysisPassName(StringRef PassName);
-
   /// Print pass names.
   void printPassNames(raw_ostream &OS);
 
@@ -466,6 +461,15 @@ public:
   void registerPipelineEarlySimplificationEPCallback(
       const std::function<void(ModulePassManager &, OptimizationLevel)> &C) {
     PipelineEarlySimplificationEPCallbacks.push_back(C);
+  }
+
+  /// Register a callback for a default optimizer pipeline extension point
+  ///
+  /// This extension point allows adding optimizations before the function
+  /// optimization pipeline.
+  void registerOptimizerEarlyEPCallback(
+      const std::function<void(ModulePassManager &, OptimizationLevel)> &C) {
+    OptimizerEarlyEPCallbacks.push_back(C);
   }
 
   /// Register a callback for a default optimizer pipeline extension point
@@ -600,7 +604,8 @@ private:
 
   void addPGOInstrPasses(ModulePassManager &MPM, OptimizationLevel Level,
                          bool RunProfileGen, bool IsCS, std::string ProfileFile,
-                         std::string ProfileRemappingFile);
+                         std::string ProfileRemappingFile,
+                         ThinOrFullLTOPhase LTOPhase);
   void invokePeepholeEPCallbacks(FunctionPassManager &, OptimizationLevel);
 
   // Extension Point callbacks
@@ -616,13 +621,15 @@ private:
       CGSCCOptimizerLateEPCallbacks;
   SmallVector<std::function<void(FunctionPassManager &, OptimizationLevel)>, 2>
       VectorizerStartEPCallbacks;
+  // Module callbacks
+  SmallVector<std::function<void(ModulePassManager &, OptimizationLevel)>, 2>
+      OptimizerEarlyEPCallbacks;
   SmallVector<std::function<void(ModulePassManager &, OptimizationLevel)>, 2>
       OptimizerLastEPCallbacks;
   SmallVector<std::function<void(ModulePassManager &, OptimizationLevel)>, 2>
       FullLinkTimeOptimizationEarlyEPCallbacks;
   SmallVector<std::function<void(ModulePassManager &, OptimizationLevel)>, 2>
       FullLinkTimeOptimizationLastEPCallbacks;
-  // Module callbacks
   SmallVector<std::function<void(ModulePassManager &, OptimizationLevel)>, 2>
       PipelineStartEPCallbacks;
   SmallVector<std::function<void(ModulePassManager &, OptimizationLevel)>, 2>

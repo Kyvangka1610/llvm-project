@@ -5,8 +5,8 @@
 void test1(void) {
   extern void test1_helper(void (^)(int));
 
-  // CHECK-LABEL:     define{{.*}} void @test1() {{.*}} personality i8* bitcast (i32 (...)* @__gcc_personality_v0 to i8*)
-  // CHECK-ARM-LABEL: define{{.*}} arm_aapcscc void @test1() {{.*}} personality i8* bitcast (i32 (...)* @__gcc_personality_sj0 to i8*)
+  // CHECK-LABEL:     define{{.*}} void @test1() {{.*}} personality ptr @__gcc_personality_v0
+  // CHECK-ARM-LABEL: define{{.*}} arm_aapcscc void @test1() {{.*}} personality ptr @__gcc_personality_sj0
 
   __block int x = 10;
 
@@ -14,9 +14,9 @@ void test1(void) {
   // CHECK-ARM: invoke arm_aapcscc void @test1_helper(
   test1_helper(^(int v) { x = v; });
 
-  // CHECK:          landingpad { i8*, i32 }
+  // CHECK:          landingpad { ptr, i32 }
   // CHECK-NEXT:       cleanup
-  // CHECK-ARM:      landingpad { i8*, i32 }
+  // CHECK-ARM:      landingpad { ptr, i32 }
   // CHECK-ARM-NEXT:   cleanup
 }
 

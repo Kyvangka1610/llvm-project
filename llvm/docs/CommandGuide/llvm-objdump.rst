@@ -27,7 +27,11 @@ combined with other commands:
 
 .. option:: -d, --disassemble
 
-  Disassemble all executable sections found in the input files.
+  Disassemble all executable sections found in the input files. On some
+  architectures (AArch64, PPC64, x86), all known instructions are disassembled by
+  default. On the others, :option:`--mcpu` or :option:`--mattr` is needed to
+  enable some instruction sets. Disabled instructions are displayed as
+  ``<unknown>``.
 
 .. option:: -D, --disassemble-all
 
@@ -121,9 +125,27 @@ OPTIONS
   Specify the target architecture when disassembling. Use :option:`--version`
   for a list of available targets.
 
+.. option:: --build-id=<string>
+
+  Look up the object using the given build ID, specified as a hexadecimal
+  string. The found object is handled as if it were an input filename.
+
 .. option:: -C, --demangle
 
   Demangle symbol names in the output.
+
+.. option:: --debug-file-directory <path>
+
+  Provide a path to a directory with a `.build-id` subdirectory to search for
+  debug information for stripped binaries. Multiple instances of this argument
+  are searched in the order given.
+
+.. option:: --debuginfod, --no-debuginfod
+
+  Whether or not to try debuginfod lookups for debug binaries. Unless specified,
+  debuginfod is only enabled if libcurl was compiled in (``LLVM_ENABLE_CURL``)
+  and at least one server URL was provided by the environment variable
+  ``DEBUGINFOD_URLS``.
 
 .. option:: --debug-vars=<format>
 
@@ -167,9 +189,10 @@ OPTIONS
   Enable/disable target-specific attributes. Specify ``--mattr=help`` to display
   the available attributes.
 
-.. option:: --no-leading-addr
+.. option:: --no-leading-addr, --no-addresses
 
-  When disassembling, do not print leading addresses.
+  When disassembling, do not print leading addresses for instructions or inline
+  relocations.
 
 .. option:: --no-print-imm-hex
 
@@ -178,6 +201,10 @@ OPTIONS
 .. option:: --no-show-raw-insn
 
   When disassembling, do not print the raw bytes of each instruction.
+
+.. option:: --offloading
+
+  Display the content of the LLVM offloading section.
 
 .. option:: --prefix=<prefix>
 
@@ -225,6 +252,8 @@ OPTIONS
   When disassembling, symbolize a branch target operand to print a label instead of a real address.
 
   When printing a PC-relative global symbol reference, print it as an offset from the leading symbol.
+
+  When a bb-address-map section is present (i.e., the object file is built with ``-fbasic-block-sections=labels``), labels are retrieved from that section instead.
 
   Only works with PowerPC objects or X86 linked images.
 
@@ -302,7 +331,11 @@ MACH-O ONLY OPTIONS AND COMMANDS
 
   Disassemble just the specified symbol's instructions.
 
-.. option:: --dyld_info
+.. option:: --chained-fixups
+
+  Print chained fixup information.
+
+.. option:: --dyld-info
 
   Print bind and rebase information used by dyld to resolve external
   references in a final linked binary.
@@ -323,9 +356,12 @@ MACH-O ONLY OPTIONS AND COMMANDS
 
   Display exported symbols.
 
-.. option:: --function-starts
+.. option:: --function-starts [=<addrs|names|both>]
 
-  Print the function starts table for Mach-O objects.
+  Print the function starts table for Mach-O objects. Either ``addrs``
+  (default) to print only the addresses of functions, ``names`` to print only
+  the names of the functions (when available), or ``both`` to print the
+  names beside the addresses.
 
 .. option:: -g
 

@@ -3,6 +3,9 @@
 
 target datalayout = "e-m:e-i64:64-n8:16:32:64"
 
+declare i32 @llvm.bswap.i32(i32)
+declare i128 @llvm.bswap.i128(i128)
+declare <2 x i64> @llvm.bswap.v2i64(<2 x i64>)
 declare i32 @llvm.cttz.i32(i32, i1) nounwind readnone
 declare i32 @llvm.ctlz.i32(i32, i1) nounwind readnone
 declare i32 @llvm.ctpop.i32(i32) nounwind readnone
@@ -396,6 +399,17 @@ define i32 @mul_splat_fold_no_nuw(i32 %x) {
   ret i32 %t
 }
 
+; Negative test (but simplifies before we reach the mul_splat transform)- need more than 2 bits
+
+define i2 @mul_splat_fold_too_narrow(i2 %x) {
+; CHECK-LABEL: @mul_splat_fold_too_narrow(
+; CHECK-NEXT:    ret i2 [[X:%.*]]
+;
+  %m = mul nuw i2 %x, 2
+  %t = lshr i2 %m, 1
+  ret i2 %t
+}
+
 define i32 @negative_and_odd(i32 %x) {
 ; CHECK-LABEL: @negative_and_odd(
 ; CHECK-NEXT:    [[TMP1:%.*]] = lshr i32 [[X:%.*]], 31
@@ -420,15 +434,15 @@ define <2 x i7> @negative_and_odd_vec(<2 x i7> %x) {
 
 ; Negative test - this is still worth trying to avoid srem?
 
-define i32 @negative_and_odd_uses(i32 %x, i32* %p) {
+define i32 @negative_and_odd_uses(i32 %x, ptr %p) {
 ; CHECK-LABEL: @negative_and_odd_uses(
 ; CHECK-NEXT:    [[S:%.*]] = srem i32 [[X:%.*]], 2
-; CHECK-NEXT:    store i32 [[S]], i32* [[P:%.*]], align 4
+; CHECK-NEXT:    store i32 [[S]], ptr [[P:%.*]], align 4
 ; CHECK-NEXT:    [[R:%.*]] = lshr i32 [[S]], 31
 ; CHECK-NEXT:    ret i32 [[R]]
 ;
   %s = srem i32 %x, 2
-  store i32 %s, i32* %p
+  store i32 %s, ptr %p
   %r = lshr i32 %s, 31
   ret i32 %r
 }
@@ -824,4 +838,192 @@ define i1 @icmp_sge(i32 %x, i32 %y) {
   %x.shifted = lshr i32 %x, %y
   %cmp = icmp sge i32 %x.shifted, %x
   ret i1 %cmp
+}
+
+define i32 @narrow_bswap(i16 %x) {
+; CHECK-LABEL: @narrow_bswap(
+; CHECK-NEXT:    [[TMP1:%.*]] = call i16 @llvm.bswap.i16(i16 [[X:%.*]])
+; CHECK-NEXT:    [[S:%.*]] = zext i16 [[TMP1]] to i32
+; CHECK-NEXT:    ret i32 [[S]]
+;
+  %z = zext i16 %x to i32
+  %b = call i32 @llvm.bswap.i32(i32 %z)
+  %s = lshr i32 %b, 16
+  ret i32 %s
+}
+
+define i128 @narrow_bswap_extra_wide(i16 %x) {
+; CHECK-LABEL: @narrow_bswap_extra_wide(
+; CHECK-NEXT:    [[TMP1:%.*]] = call i16 @llvm.bswap.i16(i16 [[X:%.*]])
+; CHECK-NEXT:    [[S:%.*]] = zext i16 [[TMP1]] to i128
+; CHECK-NEXT:    ret i128 [[S]]
+;
+  %z = zext i16 %x to i128
+  %b = call i128 @llvm.bswap.i128(i128 %z)
+  %s = lshr i128 %b, 112
+  ret i128 %s
+}
+
+define i32 @narrow_bswap_undershift(i16 %x) {
+; CHECK-LABEL: @narrow_bswap_undershift(
+; CHECK-NEXT:    [[TMP1:%.*]] = call i16 @llvm.bswap.i16(i16 [[X:%.*]])
+; CHECK-NEXT:    [[TMP2:%.*]] = zext i16 [[TMP1]] to i32
+; CHECK-NEXT:    [[S:%.*]] = shl nuw nsw i32 [[TMP2]], 7
+; CHECK-NEXT:    ret i32 [[S]]
+;
+  %z = zext i16 %x to i32
+  %b = call i32 @llvm.bswap.i32(i32 %z)
+  %s = lshr i32 %b, 9
+  ret i32 %s
+}
+
+define <2 x i64> @narrow_bswap_splat(<2 x i16> %x) {
+; CHECK-LABEL: @narrow_bswap_splat(
+; CHECK-NEXT:    [[TMP1:%.*]] = call <2 x i16> @llvm.bswap.v2i16(<2 x i16> [[X:%.*]])
+; CHECK-NEXT:    [[S:%.*]] = zext <2 x i16> [[TMP1]] to <2 x i64>
+; CHECK-NEXT:    ret <2 x i64> [[S]]
+;
+  %z = zext <2 x i16> %x to <2 x i64>
+  %b = call <2 x i64> @llvm.bswap.v2i64(<2 x i64> %z)
+  %s = lshr <2 x i64> %b, <i64 48, i64 48>
+  ret <2 x i64> %s
+}
+
+; TODO: poison/undef in the shift amount is ok to propagate.
+
+define <2 x i64> @narrow_bswap_splat_poison_elt(<2 x i16> %x) {
+; CHECK-LABEL: @narrow_bswap_splat_poison_elt(
+; CHECK-NEXT:    [[Z:%.*]] = zext <2 x i16> [[X:%.*]] to <2 x i64>
+; CHECK-NEXT:    [[B:%.*]] = call <2 x i64> @llvm.bswap.v2i64(<2 x i64> [[Z]])
+; CHECK-NEXT:    [[S:%.*]] = lshr <2 x i64> [[B]], <i64 48, i64 poison>
+; CHECK-NEXT:    ret <2 x i64> [[S]]
+;
+  %z = zext <2 x i16> %x to <2 x i64>
+  %b = call <2 x i64> @llvm.bswap.v2i64(<2 x i64> %z)
+  %s = lshr <2 x i64> %b, <i64 48, i64 poison>
+  ret <2 x i64> %s
+}
+
+define <2 x i64> @narrow_bswap_overshift(<2 x i32> %x) {
+; CHECK-LABEL: @narrow_bswap_overshift(
+; CHECK-NEXT:    [[TMP1:%.*]] = call <2 x i32> @llvm.bswap.v2i32(<2 x i32> [[X:%.*]])
+; CHECK-NEXT:    [[TMP2:%.*]] = lshr <2 x i32> [[TMP1]], <i32 16, i32 16>
+; CHECK-NEXT:    [[S:%.*]] = zext <2 x i32> [[TMP2]] to <2 x i64>
+; CHECK-NEXT:    ret <2 x i64> [[S]]
+;
+  %z = zext <2 x i32> %x to <2 x i64>
+  %b = call <2 x i64> @llvm.bswap.v2i64(<2 x i64> %z)
+  %s = lshr <2 x i64> %b, <i64 48, i64 48>
+  ret <2 x i64> %s
+}
+
+define i128 @narrow_bswap_overshift2(i96 %x) {
+; CHECK-LABEL: @narrow_bswap_overshift2(
+; CHECK-NEXT:    [[TMP1:%.*]] = call i96 @llvm.bswap.i96(i96 [[X:%.*]])
+; CHECK-NEXT:    [[TMP2:%.*]] = lshr i96 [[TMP1]], 29
+; CHECK-NEXT:    [[S:%.*]] = zext i96 [[TMP2]] to i128
+; CHECK-NEXT:    ret i128 [[S]]
+;
+  %z = zext i96 %x to i128
+  %b = call i128 @llvm.bswap.i128(i128 %z)
+  %s = lshr i128 %b, 61
+  ret i128 %s
+}
+
+; negative test - can't make a bswap with an odd number of bytes
+
+define i32 @not_narrow_bswap(i24 %x) {
+; CHECK-LABEL: @not_narrow_bswap(
+; CHECK-NEXT:    [[Z:%.*]] = zext i24 [[X:%.*]] to i32
+; CHECK-NEXT:    [[B:%.*]] = call i32 @llvm.bswap.i32(i32 [[Z]])
+; CHECK-NEXT:    [[R:%.*]] = lshr exact i32 [[B]], 8
+; CHECK-NEXT:    ret i32 [[R]]
+;
+  %z = zext i24 %x to i32
+  %b = call i32 @llvm.bswap.i32(i32 %z)
+  %r = lshr i32 %b, 8
+  ret i32 %r
+}
+
+define i8 @not_signbit(i8 %x) {
+; CHECK-LABEL: @not_signbit(
+; CHECK-NEXT:    [[A:%.*]] = xor i8 [[X:%.*]], -1
+; CHECK-NEXT:    [[R:%.*]] = lshr i8 [[A]], 7
+; CHECK-NEXT:    ret i8 [[R]]
+;
+  %a = xor i8 %x, -1
+  %r = lshr i8 %a, 7
+  ret i8 %r
+}
+
+define <2 x i6> @not_signbit_vec(<2 x i6> %x) {
+; CHECK-LABEL: @not_signbit_vec(
+; CHECK-NEXT:    [[A:%.*]] = xor <2 x i6> [[X:%.*]], <i6 -1, i6 poison>
+; CHECK-NEXT:    [[R:%.*]] = lshr <2 x i6> [[A]], <i6 5, i6 poison>
+; CHECK-NEXT:    ret <2 x i6> [[R]]
+;
+  %a = xor <2 x i6> %x, <i6 -1, i6 poison>
+  %r = lshr <2 x i6> %a, <i6 5, i6 poison>
+  ret <2 x i6> %r
+}
+
+define i8 @not_signbit_alt_xor(i8 %x) {
+; CHECK-LABEL: @not_signbit_alt_xor(
+; CHECK-NEXT:    [[A:%.*]] = xor i8 [[X:%.*]], -1
+; CHECK-NEXT:    [[R:%.*]] = lshr i8 [[A]], 7
+; CHECK-NEXT:    ret i8 [[R]]
+;
+  %a = xor i8 %x, -2
+  %r = lshr i8 %a, 7
+  ret i8 %r
+}
+
+define i8 @not_not_signbit(i8 %x) {
+; CHECK-LABEL: @not_not_signbit(
+; CHECK-NEXT:    [[A:%.*]] = xor i8 [[X:%.*]], -1
+; CHECK-NEXT:    [[R:%.*]] = lshr i8 [[A]], 6
+; CHECK-NEXT:    ret i8 [[R]]
+;
+  %a = xor i8 %x, -1
+  %r = lshr i8 %a, 6
+  ret i8 %r
+}
+
+define i32 @not_signbit_use(i32 %x) {
+; CHECK-LABEL: @not_signbit_use(
+; CHECK-NEXT:    [[A:%.*]] = xor i32 [[X:%.*]], -1
+; CHECK-NEXT:    call void @use(i32 [[A]])
+; CHECK-NEXT:    [[R:%.*]] = lshr i32 [[A]], 31
+; CHECK-NEXT:    ret i32 [[R]]
+;
+  %a = xor i32 %x, -1
+  call void @use(i32 %a)
+  %r = lshr i32 %a, 31
+  ret i32 %r
+}
+
+define i32 @not_signbit_zext(i16 %x) {
+; CHECK-LABEL: @not_signbit_zext(
+; CHECK-NEXT:    [[A:%.*]] = xor i16 [[X:%.*]], -1
+; CHECK-NEXT:    [[R:%.*]] = lshr i16 [[A]], 15
+; CHECK-NEXT:    [[R2:%.*]] = zext i16 [[R]] to i32
+; CHECK-NEXT:    ret i32 [[R2]]
+;
+  %a = xor i16 %x, -1
+  %r = lshr i16 %a, 15
+  %r2 = zext i16 %r to i32
+  ret i32 %r2
+}
+
+define i8 @not_signbit_trunc(i16 %x) {
+; CHECK-LABEL: @not_signbit_trunc(
+; CHECK-NEXT:    [[A:%.*]] = xor i16 [[X:%.*]], -1
+; CHECK-NEXT:    [[R:%.*]] = lshr i16 [[A]], 15
+; CHECK-NEXT:    [[R2:%.*]] = trunc i16 [[R]] to i8
+; CHECK-NEXT:    ret i8 [[R2]]
+;
+  %a = xor i16 %x, -1
+  %r = lshr i16 %a, 15
+  %r2 = trunc i16 %r to i8
+  ret i8 %r2
 }

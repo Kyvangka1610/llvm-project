@@ -12,11 +12,14 @@
 
 #include <__availability>
 #include <__config>
+#include <__format/buffer.h>
 #include <__format/format_args.h>
 #include <__format/format_fwd.h>
 #include <__iterator/back_insert_iterator.h>
 #include <__iterator/concepts.h>
+#include <__utility/move.h>
 #include <concepts>
+#include <cstddef>
 
 #ifndef _LIBCPP_HAS_NO_LOCALIZATION
 #include <locale>
@@ -47,8 +50,7 @@ __format_context_create(
     _OutIt __out_it,
     basic_format_args<basic_format_context<_OutIt, _CharT>> __args,
     optional<_VSTD::locale>&& __loc = nullopt) {
-  return _VSTD::basic_format_context(_VSTD::move(__out_it), __args,
-                                     _VSTD::move(__loc));
+  return _VSTD::basic_format_context(_VSTD::move(__out_it), __args, _VSTD::move(__loc));
 }
 #else
 template <class _OutIt, class _CharT>
@@ -60,16 +62,12 @@ __format_context_create(
 }
 #endif
 
-// TODO FMT Implement [format.context]/4
-// [Note 1: For a given type charT, implementations are encouraged to provide a
-// single instantiation of basic_format_context for appending to
-// basic_string<charT>, vector<charT>, or any other container with contiguous
-// storage by wrapping those in temporary objects with a uniform interface
-// (such as a span<charT>) and polymorphic reallocation. - end note]
-
-using format_context = basic_format_context<back_insert_iterator<string>, char>;
+using format_context =
+    basic_format_context<back_insert_iterator<__format::__output_buffer<char>>,
+                         char>;
 #ifndef _LIBCPP_HAS_NO_WIDE_CHARACTERS
-using wformat_context = basic_format_context<back_insert_iterator<wstring>, wchar_t>;
+using wformat_context = basic_format_context<
+    back_insert_iterator<__format::__output_buffer<wchar_t>>, wchar_t>;
 #endif
 
 template <class _OutIt, class _CharT>
@@ -102,8 +100,8 @@ public:
     return *__loc_;
   }
 #endif
-  _LIBCPP_HIDE_FROM_ABI iterator out() { return __out_it_; }
-  _LIBCPP_HIDE_FROM_ABI void advance_to(iterator __it) { __out_it_ = __it; }
+  _LIBCPP_HIDE_FROM_ABI iterator out() { return std::move(__out_it_); }
+  _LIBCPP_HIDE_FROM_ABI void advance_to(iterator __it) { __out_it_ = std::move(__it); }
 
 private:
   iterator __out_it_;
@@ -144,6 +142,7 @@ private:
       : __out_it_(_VSTD::move(__out_it)), __args_(__args) {}
 #endif
 };
+_LIBCPP_CTAD_SUPPORTED_FOR_TYPE(basic_format_context);
 
 #endif //_LIBCPP_STD_VER > 17
 

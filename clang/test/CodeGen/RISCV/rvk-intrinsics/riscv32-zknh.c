@@ -5,8 +5,8 @@
 // RV32ZKNH-LABEL: @sha256sig0(
 // RV32ZKNH-NEXT:  entry:
 // RV32ZKNH-NEXT:    [[RS1_ADDR:%.*]] = alloca i32, align 4
-// RV32ZKNH-NEXT:    store i32 [[RS1:%.*]], i32* [[RS1_ADDR]], align 4
-// RV32ZKNH-NEXT:    [[TMP0:%.*]] = load i32, i32* [[RS1_ADDR]], align 4
+// RV32ZKNH-NEXT:    store i32 [[RS1:%.*]], ptr [[RS1_ADDR]], align 4
+// RV32ZKNH-NEXT:    [[TMP0:%.*]] = load i32, ptr [[RS1_ADDR]], align 4
 // RV32ZKNH-NEXT:    [[TMP1:%.*]] = call i32 @llvm.riscv.sha256sig0.i32(i32 [[TMP0]])
 // RV32ZKNH-NEXT:    ret i32 [[TMP1]]
 //
@@ -17,8 +17,8 @@ long sha256sig0(long rs1) {
 // RV32ZKNH-LABEL: @sha256sig1(
 // RV32ZKNH-NEXT:  entry:
 // RV32ZKNH-NEXT:    [[RS1_ADDR:%.*]] = alloca i32, align 4
-// RV32ZKNH-NEXT:    store i32 [[RS1:%.*]], i32* [[RS1_ADDR]], align 4
-// RV32ZKNH-NEXT:    [[TMP0:%.*]] = load i32, i32* [[RS1_ADDR]], align 4
+// RV32ZKNH-NEXT:    store i32 [[RS1:%.*]], ptr [[RS1_ADDR]], align 4
+// RV32ZKNH-NEXT:    [[TMP0:%.*]] = load i32, ptr [[RS1_ADDR]], align 4
 // RV32ZKNH-NEXT:    [[TMP1:%.*]] = call i32 @llvm.riscv.sha256sig1.i32(i32 [[TMP0]])
 // RV32ZKNH-NEXT:    ret i32 [[TMP1]]
 //
@@ -29,8 +29,8 @@ long sha256sig1(long rs1) {
 // RV32ZKNH-LABEL: @sha256sum0(
 // RV32ZKNH-NEXT:  entry:
 // RV32ZKNH-NEXT:    [[RS1_ADDR:%.*]] = alloca i32, align 4
-// RV32ZKNH-NEXT:    store i32 [[RS1:%.*]], i32* [[RS1_ADDR]], align 4
-// RV32ZKNH-NEXT:    [[TMP0:%.*]] = load i32, i32* [[RS1_ADDR]], align 4
+// RV32ZKNH-NEXT:    store i32 [[RS1:%.*]], ptr [[RS1_ADDR]], align 4
+// RV32ZKNH-NEXT:    [[TMP0:%.*]] = load i32, ptr [[RS1_ADDR]], align 4
 // RV32ZKNH-NEXT:    [[TMP1:%.*]] = call i32 @llvm.riscv.sha256sum0.i32(i32 [[TMP0]])
 // RV32ZKNH-NEXT:    ret i32 [[TMP1]]
 //
@@ -41,8 +41,8 @@ long sha256sum0(long rs1) {
 // RV32ZKNH-LABEL: @sha256sum1(
 // RV32ZKNH-NEXT:  entry:
 // RV32ZKNH-NEXT:    [[RS1_ADDR:%.*]] = alloca i32, align 4
-// RV32ZKNH-NEXT:    store i32 [[RS1:%.*]], i32* [[RS1_ADDR]], align 4
-// RV32ZKNH-NEXT:    [[TMP0:%.*]] = load i32, i32* [[RS1_ADDR]], align 4
+// RV32ZKNH-NEXT:    store i32 [[RS1:%.*]], ptr [[RS1_ADDR]], align 4
+// RV32ZKNH-NEXT:    [[TMP0:%.*]] = load i32, ptr [[RS1_ADDR]], align 4
 // RV32ZKNH-NEXT:    [[TMP1:%.*]] = call i32 @llvm.riscv.sha256sum1.i32(i32 [[TMP0]])
 // RV32ZKNH-NEXT:    ret i32 [[TMP1]]
 //
@@ -54,10 +54,10 @@ long sha256sum1(long rs1) {
 // RV32ZKNH-NEXT:  entry:
 // RV32ZKNH-NEXT:    [[RS1_ADDR:%.*]] = alloca i32, align 4
 // RV32ZKNH-NEXT:    [[RS2_ADDR:%.*]] = alloca i32, align 4
-// RV32ZKNH-NEXT:    store i32 [[RS1:%.*]], i32* [[RS1_ADDR]], align 4
-// RV32ZKNH-NEXT:    store i32 [[RS2:%.*]], i32* [[RS2_ADDR]], align 4
-// RV32ZKNH-NEXT:    [[TMP0:%.*]] = load i32, i32* [[RS1_ADDR]], align 4
-// RV32ZKNH-NEXT:    [[TMP1:%.*]] = load i32, i32* [[RS2_ADDR]], align 4
+// RV32ZKNH-NEXT:    store i32 [[RS1:%.*]], ptr [[RS1_ADDR]], align 4
+// RV32ZKNH-NEXT:    store i32 [[RS2:%.*]], ptr [[RS2_ADDR]], align 4
+// RV32ZKNH-NEXT:    [[TMP0:%.*]] = load i32, ptr [[RS1_ADDR]], align 4
+// RV32ZKNH-NEXT:    [[TMP1:%.*]] = load i32, ptr [[RS2_ADDR]], align 4
 // RV32ZKNH-NEXT:    [[TMP2:%.*]] = call i32 @llvm.riscv.sha512sig0h(i32 [[TMP0]], i32 [[TMP1]])
 // RV32ZKNH-NEXT:    ret i32 [[TMP2]]
 //
@@ -69,10 +69,10 @@ int sha512sig0h(int rs1, int rs2) {
 // RV32ZKNH-NEXT:  entry:
 // RV32ZKNH-NEXT:    [[RS1_ADDR:%.*]] = alloca i32, align 4
 // RV32ZKNH-NEXT:    [[RS2_ADDR:%.*]] = alloca i32, align 4
-// RV32ZKNH-NEXT:    store i32 [[RS1:%.*]], i32* [[RS1_ADDR]], align 4
-// RV32ZKNH-NEXT:    store i32 [[RS2:%.*]], i32* [[RS2_ADDR]], align 4
-// RV32ZKNH-NEXT:    [[TMP0:%.*]] = load i32, i32* [[RS1_ADDR]], align 4
-// RV32ZKNH-NEXT:    [[TMP1:%.*]] = load i32, i32* [[RS2_ADDR]], align 4
+// RV32ZKNH-NEXT:    store i32 [[RS1:%.*]], ptr [[RS1_ADDR]], align 4
+// RV32ZKNH-NEXT:    store i32 [[RS2:%.*]], ptr [[RS2_ADDR]], align 4
+// RV32ZKNH-NEXT:    [[TMP0:%.*]] = load i32, ptr [[RS1_ADDR]], align 4
+// RV32ZKNH-NEXT:    [[TMP1:%.*]] = load i32, ptr [[RS2_ADDR]], align 4
 // RV32ZKNH-NEXT:    [[TMP2:%.*]] = call i32 @llvm.riscv.sha512sig0l(i32 [[TMP0]], i32 [[TMP1]])
 // RV32ZKNH-NEXT:    ret i32 [[TMP2]]
 //
@@ -84,10 +84,10 @@ int sha512sig0l(int rs1, int rs2) {
 // RV32ZKNH-NEXT:  entry:
 // RV32ZKNH-NEXT:    [[RS1_ADDR:%.*]] = alloca i32, align 4
 // RV32ZKNH-NEXT:    [[RS2_ADDR:%.*]] = alloca i32, align 4
-// RV32ZKNH-NEXT:    store i32 [[RS1:%.*]], i32* [[RS1_ADDR]], align 4
-// RV32ZKNH-NEXT:    store i32 [[RS2:%.*]], i32* [[RS2_ADDR]], align 4
-// RV32ZKNH-NEXT:    [[TMP0:%.*]] = load i32, i32* [[RS1_ADDR]], align 4
-// RV32ZKNH-NEXT:    [[TMP1:%.*]] = load i32, i32* [[RS2_ADDR]], align 4
+// RV32ZKNH-NEXT:    store i32 [[RS1:%.*]], ptr [[RS1_ADDR]], align 4
+// RV32ZKNH-NEXT:    store i32 [[RS2:%.*]], ptr [[RS2_ADDR]], align 4
+// RV32ZKNH-NEXT:    [[TMP0:%.*]] = load i32, ptr [[RS1_ADDR]], align 4
+// RV32ZKNH-NEXT:    [[TMP1:%.*]] = load i32, ptr [[RS2_ADDR]], align 4
 // RV32ZKNH-NEXT:    [[TMP2:%.*]] = call i32 @llvm.riscv.sha512sig1h(i32 [[TMP0]], i32 [[TMP1]])
 // RV32ZKNH-NEXT:    ret i32 [[TMP2]]
 //
@@ -99,10 +99,10 @@ int sha512sig1h(int rs1, int rs2) {
 // RV32ZKNH-NEXT:  entry:
 // RV32ZKNH-NEXT:    [[RS1_ADDR:%.*]] = alloca i32, align 4
 // RV32ZKNH-NEXT:    [[RS2_ADDR:%.*]] = alloca i32, align 4
-// RV32ZKNH-NEXT:    store i32 [[RS1:%.*]], i32* [[RS1_ADDR]], align 4
-// RV32ZKNH-NEXT:    store i32 [[RS2:%.*]], i32* [[RS2_ADDR]], align 4
-// RV32ZKNH-NEXT:    [[TMP0:%.*]] = load i32, i32* [[RS1_ADDR]], align 4
-// RV32ZKNH-NEXT:    [[TMP1:%.*]] = load i32, i32* [[RS2_ADDR]], align 4
+// RV32ZKNH-NEXT:    store i32 [[RS1:%.*]], ptr [[RS1_ADDR]], align 4
+// RV32ZKNH-NEXT:    store i32 [[RS2:%.*]], ptr [[RS2_ADDR]], align 4
+// RV32ZKNH-NEXT:    [[TMP0:%.*]] = load i32, ptr [[RS1_ADDR]], align 4
+// RV32ZKNH-NEXT:    [[TMP1:%.*]] = load i32, ptr [[RS2_ADDR]], align 4
 // RV32ZKNH-NEXT:    [[TMP2:%.*]] = call i32 @llvm.riscv.sha512sig1l(i32 [[TMP0]], i32 [[TMP1]])
 // RV32ZKNH-NEXT:    ret i32 [[TMP2]]
 //
@@ -114,10 +114,10 @@ int sha512sig1l(int rs1, int rs2) {
 // RV32ZKNH-NEXT:  entry:
 // RV32ZKNH-NEXT:    [[RS1_ADDR:%.*]] = alloca i32, align 4
 // RV32ZKNH-NEXT:    [[RS2_ADDR:%.*]] = alloca i32, align 4
-// RV32ZKNH-NEXT:    store i32 [[RS1:%.*]], i32* [[RS1_ADDR]], align 4
-// RV32ZKNH-NEXT:    store i32 [[RS2:%.*]], i32* [[RS2_ADDR]], align 4
-// RV32ZKNH-NEXT:    [[TMP0:%.*]] = load i32, i32* [[RS1_ADDR]], align 4
-// RV32ZKNH-NEXT:    [[TMP1:%.*]] = load i32, i32* [[RS2_ADDR]], align 4
+// RV32ZKNH-NEXT:    store i32 [[RS1:%.*]], ptr [[RS1_ADDR]], align 4
+// RV32ZKNH-NEXT:    store i32 [[RS2:%.*]], ptr [[RS2_ADDR]], align 4
+// RV32ZKNH-NEXT:    [[TMP0:%.*]] = load i32, ptr [[RS1_ADDR]], align 4
+// RV32ZKNH-NEXT:    [[TMP1:%.*]] = load i32, ptr [[RS2_ADDR]], align 4
 // RV32ZKNH-NEXT:    [[TMP2:%.*]] = call i32 @llvm.riscv.sha512sum0r(i32 [[TMP0]], i32 [[TMP1]])
 // RV32ZKNH-NEXT:    ret i32 [[TMP2]]
 //
@@ -129,10 +129,10 @@ int sha512sum0r(int rs1, int rs2) {
 // RV32ZKNH-NEXT:  entry:
 // RV32ZKNH-NEXT:    [[RS1_ADDR:%.*]] = alloca i32, align 4
 // RV32ZKNH-NEXT:    [[RS2_ADDR:%.*]] = alloca i32, align 4
-// RV32ZKNH-NEXT:    store i32 [[RS1:%.*]], i32* [[RS1_ADDR]], align 4
-// RV32ZKNH-NEXT:    store i32 [[RS2:%.*]], i32* [[RS2_ADDR]], align 4
-// RV32ZKNH-NEXT:    [[TMP0:%.*]] = load i32, i32* [[RS1_ADDR]], align 4
-// RV32ZKNH-NEXT:    [[TMP1:%.*]] = load i32, i32* [[RS2_ADDR]], align 4
+// RV32ZKNH-NEXT:    store i32 [[RS1:%.*]], ptr [[RS1_ADDR]], align 4
+// RV32ZKNH-NEXT:    store i32 [[RS2:%.*]], ptr [[RS2_ADDR]], align 4
+// RV32ZKNH-NEXT:    [[TMP0:%.*]] = load i32, ptr [[RS1_ADDR]], align 4
+// RV32ZKNH-NEXT:    [[TMP1:%.*]] = load i32, ptr [[RS2_ADDR]], align 4
 // RV32ZKNH-NEXT:    [[TMP2:%.*]] = call i32 @llvm.riscv.sha512sum1r(i32 [[TMP0]], i32 [[TMP1]])
 // RV32ZKNH-NEXT:    ret i32 [[TMP2]]
 //

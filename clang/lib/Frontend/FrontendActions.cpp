@@ -18,7 +18,7 @@
 #include "clang/Frontend/FrontendDiagnostic.h"
 #include "clang/Frontend/MultiplexConsumer.h"
 #include "clang/Frontend/Utils.h"
-#include "clang/Lex/DependencyDirectivesSourceMinimizer.h"
+#include "clang/Lex/DependencyDirectivesScanner.h"
 #include "clang/Lex/HeaderSearch.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Lex/PreprocessorOptions.h"
@@ -336,6 +336,21 @@ GenerateHeaderModuleAction::CreateOutputFile(CompilerInstance &CI,
   return CI.createDefaultOutputFile(/*Binary=*/true, InFile, "pcm");
 }
 
+bool GenerateHeaderUnitAction::BeginSourceFileAction(CompilerInstance &CI) {
+  if (!CI.getLangOpts().CPlusPlusModules) {
+    CI.getDiagnostics().Report(diag::err_module_interface_requires_cpp_modules);
+    return false;
+  }
+  CI.getLangOpts().setCompilingModule(LangOptions::CMK_HeaderUnit);
+  return GenerateModuleAction::BeginSourceFileAction(CI);
+}
+
+std::unique_ptr<raw_pwrite_stream>
+GenerateHeaderUnitAction::CreateOutputFile(CompilerInstance &CI,
+                                           StringRef InFile) {
+  return CI.createDefaultOutputFile(/*Binary=*/true, InFile, "pcm");
+}
+
 SyntaxOnlyAction::~SyntaxOnlyAction() {
 }
 
@@ -455,6 +470,8 @@ private:
       return "ConstraintSubstitution";
     case CodeSynthesisContext::ConstraintNormalization:
       return "ConstraintNormalization";
+    case CodeSynthesisContext::RequirementParameterInstantiation:
+      return "RequirementParameterInstantiation";
     case CodeSynthesisContext::ParameterMappingSubstitution:
       return "ParameterMappingSubstitution";
     case CodeSynthesisContext::RequirementInstantiation:
@@ -465,6 +482,8 @@ private:
       return "InitializingStructuredBinding";
     case CodeSynthesisContext::MarkingClassDllexported:
       return "MarkingClassDllexported";
+    case CodeSynthesisContext::BuildingBuiltinDumpStructCall:
+      return "BuildingBuiltinDumpStructCall";
     }
     return "";
   }
@@ -818,6 +837,8 @@ static StringRef ModuleKindName(Module::ModuleKind MK) {
     return "Partition Interface";
   case Module::ModulePartitionImplementation:
     return "Partition Implementation";
+  case Module::ModuleHeaderUnit:
+    return "Header Unit";
   case Module::GlobalModuleFragment:
     return "Global Module Fragment";
   case Module::PrivateModuleFragment:
@@ -835,8 +856,9 @@ void DumpModuleInfoAction::ExecuteAction() {
     std::error_code EC;
     OutFile.reset(new llvm::raw_fd_ostream(OutputFileName.str(), EC,
                                            llvm::sys::fs::OF_TextWithCRLF));
+    OutputStream = OutFile.get();
   }
-  llvm::raw_ostream &Out = OutFile.get()? *OutFile.get() : llvm::outs();
+  llvm::raw_ostream &Out = OutputStream ? *OutputStream : llvm::outs();
 
   Out << "Information for module file '" << getCurrentFile() << "':\n";
   auto &FileMgr = getCompilerInstance().getFileManager();
@@ -900,12 +922,12 @@ void DumpModuleInfoAction::ExecuteAction() {
     if (Primary) {
       if (!Primary->submodules().empty())
         Out << "   Sub Modules:\n";
-      for (auto MI : Primary->submodules()) {
+      for (auto *MI : Primary->submodules()) {
         PrintSubMapEntry(MI->Name, MI->Kind);
       }
       if (!Primary->Imports.empty())
         Out << "   Imports:\n";
-      for (auto IMP : Primary->Imports) {
+      for (auto *IMP : Primary->Imports) {
         PrintSubMapEntry(IMP->Name, IMP->Kind);
       }
       if (!Primary->Exports.empty())
@@ -1061,6 +1083,7 @@ void PrintPreambleAction::ExecuteAction() {
   case Language::OpenCLCXX:
   case Language::CUDA:
   case Language::HIP:
+  case Language::HLSL:
     break;
 
   case Language::Unknown:
@@ -1137,10 +1160,10 @@ void PrintDependencyDirectivesSourceMinimizerAction::ExecuteAction() {
   SourceManager &SM = CI.getPreprocessor().getSourceManager();
   llvm::MemoryBufferRef FromFile = SM.getBufferOrFake(SM.getMainFileID());
 
-  llvm::SmallString<1024> Output;
-  llvm::SmallVector<minimize_source_to_dependency_directives::Token, 32> Toks;
-  if (minimizeSourceToDependencyDirectives(
-          FromFile.getBuffer(), Output, Toks, &CI.getDiagnostics(),
+  llvm::SmallVector<dependency_directives_scan::Token, 16> Tokens;
+  llvm::SmallVector<dependency_directives_scan::Directive, 32> Directives;
+  if (scanSourceForDependencyDirectives(
+          FromFile.getBuffer(), Tokens, Directives, &CI.getDiagnostics(),
           SM.getLocForStartOfFile(SM.getMainFileID()))) {
     assert(CI.getDiagnostics().hasErrorOccurred() &&
            "no errors reported for failure");
@@ -1159,7 +1182,8 @@ void PrintDependencyDirectivesSourceMinimizerAction::ExecuteAction() {
     }
     return;
   }
-  llvm::outs() << Output;
+  printDependencyDirectivesAsSource(FromFile.getBuffer(), Directives,
+                                    llvm::outs());
 }
 
 void GetDependenciesByModuleNameAction::ExecuteAction() {

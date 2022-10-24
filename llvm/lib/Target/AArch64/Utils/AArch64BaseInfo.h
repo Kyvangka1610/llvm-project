@@ -331,6 +331,41 @@ inline static unsigned getNZCVToSatisfyCondCode(CondCode Code) {
   case LE: return Z; // Z == 1 || N != V
   }
 }
+
+/// Return true if Code is a reflexive relationship:
+/// forall x. (CSET Code (CMP x x)) == 1
+inline static bool isReflexive(CondCode Code) {
+  switch (Code) {
+  case EQ:
+  case HS:
+  case PL:
+  case LS:
+  case GE:
+  case LE:
+  case AL:
+  case NV:
+    return true;
+  default:
+    return false;
+  }
+}
+
+/// Return true if Code is an irreflexive relationship:
+/// forall x. (CSET Code (CMP x x)) == 0
+inline static bool isIrreflexive(CondCode Code) {
+  switch (Code) {
+  case NE:
+  case LO:
+  case MI:
+  case HI:
+  case LT:
+  case GT:
+    return true;
+  default:
+    return false;
+  }
+}
+
 } // end namespace AArch64CC
 
 struct SysAlias {
@@ -343,7 +378,8 @@ struct SysAlias {
       : Name(N), Encoding(E), FeaturesRequired(F) {}
 
   bool haveFeatures(FeatureBitset ActiveFeatures) const {
-    return (FeaturesRequired & ActiveFeatures) == FeaturesRequired;
+    return ActiveFeatures[llvm::AArch64::FeatureAll] ||
+           (FeaturesRequired & ActiveFeatures) == FeaturesRequired;
   }
 
   FeatureBitset getRequiredFeatures() const { return FeaturesRequired; }
@@ -634,7 +670,8 @@ namespace AArch64SysReg {
     FeatureBitset FeaturesRequired;
 
     bool haveFeatures(FeatureBitset ActiveFeatures) const {
-      return (FeaturesRequired & ActiveFeatures) == FeaturesRequired;
+      return ActiveFeatures[llvm::AArch64::FeatureAll] ||
+             (FeaturesRequired & ActiveFeatures) == FeaturesRequired;
     }
   };
 
@@ -746,6 +783,13 @@ namespace AArch64II {
     /// SP-relative load or store instruction (which do not check tags), or to
     /// an LDG instruction to obtain the tag value.
     MO_TAGGED = 0x400,
+
+    /// MO_DLLIMPORTAUX - Symbol refers to "auxilliary" import stub. On
+    /// Arm64EC, there are two kinds of import stubs used for DLL import of
+    /// functions: MO_DLLIMPORT refers to natively callable Arm64 code, and
+    /// MO_DLLIMPORTAUX refers to the original address which can be compared
+    /// for equality.
+    MO_DLLIMPORTAUX = 0x800,
   };
 } // end namespace AArch64II
 

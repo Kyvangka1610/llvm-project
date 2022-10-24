@@ -6,13 +6,16 @@ import lldb
 import lldbsuite.test.lldbutil as lldbutil
 
 from lldbsuite.test.lldbtest import *
-from lldbsuite.test.eventlistener import EventListenerTestBase
 
-class TestDiagnosticReporting(EventListenerTestBase):
+class TestDiagnosticReporting(TestBase):
 
-    mydir = TestBase.compute_mydir(__file__)
-    event_mask = lldb.SBDebugger.eBroadcastBitWarning | lldb.SBDebugger.eBroadcastBitError
-    event_data_extractor = lldb.SBDebugger.GetDiagnosticFromEvent
+    def setUp(self):
+        TestBase.setUp(self)
+
+        self.broadcaster = self.dbg.GetBroadcaster()
+        self.listener = lldbutil.start_listening_from(self.broadcaster,
+                                        lldb.SBDebugger.eBroadcastBitWarning |
+                                        lldb.SBDebugger.eBroadcastBitError)
 
     def test_dwarf_symbol_loading_diagnostic_report(self):
         """Test that we are able to fetch diagnostic events"""
@@ -24,13 +27,12 @@ class TestDiagnosticReporting(EventListenerTestBase):
         self.process = self.target.LoadCore(
             self.getBuildArtifact("minidump.core"))
 
-        self.assertEquals(len(self.events), 1)
-
-        diagnostic_event = self.events[0]
+        event = lldbutil.fetch_next_event(self, self.listener, self.broadcaster)
+        diagnostic_data = lldb.SBDebugger.GetDiagnosticFromEvent(event)
         self.assertEquals(
-            diagnostic_event.GetValueForKey("type").GetStringValue(100),
+            diagnostic_data.GetValueForKey("type").GetStringValue(100),
             "warning")
         self.assertEquals(
-            diagnostic_event.GetValueForKey("message").GetStringValue(100),
+            diagnostic_data.GetValueForKey("message").GetStringValue(100),
             "unable to retrieve process ID from minidump file, setting process ID to 1"
         )

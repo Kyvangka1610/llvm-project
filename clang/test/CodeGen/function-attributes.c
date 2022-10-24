@@ -90,7 +90,7 @@ __attribute__ ((returns_twice)) void f18(void) {
 
 // CHECK-LABEL: define{{.*}} void @f19()
 // CHECK: {
-// CHECK: call i32 @setjmp(i32* noundef null)
+// CHECK: call i32 @setjmp(ptr noundef null)
 // CHECK: [[RT_CALL]]
 // CHECK: ret void
 typedef int jmp_buf[((9 * 2) + 3 + 16)];
@@ -101,7 +101,7 @@ void f19(void) {
 
 // CHECK-LABEL: define{{.*}} void @f20()
 // CHECK: {
-// CHECK: call i32 @_setjmp(i32* noundef null)
+// CHECK: call i32 @_setjmp(ptr noundef null)
 // CHECK: [[RT_CALL]]
 // CHECK: ret void
 int _setjmp(jmp_buf);

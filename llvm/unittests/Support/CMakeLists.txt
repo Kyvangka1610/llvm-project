@@ -3,6 +3,7 @@ set(LLVM_LINK_COMPONENTS
   )
 
 add_llvm_unittest(SupportTests
+  AddressRangeTest.cpp
   AlignmentTest.cpp
   AlignOfTest.cpp
   AllocatorTest.cpp
@@ -11,6 +12,7 @@ add_llvm_unittest(SupportTests
   ArrayRecyclerTest.cpp
   Base64Test.cpp
   BinaryStreamTest.cpp
+  BLAKE3Test.cpp
   BlockFrequencyTest.cpp
   BranchProbabilityTest.cpp
   CachePruningTest.cpp
@@ -84,6 +86,7 @@ add_llvm_unittest(SupportTests
   ThreadPool.cpp
   Threading.cpp
   TimerTest.cpp
+  TimeProfilerTest.cpp
   ToolOutputFileTest.cpp
   TypeNameTest.cpp
   TypeTraitsTest.cpp

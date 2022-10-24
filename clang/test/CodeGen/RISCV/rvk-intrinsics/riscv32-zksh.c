@@ -5,8 +5,8 @@
 // RV32ZKSH-LABEL: @sm3p0(
 // RV32ZKSH-NEXT:  entry:
 // RV32ZKSH-NEXT:    [[RS1_ADDR:%.*]] = alloca i32, align 4
-// RV32ZKSH-NEXT:    store i32 [[RS1:%.*]], i32* [[RS1_ADDR]], align 4
-// RV32ZKSH-NEXT:    [[TMP0:%.*]] = load i32, i32* [[RS1_ADDR]], align 4
+// RV32ZKSH-NEXT:    store i32 [[RS1:%.*]], ptr [[RS1_ADDR]], align 4
+// RV32ZKSH-NEXT:    [[TMP0:%.*]] = load i32, ptr [[RS1_ADDR]], align 4
 // RV32ZKSH-NEXT:    [[TMP1:%.*]] = call i32 @llvm.riscv.sm3p0.i32(i32 [[TMP0]])
 // RV32ZKSH-NEXT:    ret i32 [[TMP1]]
 //
@@ -18,8 +18,8 @@ long sm3p0(long rs1)
 // RV32ZKSH-LABEL: @sm3p1(
 // RV32ZKSH-NEXT:  entry:
 // RV32ZKSH-NEXT:    [[RS1_ADDR:%.*]] = alloca i32, align 4
-// RV32ZKSH-NEXT:    store i32 [[RS1:%.*]], i32* [[RS1_ADDR]], align 4
-// RV32ZKSH-NEXT:    [[TMP0:%.*]] = load i32, i32* [[RS1_ADDR]], align 4
+// RV32ZKSH-NEXT:    store i32 [[RS1:%.*]], ptr [[RS1_ADDR]], align 4
+// RV32ZKSH-NEXT:    [[TMP0:%.*]] = load i32, ptr [[RS1_ADDR]], align 4
 // RV32ZKSH-NEXT:    [[TMP1:%.*]] = call i32 @llvm.riscv.sm3p1.i32(i32 [[TMP0]])
 // RV32ZKSH-NEXT:    ret i32 [[TMP1]]
 //

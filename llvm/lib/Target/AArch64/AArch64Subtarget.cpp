@@ -52,6 +52,29 @@ static cl::opt<bool>
 static cl::opt<bool> UseAA("aarch64-use-aa", cl::init(true),
                            cl::desc("Enable the use of AA during codegen."));
 
+static cl::opt<unsigned> OverrideVectorInsertExtractBaseCost(
+    "aarch64-insert-extract-base-cost",
+    cl::desc("Base cost of vector insert/extract element"), cl::Hidden);
+
+// Reserve a list of X# registers, so they are unavailable for register
+// allocator, but can still be used as ABI requests, such as passing arguments
+// to function call.
+static cl::list<std::string>
+ReservedRegsForRA("reserve-regs-for-regalloc", cl::desc("Reserve physical "
+                  "registers, so they can't be used by register allocator. "
+                  "Should only be used for testing register allocator."),
+                  cl::CommaSeparated, cl::Hidden);
+
+static cl::opt<bool>
+    ForceStreamingCompatibleSVE("force-streaming-compatible-sve",
+                                cl::init(false), cl::Hidden);
+
+unsigned AArch64Subtarget::getVectorInsertExtractBaseCost() const {
+  if (OverrideVectorInsertExtractBaseCost.getNumOccurrences() > 0)
+    return OverrideVectorInsertExtractBaseCost;
+  return VectorInsertExtractBaseCost;
+}
+
 AArch64Subtarget &AArch64Subtarget::initializeSubtargetDependencies(
     StringRef FS, StringRef CPUString, StringRef TuneCPUString) {
   // Determine default and user-specified characteristics
@@ -79,14 +102,17 @@ void AArch64Subtarget::initializeProperties() {
     CacheLineSize = 64;
     break;
   case CortexA35:
-    break;
   case CortexA53:
   case CortexA55:
     PrefFunctionLogAlignment = 4;
+    PrefLoopLogAlignment = 4;
+    MaxBytesForLoopAlignment = 8;
     break;
   case CortexA57:
     MaxInterleaveFactor = 4;
     PrefFunctionLogAlignment = 4;
+    PrefLoopLogAlignment = 4;
+    MaxBytesForLoopAlignment = 8;
     break;
   case CortexA65:
     PrefFunctionLogAlignment = 3;
@@ -94,6 +120,10 @@ void AArch64Subtarget::initializeProperties() {
   case CortexA72:
   case CortexA73:
   case CortexA75:
+    PrefFunctionLogAlignment = 4;
+    PrefLoopLogAlignment = 4;
+    MaxBytesForLoopAlignment = 8;
+    break;
   case CortexA76:
   case CortexA77:
   case CortexA78:
@@ -102,12 +132,21 @@ void AArch64Subtarget::initializeProperties() {
   case CortexX1:
   case CortexX1C:
     PrefFunctionLogAlignment = 4;
+    PrefLoopLogAlignment = 5;
+    MaxBytesForLoopAlignment = 16;
     break;
   case CortexA510:
+    PrefFunctionLogAlignment = 4;
+    VScaleForTuning = 1;
+    PrefLoopLogAlignment = 4;
+    MaxBytesForLoopAlignment = 8;
+    break;
   case CortexA710:
   case CortexX2:
     PrefFunctionLogAlignment = 4;
     VScaleForTuning = 1;
+    PrefLoopLogAlignment = 5;
+    MaxBytesForLoopAlignment = 16;
     break;
   case A64FX:
     CacheLineSize = 256;
@@ -125,6 +164,8 @@ void AArch64Subtarget::initializeProperties() {
   case AppleA12:
   case AppleA13:
   case AppleA14:
+  case AppleA15:
+  case AppleA16:
     CacheLineSize = 64;
     PrefetchDistance = 280;
     MinPrefetchStride = 2048;
@@ -164,6 +205,7 @@ void AArch64Subtarget::initializeProperties() {
     MaxBytesForLoopAlignment = 16;
     break;
   case NeoverseN2:
+  case NeoverseV2:
     PrefFunctionLogAlignment = 4;
     PrefLoopLogAlignment = 5;
     MaxBytesForLoopAlignment = 16;
@@ -222,6 +264,12 @@ void AArch64Subtarget::initializeProperties() {
     // FIXME: remove this to enable 64-bit SLP if performance looks good.
     MinVectorRegisterBitWidth = 128;
     break;
+  case Ampere1:
+    CacheLineSize = 64;
+    PrefFunctionLogAlignment = 6;
+    PrefLoopLogAlignment = 6;
+    MaxInterleaveFactor = 4;
+    break;
   }
 }
 
@@ -230,11 +278,14 @@ AArch64Subtarget::AArch64Subtarget(const Triple &TT, const std::string &CPU,
                                    const std::string &FS,
                                    const TargetMachine &TM, bool LittleEndian,
                                    unsigned MinSVEVectorSizeInBitsOverride,
-                                   unsigned MaxSVEVectorSizeInBitsOverride)
+                                   unsigned MaxSVEVectorSizeInBitsOverride,
+                                   bool StreamingSVEModeDisabled)
     : AArch64GenSubtargetInfo(TT, CPU, TuneCPU, FS),
       ReserveXRegister(AArch64::GPR64commonRegClass.getNumRegs()),
+      ReserveXRegisterForRA(AArch64::GPR64commonRegClass.getNumRegs()),
       CustomCallSavedXRegs(AArch64::GPR64commonRegClass.getNumRegs()),
       IsLittle(LittleEndian),
+      StreamingSVEModeDisabled(StreamingSVEModeDisabled),
       MinSVEVectorSizeInBits(MinSVEVectorSizeInBitsOverride),
       MaxSVEVectorSizeInBits(MaxSVEVectorSizeInBitsOverride), TargetTriple(TT),
       InstrInfo(initializeSubtargetDependencies(FS, CPU, TuneCPU)),
@@ -255,6 +306,14 @@ AArch64Subtarget::AArch64Subtarget(const Triple &TT, const std::string &CPU,
       *static_cast<const AArch64TargetMachine *>(&TM), *this, *RBI));
 
   RegBankInfo.reset(RBI);
+
+  auto TRI = getRegisterInfo();
+  StringSet<> ReservedRegNames;
+  ReservedRegNames.insert(ReservedRegsForRA.begin(), ReservedRegsForRA.end());
+  for (unsigned i = 0; i < 31; ++i) {
+    if (ReservedRegNames.count(TRI->getName(AArch64::X0 + i)))
+      ReserveXRegisterForRA.set(i);
+  }
 }
 
 const CallLowering *AArch64Subtarget::getCallLowering() const {
@@ -288,8 +347,11 @@ AArch64Subtarget::ClassifyGlobalReference(const GlobalValue *GV,
     return AArch64II::MO_GOT;
 
   if (!TM.shouldAssumeDSOLocal(*GV->getParent(), GV)) {
-    if (GV->hasDLLImportStorageClass())
+    if (GV->hasDLLImportStorageClass()) {
+      if (isWindowsArm64EC() && GV->getValueType()->isFunctionTy())
+        return AArch64II::MO_GOT | AArch64II::MO_DLLIMPORTAUX;
       return AArch64II::MO_GOT | AArch64II::MO_DLLIMPORT;
+    }
     if (getTargetTriple().isOSWindows())
       return AArch64II::MO_GOT | AArch64II::MO_COFFSTUB;
     return AArch64II::MO_GOT;
@@ -326,9 +388,17 @@ unsigned AArch64Subtarget::classifyGlobalFunctionReference(
       !TM.shouldAssumeDSOLocal(*GV->getParent(), GV))
     return AArch64II::MO_GOT;
 
-  // Use ClassifyGlobalReference for setting MO_DLLIMPORT/MO_COFFSTUB.
-  if (getTargetTriple().isOSWindows())
+  if (getTargetTriple().isOSWindows()) {
+    if (isWindowsArm64EC() && GV->getValueType()->isFunctionTy() &&
+        GV->hasDLLImportStorageClass()) {
+      // On Arm64EC, if we're calling a function directly, use MO_DLLIMPORT,
+      // not MO_DLLIMPORTAUX.
+      return AArch64II::MO_GOT | AArch64II::MO_DLLIMPORT;
+    }
+
+    // Use ClassifyGlobalReference for setting MO_DLLIMPORT/MO_COFFSTUB.
     return ClassifyGlobalReference(GV, TM);
+  }
 
   return AArch64II::MO_NO_FLAG;
 }
@@ -378,3 +448,11 @@ void AArch64Subtarget::mirFileLoaded(MachineFunction &MF) const {
 }
 
 bool AArch64Subtarget::useAA() const { return UseAA; }
+
+bool AArch64Subtarget::forceStreamingCompatibleSVE() const {
+  if (ForceStreamingCompatibleSVE) {
+    assert((hasSVE() || hasSME()) && "Expected SVE to be available");
+    return hasSVE() || hasSME();
+  }
+  return false;
+}

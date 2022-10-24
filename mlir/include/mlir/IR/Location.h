@@ -15,6 +15,7 @@
 #define MLIR_IR_LOCATION_H
 
 #include "mlir/IR/Attributes.h"
+#include "mlir/IR/SubElementInterfaces.h"
 #include "llvm/Support/PointerLikeTypeTraits.h"
 
 namespace mlir {
@@ -62,9 +63,18 @@ public:
   LocationAttr *operator->() const { return const_cast<LocationAttr *>(&impl); }
 
   /// Type casting utilities on the underlying location.
-  template <typename U> bool isa() const { return impl.isa<U>(); }
-  template <typename U> U dyn_cast() const { return impl.dyn_cast<U>(); }
-  template <typename U> U cast() const { return impl.cast<U>(); }
+  template <typename U>
+  bool isa() const {
+    return impl.isa<U>();
+  }
+  template <typename U>
+  U dyn_cast() const {
+    return impl.dyn_cast<U>();
+  }
+  template <typename U>
+  U cast() const {
+    return impl.cast<U>();
+  }
 
   /// Comparison operators.
   bool operator==(Location rhs) const { return impl == rhs.impl; }
@@ -128,7 +138,8 @@ inline OpaqueLoc OpaqueLoc::get(T underlyingLocation, MLIRContext *context) {
 namespace llvm {
 
 // Type hash just like pointers.
-template <> struct DenseMapInfo<mlir::Location> {
+template <>
+struct DenseMapInfo<mlir::Location> {
   static mlir::Location getEmptyKey() {
     auto *pointer = llvm::DenseMapInfo<void *>::getEmptyKey();
     return mlir::Location::getFromOpaquePointer(pointer);
@@ -146,7 +157,8 @@ template <> struct DenseMapInfo<mlir::Location> {
 };
 
 /// We align LocationStorage by 8, so allow LLVM to steal the low bits.
-template <> struct PointerLikeTypeTraits<mlir::Location> {
+template <>
+struct PointerLikeTypeTraits<mlir::Location> {
 public:
   static inline void *getAsVoidPointer(mlir::Location I) {
     return const_cast<void *>(I.getAsOpaquePointer());

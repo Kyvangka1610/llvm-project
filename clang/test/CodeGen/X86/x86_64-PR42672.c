@@ -29,13 +29,12 @@ void _raw_spin_lock(void) {
 // CHECK-STRUCT:  store i16 1
 // CHECK-STRUCT:  store i16 2
 // CHECK-STRUCT: [[RES:%[0-9]+]] = call i32 asm "nop", "=r,~{dirflag},~{fpsr},~{flags}"()
-// CHECK-STRUCT: [[CAST:%[0-9]+]] = bitcast %struct.anon* %lockval to i32*
-// CHECK-STRUCT: store i32 [[RES]], i32* [[CAST]], align 2
+// CHECK-STRUCT: store i32 [[RES]], ptr %lockval, align 2
 
 // CHECK-NOSTRUCT: %lockval = alloca i32, align 4
 // CHECK-NOSTRUCT: store i32 3
 // CHECK-NOSTRUCT:  [[RES:%[0-9]+]] = call i32 asm "nop", "=r,~{dirflag},~{fpsr},~{flags}"()
-// CHECK-NOSTRUCT: store i32 [[RES]], i32* %lockval, align 4
+// CHECK-NOSTRUCT: store i32 [[RES]], ptr %lockval, align 4
 
 // Check Clang correctly handles a structure with padding.
 void unusual_struct(void) {
@@ -86,8 +85,7 @@ void x_constraint_fit(void) {
 // CHECK-LABEL: x_constraint_fit
 // CHECK-X: %z = alloca %struct.S, align 4
 // CHECK-X: [[RES:%[0-9]+]] = call i128 asm sideeffect "nop", "=x,~{dirflag},~{fpsr},~{flags}"()
-// CHECK-X: [[CAST:%[0-9]+]] = bitcast %struct.S* %z to i128*
-// CHECK-X: store i128 [[RES]], i128* [[CAST]], align 4
+// CHECK-X: store i128 [[RES]], ptr %z, align 4
 // CHECK-X: ret
 
 // Clang is unable to emit LLVM IR for a 32-byte structure.

@@ -239,7 +239,7 @@ bool X86TargetInfo::handleTargetFeatures(std::vector<std::string> &Features,
       HasAVX512ER = true;
     } else if (Feature == "+avx512fp16") {
       HasAVX512FP16 = true;
-      HasFloat16 = true;
+      HasLegalHalfType = true;
     } else if (Feature == "+avx512pf") {
       HasAVX512PF = true;
     } else if (Feature == "+avx512dq") {
@@ -290,6 +290,8 @@ bool X86TargetInfo::handleTargetFeatures(std::vector<std::string> &Features,
       HasCLWB = true;
     } else if (Feature == "+wbnoinvd") {
       HasWBNOINVD = true;
+    } else if (Feature == "+prefetchi") {
+      HasPREFETCHI = true;
     } else if (Feature == "+prefetchwt1") {
       HasPREFETCHWT1 = true;
     } else if (Feature == "+clzero") {
@@ -298,6 +300,8 @@ bool X86TargetInfo::handleTargetFeatures(std::vector<std::string> &Features,
       HasCLDEMOTE = true;
     } else if (Feature == "+rdpid") {
       HasRDPID = true;
+    } else if (Feature == "+rdpru") {
+      HasRDPRU = true;
     } else if (Feature == "+kl") {
       HasKL = true;
     } else if (Feature == "+widekl") {
@@ -324,6 +328,8 @@ bool X86TargetInfo::handleTargetFeatures(std::vector<std::string> &Features,
       HasHRESET = true;
     } else if (Feature == "+amx-bf16") {
       HasAMXBF16 = true;
+    } else if (Feature == "+amx-fp16") {
+      HasAMXFP16 = true;
     } else if (Feature == "+amx-int8") {
       HasAMXINT8 = true;
     } else if (Feature == "+amx-tile") {
@@ -354,6 +360,10 @@ bool X86TargetInfo::handleTargetFeatures(std::vector<std::string> &Features,
                            .Case("+sse", SSE1)
                            .Default(NoSSE);
     SSELevel = std::max(SSELevel, Level);
+
+    HasFloat16 = SSELevel >= SSE2;
+
+    HasBFloat16 = SSELevel >= SSE2;
 
     MMX3DNowEnum ThreeDNowLevel = llvm::StringSwitch<MMX3DNowEnum>(Feature)
                                       .Case("+3dnowa", AMD3DNowAthlon)
@@ -441,7 +451,7 @@ void X86TargetInfo::getTargetDefines(const LangOptions &Opts,
   case CK_PentiumMMX:
     Builder.defineMacro("__pentium_mmx__");
     Builder.defineMacro("__tune_pentium_mmx__");
-    LLVM_FALLTHROUGH;
+    [[fallthrough]];
   case CK_i586:
   case CK_Pentium:
     defineCPUMacros(Builder, "i586");
@@ -450,11 +460,11 @@ void X86TargetInfo::getTargetDefines(const LangOptions &Opts,
   case CK_Pentium3:
   case CK_PentiumM:
     Builder.defineMacro("__tune_pentium3__");
-    LLVM_FALLTHROUGH;
+    [[fallthrough]];
   case CK_Pentium2:
   case CK_C3_2:
     Builder.defineMacro("__tune_pentium2__");
-    LLVM_FALLTHROUGH;
+    [[fallthrough]];
   case CK_PentiumPro:
   case CK_i686:
     defineCPUMacros(Builder, "i686");
@@ -522,7 +532,7 @@ void X86TargetInfo::getTargetDefines(const LangOptions &Opts,
   case CK_K6_2:
     Builder.defineMacro("__k6_2__");
     Builder.defineMacro("__tune_k6_2__");
-    LLVM_FALLTHROUGH;
+    [[fallthrough]];
   case CK_K6_3:
     if (CPU != CK_K6_2) { // In case of fallthrough
       // FIXME: GCC may be enabling these in cases where some other k6
@@ -531,7 +541,7 @@ void X86TargetInfo::getTargetDefines(const LangOptions &Opts,
       Builder.defineMacro("__k6_3__");
       Builder.defineMacro("__tune_k6_3__");
     }
-    LLVM_FALLTHROUGH;
+    [[fallthrough]];
   case CK_K6:
     defineCPUMacros(Builder, "k6");
     break;
@@ -657,13 +667,13 @@ void X86TargetInfo::getTargetDefines(const LangOptions &Opts,
   switch (XOPLevel) {
   case XOP:
     Builder.defineMacro("__XOP__");
-    LLVM_FALLTHROUGH;
+    [[fallthrough]];
   case FMA4:
     Builder.defineMacro("__FMA4__");
-    LLVM_FALLTHROUGH;
+    [[fallthrough]];
   case SSE4A:
     Builder.defineMacro("__SSE4A__");
-    LLVM_FALLTHROUGH;
+    [[fallthrough]];
   case NoXOP:
     break;
   }
@@ -732,6 +742,8 @@ void X86TargetInfo::getTargetDefines(const LangOptions &Opts,
     Builder.defineMacro("__SHSTK__");
   if (HasSGX)
     Builder.defineMacro("__SGX__");
+  if (HasPREFETCHI)
+    Builder.defineMacro("__PREFETCHI__");
   if (HasPREFETCHWT1)
     Builder.defineMacro("__PREFETCHWT1__");
   if (HasCLZERO)
@@ -742,6 +754,8 @@ void X86TargetInfo::getTargetDefines(const LangOptions &Opts,
     Builder.defineMacro("__WIDEKL__");
   if (HasRDPID)
     Builder.defineMacro("__RDPID__");
+  if (HasRDPRU)
+    Builder.defineMacro("__RDPRU__");
   if (HasCLDEMOTE)
     Builder.defineMacro("__CLDEMOTE__");
   if (HasWAITPKG)
@@ -766,6 +780,8 @@ void X86TargetInfo::getTargetDefines(const LangOptions &Opts,
     Builder.defineMacro("__AMXINT8__");
   if (HasAMXBF16)
     Builder.defineMacro("__AMXBF16__");
+  if (HasAMXFP16)
+    Builder.defineMacro("__AMXFP16__");
   if (HasAVXVNNI)
     Builder.defineMacro("__AVXVNNI__");
   if (HasSERIALIZE)
@@ -781,33 +797,33 @@ void X86TargetInfo::getTargetDefines(const LangOptions &Opts,
   switch (SSELevel) {
   case AVX512F:
     Builder.defineMacro("__AVX512F__");
-    LLVM_FALLTHROUGH;
+    [[fallthrough]];
   case AVX2:
     Builder.defineMacro("__AVX2__");
-    LLVM_FALLTHROUGH;
+    [[fallthrough]];
   case AVX:
     Builder.defineMacro("__AVX__");
-    LLVM_FALLTHROUGH;
+    [[fallthrough]];
   case SSE42:
     Builder.defineMacro("__SSE4_2__");
-    LLVM_FALLTHROUGH;
+    [[fallthrough]];
   case SSE41:
     Builder.defineMacro("__SSE4_1__");
-    LLVM_FALLTHROUGH;
+    [[fallthrough]];
   case SSSE3:
     Builder.defineMacro("__SSSE3__");
-    LLVM_FALLTHROUGH;
+    [[fallthrough]];
   case SSE3:
     Builder.defineMacro("__SSE3__");
-    LLVM_FALLTHROUGH;
+    [[fallthrough]];
   case SSE2:
     Builder.defineMacro("__SSE2__");
     Builder.defineMacro("__SSE2_MATH__"); // -mfp-math=sse always implied.
-    LLVM_FALLTHROUGH;
+    [[fallthrough]];
   case SSE1:
     Builder.defineMacro("__SSE__");
     Builder.defineMacro("__SSE_MATH__"); // -mfp-math=sse always implied.
-    LLVM_FALLTHROUGH;
+    [[fallthrough]];
   case NoSSE:
     break;
   }
@@ -837,13 +853,13 @@ void X86TargetInfo::getTargetDefines(const LangOptions &Opts,
   switch (MMX3DNowLevel) {
   case AMD3DNowAthlon:
     Builder.defineMacro("__3dNOW_A__");
-    LLVM_FALLTHROUGH;
+    [[fallthrough]];
   case AMD3DNow:
     Builder.defineMacro("__3dNOW__");
-    LLVM_FALLTHROUGH;
+    [[fallthrough]];
   case MMX:
     Builder.defineMacro("__MMX__");
-    LLVM_FALLTHROUGH;
+    [[fallthrough]];
   case NoMMX3DNow:
     break;
   }
@@ -869,6 +885,7 @@ bool X86TargetInfo::isValidFeatureName(StringRef Name) const {
       .Case("adx", true)
       .Case("aes", true)
       .Case("amx-bf16", true)
+      .Case("amx-fp16", true)
       .Case("amx-int8", true)
       .Case("amx-tile", true)
       .Case("avx", true)
@@ -921,10 +938,12 @@ bool X86TargetInfo::isValidFeatureName(StringRef Name) const {
       .Case("pconfig", true)
       .Case("pku", true)
       .Case("popcnt", true)
+      .Case("prefetchi", true)
       .Case("prefetchwt1", true)
       .Case("prfchw", true)
       .Case("ptwrite", true)
       .Case("rdpid", true)
+      .Case("rdpru", true)
       .Case("rdrnd", true)
       .Case("rdseed", true)
       .Case("rtm", true)
@@ -962,6 +981,7 @@ bool X86TargetInfo::hasFeature(StringRef Feature) const {
       .Case("adx", HasADX)
       .Case("aes", HasAES)
       .Case("amx-bf16", HasAMXBF16)
+      .Case("amx-fp16", HasAMXFP16)
       .Case("amx-int8", HasAMXINT8)
       .Case("amx-tile", HasAMXTILE)
       .Case("avxvnni", HasAVXVNNI)
@@ -1016,10 +1036,12 @@ bool X86TargetInfo::hasFeature(StringRef Feature) const {
       .Case("pconfig", HasPCONFIG)
       .Case("pku", HasPKU)
       .Case("popcnt", HasPOPCNT)
+      .Case("prefetchi", HasPREFETCHI)
       .Case("prefetchwt1", HasPREFETCHWT1)
       .Case("prfchw", HasPRFCHW)
       .Case("ptwrite", HasPTWRITE)
       .Case("rdpid", HasRDPID)
+      .Case("rdpru", HasRDPRU)
       .Case("rdrnd", HasRDRND)
       .Case("rdseed", HasRDSEED)
       .Case("retpoline-external-thunk", HasRetpolineExternalThunk)
@@ -1490,8 +1512,8 @@ std::string X86TargetInfo::convertConstraint(const char *&Constraint) const {
     return std::string("{si}");
   case 'D':
     return std::string("{di}");
-  case 'p': // address
-    return std::string("im");
+  case 'p': // Keep 'p' constraint (address).
+    return std::string("p");
   case 't': // top of floating point stack.
     return std::string("{st}");
   case 'u':                        // second from top of floating point stack.
@@ -1514,7 +1536,7 @@ std::string X86TargetInfo::convertConstraint(const char *&Constraint) const {
       // to the next constraint.
       return std::string("^") + std::string(Constraint++, 2);
     }
-    LLVM_FALLTHROUGH;
+    [[fallthrough]];
   default:
     return std::string(1, *Constraint);
   }

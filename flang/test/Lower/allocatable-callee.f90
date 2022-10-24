@@ -59,7 +59,10 @@ subroutine test_char_scalar_explicit_dynamic(c, n)
   character(n), allocatable :: c
   external foo1
   ! Check that the length expr was evaluated before the execution parts.
-  ! CHECK: %[[len:.*]] = fir.load %arg1 : !fir.ref<i32>
+  ! CHECK: %[[raw_len:.*]] = fir.load %arg1 : !fir.ref<i32>
+  ! CHECK:  %[[c0_i32:.*]] = arith.constant 0 : i32
+  ! CHECK:  %[[cmp:.*]] = arith.cmpi sgt, %[[raw_len]], %[[c0_i32]] : i32
+  ! CHECK:  %[[len:.*]] = arith.select %[[cmp]], %[[raw_len]], %[[c0_i32]] : i32
   n = n + 1
   ! CHECK: fir.store {{.*}} to %arg1 : !fir.ref<i32>
   call foo1(c)
@@ -106,7 +109,10 @@ subroutine test_char_array_explicit_dynamic(c, n)
   character(n), allocatable :: c(:)
   external foo1
   ! Check that the length expr was evaluated before the execution parts.
-  ! CHECK: %[[len:.*]] = fir.load %arg1 : !fir.ref<i32>
+  ! CHECK: %[[raw_len:.*]] = fir.load %arg1 : !fir.ref<i32>
+  ! CHECK:  %[[c0_i32:.*]] = arith.constant 0 : i32
+  ! CHECK:  %[[cmp:.*]] = arith.cmpi sgt, %[[raw_len]], %[[c0_i32]] : i32
+  ! CHECK:  %[[len:.*]] = arith.select %[[cmp]], %[[raw_len]], %[[c0_i32]] : i32
   n = n + 1
   ! CHECK: fir.store {{.*}} to %arg1 : !fir.ref<i32>
   call foo1(c(1))
@@ -135,4 +141,41 @@ subroutine test_char_scalar_deferred_k2(c)
   ! CHECK-DAG: %[[addr_cast:.*]] = fir.convert %[[addr]] : (!fir.heap<!fir.char<2,?>>) -> !fir.ref<!fir.char<2,?>>
   ! CHECK: %[[boxchar:.*]] = fir.emboxchar %[[addr_cast]], %[[len]] : (!fir.ref<!fir.char<2,?>>, index) -> !fir.boxchar<2>
   ! CHECK: fir.call @_QPfoo2(%[[boxchar]]) : (!fir.boxchar<2>) -> ()
+end subroutine
+
+! Check that assumed length character allocatables are reading the length from
+! the descriptor.
+
+! CHECK-LABEL: _QPtest_char_assumed(
+! CHECK-SAME: %[[arg0:.*]]: !fir.ref<!fir.box<!fir.heap<!fir.char<1,?>>>>{{.*}}
+subroutine test_char_assumed(a)
+  integer :: n
+  character(len=*), allocatable :: a
+  ! CHECK: %[[argLoad:.*]] = fir.load %[[arg0]] : !fir.ref<!fir.box<!fir.heap<!fir.char<1,?>>>>
+  ! CHECK: %[[argLen:.*]] = fir.box_elesize %[[argLoad]] : (!fir.box<!fir.heap<!fir.char<1,?>>>) -> index
+
+  n = len(a)
+  ! CHECK: %[[argLenCast:.*]] = fir.convert %[[argLen]] : (index) -> i32
+  ! CHECK: fir.store %[[argLenCast]] to %{{.*}} : !fir.ref<i32>
+end subroutine
+
+! CHECK-LABEL: _QPtest_char_assumed_optional(
+! CHECK-SAME: %[[arg0:.*]]: !fir.ref<!fir.box<!fir.heap<!fir.char<1,?>>>>{{.*}}
+subroutine test_char_assumed_optional(a)
+  integer :: n
+  character(len=*), allocatable, optional :: a
+  ! CHECK: %[[argPresent:.*]] = fir.is_present %[[arg0]] : (!fir.ref<!fir.box<!fir.heap<!fir.char<1,?>>>>) -> i1
+  ! CHECK: %[[argLen:.*]] = fir.if %[[argPresent]] -> (index) {
+  ! CHECK:   %[[argLoad:.*]] = fir.load %[[arg0]] : !fir.ref<!fir.box<!fir.heap<!fir.char<1,?>>>>
+  ! CHECK:   %[[argEleSz:.*]] = fir.box_elesize %[[argLoad]] : (!fir.box<!fir.heap<!fir.char<1,?>>>) -> index
+  ! CHECK:   fir.result %[[argEleSz]] : index
+  ! CHECK: } else {
+  ! CHECK:   %[[undef:.*]] = fir.undefined index
+  ! CHECK:   fir.result %[[undef]] : index
+
+  if (present(a)) then
+    n = len(a)
+    ! CHECK:   %[[argLenCast:.*]] = fir.convert %[[argLen]] : (index) -> i32
+    ! CHECK:   fir.store %[[argLenCast]] to %{{.*}} : !fir.ref<i32>
+  endif
 end subroutine

@@ -35,6 +35,12 @@ namespace clangd {
 /// Returns true if \p Include is literal include like "path" or <path>.
 bool isLiteralInclude(llvm::StringRef Include);
 
+/// If Text begins an Include-What-You-Use directive, returns it.
+/// Given "// IWYU pragma: keep", returns "keep".
+/// Input is a null-terminated char* as provided by SM.getCharacterData().
+/// (This should not be StringRef as we do *not* want to scan for its length).
+llvm::Optional<StringRef> parseIWYUPragma(const char *Text);
+
 /// Represents a header file to be #include'd.
 struct HeaderFile {
   std::string File;
@@ -134,7 +140,7 @@ public:
   enum class HeaderID : unsigned {};
 
   llvm::Optional<HeaderID> getID(const FileEntry *Entry) const;
-  HeaderID getOrCreateID(const FileEntry *Entry);
+  HeaderID getOrCreateID(FileEntryRef Entry);
 
   StringRef getRealPath(HeaderID ID) const {
     assert(static_cast<unsigned>(ID) <= RealPathNames.size());
@@ -143,6 +149,10 @@ public:
 
   bool isSelfContained(HeaderID ID) const {
     return !NonSelfContained.contains(ID);
+  }
+
+  bool hasIWYUExport(HeaderID ID) const {
+    return HasIWYUExport.contains(ID);
   }
 
   // Return all transitively reachable files.
@@ -185,6 +195,9 @@ private:
   // Contains HeaderIDs of all non self-contained entries in the
   // IncludeStructure.
   llvm::DenseSet<HeaderID> NonSelfContained;
+  // Contains a set of headers that have either "IWYU pragma: export" or "IWYU
+  // pragma: begin_exports".
+  llvm::DenseSet<HeaderID> HasIWYUExport;
 };
 
 // Calculates insertion edit for including a new header in a file.

@@ -6,10 +6,10 @@
 // RV32ZKNE-NEXT:  entry:
 // RV32ZKNE-NEXT:    [[RS1_ADDR:%.*]] = alloca i32, align 4
 // RV32ZKNE-NEXT:    [[RS2_ADDR:%.*]] = alloca i32, align 4
-// RV32ZKNE-NEXT:    store i32 [[RS1:%.*]], i32* [[RS1_ADDR]], align 4
-// RV32ZKNE-NEXT:    store i32 [[RS2:%.*]], i32* [[RS2_ADDR]], align 4
-// RV32ZKNE-NEXT:    [[TMP0:%.*]] = load i32, i32* [[RS1_ADDR]], align 4
-// RV32ZKNE-NEXT:    [[TMP1:%.*]] = load i32, i32* [[RS2_ADDR]], align 4
+// RV32ZKNE-NEXT:    store i32 [[RS1:%.*]], ptr [[RS1_ADDR]], align 4
+// RV32ZKNE-NEXT:    store i32 [[RS2:%.*]], ptr [[RS2_ADDR]], align 4
+// RV32ZKNE-NEXT:    [[TMP0:%.*]] = load i32, ptr [[RS1_ADDR]], align 4
+// RV32ZKNE-NEXT:    [[TMP1:%.*]] = load i32, ptr [[RS2_ADDR]], align 4
 // RV32ZKNE-NEXT:    [[TMP2:%.*]] = call i32 @llvm.riscv.aes32esi(i32 [[TMP0]], i32 [[TMP1]], i8 3)
 // RV32ZKNE-NEXT:    ret i32 [[TMP2]]
 //
@@ -21,10 +21,10 @@ int aes32esi(int rs1, int rs2) {
 // RV32ZKNE-NEXT:  entry:
 // RV32ZKNE-NEXT:    [[RS1_ADDR:%.*]] = alloca i32, align 4
 // RV32ZKNE-NEXT:    [[RS2_ADDR:%.*]] = alloca i32, align 4
-// RV32ZKNE-NEXT:    store i32 [[RS1:%.*]], i32* [[RS1_ADDR]], align 4
-// RV32ZKNE-NEXT:    store i32 [[RS2:%.*]], i32* [[RS2_ADDR]], align 4
-// RV32ZKNE-NEXT:    [[TMP0:%.*]] = load i32, i32* [[RS1_ADDR]], align 4
-// RV32ZKNE-NEXT:    [[TMP1:%.*]] = load i32, i32* [[RS2_ADDR]], align 4
+// RV32ZKNE-NEXT:    store i32 [[RS1:%.*]], ptr [[RS1_ADDR]], align 4
+// RV32ZKNE-NEXT:    store i32 [[RS2:%.*]], ptr [[RS2_ADDR]], align 4
+// RV32ZKNE-NEXT:    [[TMP0:%.*]] = load i32, ptr [[RS1_ADDR]], align 4
+// RV32ZKNE-NEXT:    [[TMP1:%.*]] = load i32, ptr [[RS2_ADDR]], align 4
 // RV32ZKNE-NEXT:    [[TMP2:%.*]] = call i32 @llvm.riscv.aes32esmi(i32 [[TMP0]], i32 [[TMP1]], i8 3)
 // RV32ZKNE-NEXT:    ret i32 [[TMP2]]
 //

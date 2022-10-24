@@ -51,11 +51,7 @@ void PythonTestSuite::TearDown() {
 // callbacks. Because they're defined in libLLDB which we cannot link for the
 // unit test, we have a 'default' implementation here.
 
-#if PY_MAJOR_VERSION >= 3
 extern "C" PyObject *PyInit__lldb(void) { return nullptr; }
-#else
-extern "C" void init_lldb(void) {}
-#endif
 
 llvm::Expected<bool> lldb_private::LLDBSwigPythonBreakpointCallbackFunction(
     const char *python_function_name, const char *session_dictionary_name,
@@ -68,6 +64,12 @@ llvm::Expected<bool> lldb_private::LLDBSwigPythonBreakpointCallbackFunction(
 bool lldb_private::LLDBSwigPythonWatchpointCallbackFunction(
     const char *python_function_name, const char *session_dictionary_name,
     const lldb::StackFrameSP &sb_frame, const lldb::WatchpointSP &sb_wp) {
+  return false;
+}
+
+bool lldb_private::LLDBSwigPythonFormatterCallbackFunction(
+    const char *python_function_name, const char *session_dictionary_name,
+    lldb::TypeImplSP type_impl_sp) {
   return false;
 }
 

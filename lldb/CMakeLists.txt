@@ -17,10 +17,12 @@ endif()
 # Must go below project(..)
 include(GNUInstallDirs)
 
+option(LLDB_INCLUDE_TESTS "Generate build targets for the LLDB unit tests." ${LLVM_INCLUDE_TESTS})
+
 if(LLDB_BUILT_STANDALONE)
   include(LLDBStandalone)
 
-  set(CMAKE_CXX_STANDARD 14 CACHE STRING "C++ standard to conform to")
+  set(CMAKE_CXX_STANDARD 17 CACHE STRING "C++ standard to conform to")
   set(CMAKE_CXX_STANDARD_REQUIRED YES)
   set(CMAKE_CXX_EXTENSIONS NO)
 endif()
@@ -124,10 +126,16 @@ if (LLDB_ENABLE_LUA)
   finish_swig_lua("lldb-lua" "${lldb_lua_bindings_dir}" "${lldb_lua_target_dir}")
 endif()
 
-option(LLDB_INCLUDE_TESTS "Generate build targets for the LLDB unit tests." ${LLVM_INCLUDE_TESTS})
+set(LLDB_INCLUDE_UNITTESTS ON)
+if (NOT TARGET llvm_gtest)
+  set(LLDB_INCLUDE_UNITTESTS OFF)
+endif()
+
 if(LLDB_INCLUDE_TESTS)
   add_subdirectory(test)
-  add_subdirectory(unittests)
+  if (LLDB_INCLUDE_UNITTESTS)
+    add_subdirectory(unittests)
+  endif()
   add_subdirectory(utils)
 endif()
 

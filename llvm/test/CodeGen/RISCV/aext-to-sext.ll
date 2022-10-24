@@ -51,10 +51,9 @@ declare void @hoge()
 ; Because custom type legalization for i32 is enabled, this resulted in
 ; LowerOperation being called for the amount. This was not expected and
 ; triggered an assert.
-define i32 @crash(i32 %x, i32 %y, i32 %z) {
+define i32 @crash(i32 signext %x, i32 signext %y, i32 signext %z) {
 ; RV64I-LABEL: crash:
 ; RV64I:       # %bb.0:
-; RV64I-NEXT:    sext.w a0, a0
 ; RV64I-NEXT:    seqz a3, a0
 ; RV64I-NEXT:    addw a0, a1, a2
 ; RV64I-NEXT:    slli a1, a3, 3
@@ -74,4 +73,32 @@ bb:
 
 bar:
   ret i32 %b
+}
+
+; We prefer to sign extend i32 constants for phis. The default behavior in
+; SelectionDAGBuilder is zero extend. We have a target hook to override it.
+define i64 @sext_phi_constants(i32 signext %c) {
+; RV64I-LABEL: sext_phi_constants:
+; RV64I:       # %bb.0:
+; RV64I-NEXT:    li a1, -1
+; RV64I-NEXT:    bnez a0, .LBB2_2
+; RV64I-NEXT:  # %bb.1: # %iffalse
+; RV64I-NEXT:    li a1, -2
+; RV64I-NEXT:  .LBB2_2: # %merge
+; RV64I-NEXT:    slli a0, a1, 32
+; RV64I-NEXT:    srli a0, a0, 32
+; RV64I-NEXT:    ret
+  %a = icmp ne i32 %c, 0
+  br i1 %a, label %iftrue, label %iffalse
+
+iftrue:
+  br label %merge
+
+iffalse:
+  br label %merge
+
+merge:
+  %b = phi i32 [-1, %iftrue], [-2, %iffalse]
+  %d = zext i32 %b to i64
+  ret i64 %d
 }

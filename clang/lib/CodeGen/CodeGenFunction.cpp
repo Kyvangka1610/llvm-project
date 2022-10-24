@@ -16,6 +16,7 @@
 #include "CGCXXABI.h"
 #include "CGCleanup.h"
 #include "CGDebugInfo.h"
+#include "CGHLSLRuntime.h"
 #include "CGOpenMPRuntime.h"
 #include "CodeGenModule.h"
 #include "CodeGenPGO.h"
@@ -105,8 +106,9 @@ clang::ToConstrainedExceptMD(LangOptions::FPExceptionModeKind Kind) {
   case LangOptions::FPE_Ignore:  return llvm::fp::ebIgnore;
   case LangOptions::FPE_MayTrap: return llvm::fp::ebMayTrap;
   case LangOptions::FPE_Strict:  return llvm::fp::ebStrict;
+  default:
+    llvm_unreachable("Unsupported FP Exception Behavior");
   }
-  llvm_unreachable("Unsupported FP Exception Behavior");
 }
 
 void CodeGenFunction::SetFastMathFlags(FPOptions FPFeatures) {
@@ -145,12 +147,11 @@ void CodeGenFunction::CGFPOptionsRAII::ConstructorHelper(FPOptions FPFeatures) {
 
   FMFGuard.emplace(CGF.Builder);
 
-  llvm::RoundingMode NewRoundingBehavior =
-      static_cast<llvm::RoundingMode>(FPFeatures.getRoundingMode());
+  llvm::RoundingMode NewRoundingBehavior = FPFeatures.getRoundingMode();
   CGF.Builder.setDefaultConstrainedRounding(NewRoundingBehavior);
   auto NewExceptionBehavior =
       ToConstrainedExceptMD(static_cast<LangOptions::FPExceptionModeKind>(
-          FPFeatures.getFPExceptionMode()));
+          FPFeatures.getExceptionMode()));
   CGF.Builder.setDefaultConstrainedExcept(NewExceptionBehavior);
 
   CGF.SetFastMathFlags(FPFeatures);
@@ -485,6 +486,9 @@ void CodeGenFunction::FinishFunction(SourceLocation EndLoc) {
         std::max((uint64_t)LargestVectorWidth,
                  VT->getPrimitiveSizeInBits().getKnownMinSize());
 
+  if (CurFnInfo->getMaxVectorWidth() > LargestVectorWidth)
+    LargestVectorWidth = CurFnInfo->getMaxVectorWidth();
+
   // Add the required-vector-width attribute. This contains the max width from:
   // 1. min-vector-width attribute used in the source program.
   // 2. Any builtins used that have a vector width specified.
@@ -499,8 +503,7 @@ void CodeGenFunction::FinishFunction(SourceLocation EndLoc) {
       getContext().getTargetInfo().getVScaleRange(getLangOpts());
   if (VScaleRange) {
     CurFn->addFnAttr(llvm::Attribute::getWithVScaleRangeArgs(
-        getLLVMContext(), VScaleRange.getValue().first,
-        VScaleRange.getValue().second));
+        getLLVMContext(), VScaleRange->first, VScaleRange->second));
   }
 
   // If we generated an unreachable return block, delete it now.
@@ -557,29 +560,6 @@ bool CodeGenFunction::AlwaysEmitXRayTypedEvents() const {
               XRayInstrKind::Typed);
 }
 
-llvm::Constant *
-CodeGenFunction::EncodeAddrForUseInPrologue(llvm::Function *F,
-                                            llvm::Constant *Addr) {
-  // Addresses stored in prologue data can't require run-time fixups and must
-  // be PC-relative. Run-time fixups are undesirable because they necessitate
-  // writable text segments, which are unsafe. And absolute addresses are
-  // undesirable because they break PIE mode.
-
-  // Add a layer of indirection through a private global. Taking its address
-  // won't result in a run-time fixup, even if Addr has linkonce_odr linkage.
-  auto *GV = new llvm::GlobalVariable(CGM.getModule(), Addr->getType(),
-                                      /*isConstant=*/true,
-                                      llvm::GlobalValue::PrivateLinkage, Addr);
-
-  // Create a PC-relative address.
-  auto *GOTAsInt = llvm::ConstantExpr::getPtrToInt(GV, IntPtrTy);
-  auto *FuncAsInt = llvm::ConstantExpr::getPtrToInt(F, IntPtrTy);
-  auto *PCRelAsInt = llvm::ConstantExpr::getSub(GOTAsInt, FuncAsInt);
-  return (IntPtrTy == Int32Ty)
-             ? PCRelAsInt
-             : llvm::ConstantExpr::getTrunc(PCRelAsInt, Int32Ty);
-}
-
 llvm::Value *
 CodeGenFunction::DecodeAddrUsedInPrologue(llvm::Value *F,
                                           llvm::Value *EncodedAddr) {
@@ -594,15 +574,17 @@ CodeGenFunction::DecodeAddrUsedInPrologue(llvm::Value *F,
                             "decoded_addr");
 }
 
-void CodeGenFunction::EmitOpenCLKernelMetadata(const FunctionDecl *FD,
-                                               llvm::Function *Fn)
-{
-  if (!FD->hasAttr<OpenCLKernelAttr>())
+void CodeGenFunction::EmitKernelMetadata(const FunctionDecl *FD,
+                                         llvm::Function *Fn) {
+  if (!FD->hasAttr<OpenCLKernelAttr>() && !FD->hasAttr<CUDAGlobalAttr>())
     return;
 
   llvm::LLVMContext &Context = getLLVMContext();
 
-  CGM.GenOpenCLArgMetadata(Fn, FD, this);
+  CGM.GenKernelArgMetadata(Fn, FD, this);
+
+  if (!getLangOpts().OpenCL)
+    return;
 
   if (const VecTypeHintAttr *A = FD->getAttr<VecTypeHintAttr>()) {
     QualType HintQTy = A->getTypeHint();
@@ -743,7 +725,7 @@ void CodeGenFunction::StartFunction(GlobalDecl GD, QualType RetTy,
     const bool SanitizeBounds = SanOpts.hasOneOf(SanitizerKind::Bounds);
     bool NoSanitizeCoverage = false;
 
-    for (auto Attr : D->specific_attrs<NoSanitizeAttr>()) {
+    for (auto *Attr : D->specific_attrs<NoSanitizeAttr>()) {
       // Apply the no_sanitize* attributes to SanOpts.
       SanitizerMask mask = Attr->getMask();
       SanOpts.Mask &= ~mask;
@@ -777,7 +759,7 @@ void CodeGenFunction::StartFunction(GlobalDecl GD, QualType RetTy,
     if (SanOpts.hasOneOf(SanitizerKind::HWAddress |
                          SanitizerKind::KernelHWAddress))
       Fn->addFnAttr(llvm::Attribute::SanitizeHWAddress);
-    if (SanOpts.has(SanitizerKind::MemTag))
+    if (SanOpts.has(SanitizerKind::MemtagStack))
       Fn->addFnAttr(llvm::Attribute::SanitizeMemTag);
     if (SanOpts.has(SanitizerKind::Thread))
       Fn->addFnAttr(llvm::Attribute::SanitizeThread);
@@ -870,9 +852,18 @@ void CodeGenFunction::StartFunction(GlobalDecl GD, QualType RetTy,
     }
   }
 
-  if (CGM.getCodeGenOpts().getProfileInstr() != CodeGenOptions::ProfileNone)
-    if (CGM.isProfileInstrExcluded(Fn, Loc))
+  if (CGM.getCodeGenOpts().getProfileInstr() != CodeGenOptions::ProfileNone) {
+    switch (CGM.isFunctionBlockedFromProfileInstr(Fn, Loc)) {
+    case ProfileList::Skip:
+      Fn->addFnAttr(llvm::Attribute::SkipProfile);
+      break;
+    case ProfileList::Forbid:
       Fn->addFnAttr(llvm::Attribute::NoProfile);
+      break;
+    case ProfileList::Allow:
+      break;
+    }
+  }
 
   unsigned Count, Offset;
   if (const auto *Attr =
@@ -917,9 +908,24 @@ void CodeGenFunction::StartFunction(GlobalDecl GD, QualType RetTy,
   if (D && D->hasAttr<NoProfileFunctionAttr>())
     Fn->addFnAttr(llvm::Attribute::NoProfile);
 
-  if (FD && getLangOpts().OpenCL) {
+  if (D) {
+    // Function attributes take precedence over command line flags.
+    if (auto *A = D->getAttr<FunctionReturnThunksAttr>()) {
+      switch (A->getThunkType()) {
+      case FunctionReturnThunksAttr::Kind::Keep:
+        break;
+      case FunctionReturnThunksAttr::Kind::Extern:
+        Fn->addFnAttr(llvm::Attribute::FnRetThunkExtern);
+        break;
+      }
+    } else if (CGM.getCodeGenOpts().FunctionReturnThunks)
+      Fn->addFnAttr(llvm::Attribute::FnRetThunkExtern);
+  }
+
+  if (FD && (getLangOpts().OpenCL ||
+             (getLangOpts().HIP && getLangOpts().CUDAIsDevice))) {
     // Add metadata for a kernel function.
-    EmitOpenCLKernelMetadata(FD, Fn);
+    EmitKernelMetadata(FD, Fn);
   }
 
   // If we are checking function types, emit a function type signature as
@@ -932,12 +938,13 @@ void CodeGenFunction::StartFunction(GlobalDecl GD, QualType RetTy,
           FD->getType(), EST_None);
       llvm::Constant *FTRTTIConst =
           CGM.GetAddrOfRTTIDescriptor(ProtoTy, /*ForEH=*/true);
-      llvm::Constant *FTRTTIConstEncoded =
-          EncodeAddrForUseInPrologue(Fn, FTRTTIConst);
-      llvm::Constant *PrologueStructElems[] = {PrologueSig, FTRTTIConstEncoded};
-      llvm::Constant *PrologueStructConst =
-          llvm::ConstantStruct::getAnon(PrologueStructElems, /*Packed=*/true);
-      Fn->setPrologueData(PrologueStructConst);
+      llvm::GlobalVariable *FTRTTIProxy =
+          CGM.GetOrCreateRTTIProxyGlobalVariable(FTRTTIConst);
+      llvm::LLVMContext &Ctx = Fn->getContext();
+      llvm::MDBuilder MDB(Ctx);
+      Fn->setMetadata(llvm::LLVMContext::MD_func_sanitize,
+                      MDB.createRTTIPointerPrologue(PrologueSig, FTRTTIProxy));
+      CGM.addCompilerUsedGlobal(FTRTTIProxy);
     }
   }
 
@@ -969,9 +976,9 @@ void CodeGenFunction::StartFunction(GlobalDecl GD, QualType RetTy,
              (getLangOpts().CUDA && FD->hasAttr<CUDAGlobalAttr>())))
     Fn->addFnAttr(llvm::Attribute::NoRecurse);
 
-  llvm::RoundingMode RM = getLangOpts().getFPRoundingMode();
+  llvm::RoundingMode RM = getLangOpts().getDefaultRoundingMode();
   llvm::fp::ExceptionBehavior FPExceptionBehavior =
-      ToConstrainedExceptMD(getLangOpts().getFPExceptionMode());
+      ToConstrainedExceptMD(getLangOpts().getDefaultExceptionMode());
   Builder.setDefaultConstrainedRounding(RM);
   Builder.setDefaultConstrainedExcept(FPExceptionBehavior);
   if ((FD && (FD->UsesFPIntrin() || FD->hasAttr<StrictFPAttr>())) ||
@@ -1131,9 +1138,14 @@ void CodeGenFunction::StartFunction(GlobalDecl GD, QualType RetTy,
   if (getLangOpts().OpenMP && CurCodeDecl)
     CGM.getOpenMPRuntime().emitFunctionProlog(*this, CurCodeDecl);
 
+  // Handle emitting HLSL entry functions.
+  if (D && D->hasAttr<HLSLShaderAttr>())
+    CGM.getHLSLRuntime().emitEntryFunction(FD, Fn);
+
   EmitFunctionProlog(*CurFnInfo, CurFn, Args);
 
-  if (D && isa<CXXMethodDecl>(D) && cast<CXXMethodDecl>(D)->isInstance()) {
+  if (isa_and_nonnull<CXXMethodDecl>(D) &&
+      cast<CXXMethodDecl>(D)->isInstance()) {
     CGM.getCXXABI().EmitInstanceFunctionProlog(*this);
     const CXXMethodDecl *MD = cast<CXXMethodDecl>(D);
     if (MD->getParent()->isLambda() &&
@@ -1194,27 +1206,26 @@ void CodeGenFunction::StartFunction(GlobalDecl GD, QualType RetTy,
   }
 
   // If any of the arguments have a variably modified type, make sure to
-  // emit the type size.
-  for (FunctionArgList::const_iterator i = Args.begin(), e = Args.end();
-       i != e; ++i) {
-    const VarDecl *VD = *i;
+  // emit the type size, but only if the function is not naked. Naked functions
+  // have no prolog to run this evaluation.
+  if (!FD || !FD->hasAttr<NakedAttr>()) {
+    for (const VarDecl *VD : Args) {
+      // Dig out the type as written from ParmVarDecls; it's unclear whether
+      // the standard (C99 6.9.1p10) requires this, but we're following the
+      // precedent set by gcc.
+      QualType Ty;
+      if (const ParmVarDecl *PVD = dyn_cast<ParmVarDecl>(VD))
+        Ty = PVD->getOriginalType();
+      else
+        Ty = VD->getType();
 
-    // Dig out the type as written from ParmVarDecls; it's unclear whether
-    // the standard (C99 6.9.1p10) requires this, but we're following the
-    // precedent set by gcc.
-    QualType Ty;
-    if (const ParmVarDecl *PVD = dyn_cast<ParmVarDecl>(VD))
-      Ty = PVD->getOriginalType();
-    else
-      Ty = VD->getType();
-
-    if (Ty->isVariablyModifiedType())
-      EmitVariablyModifiedType(Ty);
+      if (Ty->isVariablyModifiedType())
+        EmitVariablyModifiedType(Ty);
+    }
   }
   // Emit a location at the end of the prologue.
   if (CGDebugInfo *DI = getDebugInfo())
     DI->EmitLocation(Builder, StartLoc);
-
   // TODO: Do we need to handle this in two places like we do with
   // target-features/target-cpu?
   if (CurFuncDecl)
@@ -2217,7 +2228,6 @@ void CodeGenFunction::EmitVariablyModifiedType(QualType type) {
     case Type::ConstantMatrix:
     case Type::Record:
     case Type::Enum:
-    case Type::Elaborated:
     case Type::Using:
     case Type::TemplateSpecialization:
     case Type::ObjCTypeParam:
@@ -2226,6 +2236,10 @@ void CodeGenFunction::EmitVariablyModifiedType(QualType type) {
     case Type::ObjCObjectPointer:
     case Type::BitInt:
       llvm_unreachable("type class is never variably-modified!");
+
+    case Type::Elaborated:
+      type = cast<ElaboratedType>(ty)->getNamedType();
+      break;
 
     case Type::Adjusted:
       type = cast<AdjustedType>(ty)->getAdjustedType();
@@ -2429,8 +2443,6 @@ void CodeGenFunction::emitAlignmentAssumption(llvm::Value *PtrValue,
                                               SourceLocation AssumptionLoc,
                                               llvm::Value *Alignment,
                                               llvm::Value *OffsetValue) {
-  if (auto *CE = dyn_cast<CastExpr>(E))
-    E = CE->getSubExprAsWritten();
   QualType Ty = E->getType();
   SourceLocation Loc = E->getExprLoc();
 
@@ -2547,16 +2559,13 @@ void CodeGenFunction::checkTargetFeatures(SourceLocation Loc,
   llvm::StringMap<bool> CallerFeatureMap;
   CGM.getContext().getFunctionFeatureMap(CallerFeatureMap, FD);
   if (BuiltinID) {
-    StringRef FeatureList(
-        CGM.getContext().BuiltinInfo.getRequiredFeatures(BuiltinID));
-    // Return if the builtin doesn't have any required features.
-    if (FeatureList.empty())
-      return;
-    assert(!FeatureList.contains(' ') && "Space in feature list");
-    TargetFeatures TF(CallerFeatureMap);
-    if (!TF.hasRequiredFeatures(FeatureList))
+    StringRef FeatureList(CGM.getContext().BuiltinInfo.getRequiredFeatures(BuiltinID));
+    if (!Builtin::evaluateRequiredTargetFeatures(
+        FeatureList, CallerFeatureMap)) {
       CGM.getDiags().Report(Loc, diag::err_builtin_needs_feature)
-          << TargetDecl->getDeclName() << FeatureList;
+          << TargetDecl->getDeclName()
+          << FeatureList;
+    }
   } else if (!TargetDecl->isMultiVersion() &&
              TargetDecl->hasAttr<TargetAttr>()) {
     // Get the required features for the callee.
@@ -2598,6 +2607,14 @@ void CodeGenFunction::EmitSanitizerStatReport(llvm::SanitizerStatKind SSK) {
   llvm::IRBuilder<> IRB(Builder.GetInsertBlock(), Builder.GetInsertPoint());
   IRB.SetCurrentDebugLocation(Builder.getCurrentDebugLocation());
   CGM.getSanStats().create(IRB, SSK);
+}
+
+void CodeGenFunction::EmitKCFIOperandBundle(
+    const CGCallee &Callee, SmallVectorImpl<llvm::OperandBundleDef> &Bundles) {
+  const FunctionProtoType *FP =
+      Callee.getAbstractInfo().getCalleeFunctionProtoType();
+  if (FP)
+    Bundles.emplace_back("kcfi", CGM.CreateKCFITypeId(FP->desugar()));
 }
 
 llvm::Value *

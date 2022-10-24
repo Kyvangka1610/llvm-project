@@ -5,8 +5,8 @@
 // RV64ZBKB-LABEL: @brev8(
 // RV64ZBKB-NEXT:  entry:
 // RV64ZBKB-NEXT:    [[RS1_ADDR:%.*]] = alloca i64, align 8
-// RV64ZBKB-NEXT:    store i64 [[RS1:%.*]], i64* [[RS1_ADDR]], align 8
-// RV64ZBKB-NEXT:    [[TMP0:%.*]] = load i64, i64* [[RS1_ADDR]], align 8
+// RV64ZBKB-NEXT:    store i64 [[RS1:%.*]], ptr [[RS1_ADDR]], align 8
+// RV64ZBKB-NEXT:    [[TMP0:%.*]] = load i64, ptr [[RS1_ADDR]], align 8
 // RV64ZBKB-NEXT:    [[TMP1:%.*]] = call i64 @llvm.riscv.brev8.i64(i64 [[TMP0]])
 // RV64ZBKB-NEXT:    ret i64 [[TMP1]]
 //

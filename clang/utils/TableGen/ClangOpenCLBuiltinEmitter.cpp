@@ -822,15 +822,24 @@ static void OCL2Qual(Sema &S, const OpenCLTypeStruct &Ty,
        << "        case OCLAQ_None:\n"
        << "          llvm_unreachable(\"Image without access qualifier\");\n";
     for (const auto &Image : ITE.getValue()) {
+      StringRef Exts =
+          Image->getValueAsDef("Extension")->getValueAsString("ExtName");
       OS << StringSwitch<const char *>(
                 Image->getValueAsString("AccessQualifier"))
                 .Case("RO", "        case OCLAQ_ReadOnly:\n")
                 .Case("WO", "        case OCLAQ_WriteOnly:\n")
-                .Case("RW", "        case OCLAQ_ReadWrite:\n")
-         << "          QT.push_back("
+                .Case("RW", "        case OCLAQ_ReadWrite:\n");
+      if (!Exts.empty()) {
+        OS << "    ";
+        EmitMacroChecks(OS, Exts);
+      }
+      OS << "          QT.push_back("
          << Image->getValueAsDef("QTExpr")->getValueAsString("TypeExpr")
-         << ");\n"
-         << "          break;\n";
+         << ");\n";
+      if (!Exts.empty()) {
+        OS << "          }\n";
+      }
+      OS << "          break;\n";
     }
     OS << "      }\n"
        << "      break;\n";
@@ -1073,7 +1082,7 @@ void OpenCLBuiltinFileEmitterBase::expandTypesInSignature(
         // If the type requires an extension, add a TypeExtMap entry mapping
         // the full type name to the extension.
         StringRef Ext =
-            Arg->getValueAsDef("Extension")->getValueAsString("ExtName");
+            Type->getValueAsDef("Extension")->getValueAsString("ExtName");
         if (!Ext.empty() && TypeExtMap.find(FullType) == TypeExtMap.end()) {
           TypeExtMap.insert({FullType, Ext});
         }

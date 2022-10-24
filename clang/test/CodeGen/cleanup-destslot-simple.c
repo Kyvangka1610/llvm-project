@@ -13,10 +13,10 @@ int test(void) {
   int *volatile p = &x;
   return *p;
 // CHECK: [[X:%.*]] = alloca i32
-// CHECK: [[P:%.*]] = alloca i32*
-// LIFETIME: call void @llvm.lifetime.start.p0i8(i64 4, i8* nonnull %{{.*}}){{( #[0-9]+)?}}, !dbg
-// LIFETIME: call void @llvm.lifetime.start.p0i8(i64 8, i8* nonnull %{{.*}}){{( #[0-9]+)?}}, !dbg
-// CHECK-NOT: store i32 %{{.*}}, i32* %cleanup.dest.slot
-// LIFETIME: call void @llvm.lifetime.end.p0i8(i64 8, {{.*}}){{( #[0-9]+)?}}, !dbg
-// LIFETIME: call void @llvm.lifetime.end.p0i8(i64 4, {{.*}}){{( #[0-9]+)?}}, !dbg
+// CHECK: [[P:%.*]] = alloca ptr
+// LIFETIME: call void @llvm.lifetime.start.p0(i64 4, ptr nonnull %{{.*}}){{( #[0-9]+)?}}, !dbg
+// LIFETIME: call void @llvm.lifetime.start.p0(i64 8, ptr nonnull %{{.*}}){{( #[0-9]+)?}}, !dbg
+// CHECK-NOT: store i32 %{{.*}}, ptr %cleanup.dest.slot
+// LIFETIME: call void @llvm.lifetime.end.p0(i64 8, {{.*}}){{( #[0-9]+)?}}, !dbg
+// LIFETIME: call void @llvm.lifetime.end.p0(i64 4, {{.*}}){{( #[0-9]+)?}}, !dbg
 }

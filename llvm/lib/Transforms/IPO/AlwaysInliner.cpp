@@ -18,14 +18,8 @@
 #include "llvm/Analysis/InlineCost.h"
 #include "llvm/Analysis/OptimizationRemarkEmitter.h"
 #include "llvm/Analysis/ProfileSummaryInfo.h"
-#include "llvm/Analysis/TargetLibraryInfo.h"
-#include "llvm/IR/CallingConv.h"
-#include "llvm/IR/DataLayout.h"
-#include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
-#include "llvm/IR/Type.h"
 #include "llvm/InitializePasses.h"
-#include "llvm/Transforms/IPO.h"
 #include "llvm/Transforms/IPO/Inliner.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
@@ -76,8 +70,9 @@ PreservedAnalyses AlwaysInlinerPass::run(Module &M,
             &FAM.getResult<BlockFrequencyAnalysis>(*Caller),
             &FAM.getResult<BlockFrequencyAnalysis>(F));
 
-        InlineResult Res = InlineFunction(
-            *CB, IFI, &FAM.getResult<AAManager>(F), InsertLifetime);
+        InlineResult Res =
+            InlineFunction(*CB, IFI, /*MergeAttributes=*/true,
+                           &FAM.getResult<AAManager>(F), InsertLifetime);
         if (!Res.isSuccess()) {
           ORE.emit([&]() {
             return OptimizationRemarkMissed(DEBUG_TYPE, "NotInlined", DLoc,
@@ -93,9 +88,6 @@ PreservedAnalyses AlwaysInlinerPass::run(Module &M,
             ORE, DLoc, Block, F, *Caller,
             InlineCost::getAlways("always inline attribute"),
             /*ForProfileContext=*/false, DEBUG_TYPE);
-
-        // Merge the attributes based on the inlining.
-        AttributeFuncs::mergeAttributesForInlining(*Caller, F);
 
         Changed = true;
       }

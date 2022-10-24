@@ -13,7 +13,6 @@
 
 #include "BreakpointPrinter.h"
 #include "NewPMDriver.h"
-#include "PassPrinters.h"
 #include "llvm/ADT/Triple.h"
 #include "llvm/Analysis/CallGraph.h"
 #include "llvm/Analysis/CallGraphSCCPass.h"
@@ -32,6 +31,7 @@
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/LegacyPassNameParser.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/ModuleSummaryIndex.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/InitializePasses.h"
@@ -52,7 +52,6 @@
 #include "llvm/Support/ToolOutputFile.h"
 #include "llvm/Support/YAMLTraits.h"
 #include "llvm/Target/TargetMachine.h"
-#include "llvm/Transforms/Coroutines.h"
 #include "llvm/Transforms/IPO/AlwaysInliner.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
 #include "llvm/Transforms/IPO/WholeProgramDevirt.h"
@@ -75,7 +74,7 @@ static cl::opt<bool> EnableNewPassManager(
     cl::desc("Enable the new pass manager, translating "
              "'opt -foo' to 'opt -passes=foo'. This is strictly for the new PM "
              "migration, use '-passes=' when possible."),
-    cl::init(LLVM_ENABLE_NEW_PASS_MANAGER));
+    cl::init(true));
 
 // This flag specifies a textual description of the optimization pass pipeline
 // to run over the module. This flag switches opt to use the new pass manager
@@ -193,14 +192,9 @@ static cl::opt<bool>
 DisableSimplifyLibCalls("disable-simplify-libcalls",
                         cl::desc("Disable simplify-libcalls"));
 
-static cl::list<std::string>
-DisableBuiltins("disable-builtin",
-                cl::desc("Disable specific target library builtin function"),
-                cl::ZeroOrMore);
-
-static cl::opt<bool>
-    AnalyzeOnly("analyze", cl::desc("Only perform analysis, no optimization. "
-                                    "Legacy pass manager only."));
+static cl::list<std::string> DisableBuiltins(
+    "disable-builtin",
+    cl::desc("Disable specific target library builtin function"));
 
 static cl::opt<bool> EnableDebugify(
     "enable-debugify",
@@ -211,18 +205,6 @@ static cl::opt<bool> VerifyDebugInfoPreserve(
     "verify-debuginfo-preserve",
     cl::desc("Start the pipeline with collecting and end it with checking of "
              "debug info preservation."));
-
-static cl::opt<bool> VerifyEachDebugInfoPreserve(
-    "verify-each-debuginfo-preserve",
-    cl::desc("Start each pass with collecting and end it with checking of "
-             "debug info preservation."));
-
-static cl::opt<std::string>
-    VerifyDIPreserveExport("verify-di-preserve-export",
-                   cl::desc("Export debug info preservation failures into "
-                            "specified (JSON) file (should be abs path as we use"
-                            " append mode to insert new JSON objects)"),
-                   cl::value_desc("filename"), cl::init(""));
 
 static cl::opt<bool>
 PrintBreakpoints("print-breakpoints-for-testing",
@@ -252,11 +234,6 @@ static cl::opt<bool> DiscardValueNames(
     "discard-value-names",
     cl::desc("Discard names from Value (other than GlobalValue)."),
     cl::init(false), cl::Hidden);
-
-static cl::opt<bool> Coroutines(
-  "enable-coroutines",
-  cl::desc("Enable coroutine passes."),
-  cl::init(false), cl::Hidden);
 
 static cl::opt<bool> TimeTrace(
     "time-trace",
@@ -375,35 +352,6 @@ static void AddOptimizationPasses(legacy::PassManagerBase &MPM,
   if (TM)
     TM->adjustPassManager(Builder);
 
-  if (Coroutines)
-    addCoroutinePassesToExtensionPoints(Builder);
-
-  switch (PGOKindFlag) {
-  case InstrGen:
-    Builder.EnablePGOInstrGen = true;
-    Builder.PGOInstrGen = ProfileFile;
-    break;
-  case InstrUse:
-    Builder.PGOInstrUse = ProfileFile;
-    break;
-  case SampleUse:
-    Builder.PGOSampleUse = ProfileFile;
-    break;
-  default:
-    break;
-  }
-
-  switch (CSPGOKindFlag) {
-  case CSInstrGen:
-    Builder.EnablePGOCSInstrGen = true;
-    break;
-  case CSInstrUse:
-    Builder.EnablePGOCSInstrUse = true;
-    break;
-  default:
-    break;
-  }
-
   Builder.populateFunctionPassManager(FPM);
   Builder.populateModulePassManager(MPM);
 }
@@ -489,7 +437,7 @@ static bool shouldPinPassToLegacyPM(StringRef Pass) {
       "x86-",    "xcore-", "wasm-",  "systemz-", "ppc-",    "nvvm-",
       "nvptx-",  "mips-",  "lanai-", "hexagon-", "bpf-",    "avr-",
       "thumb2-", "arm-",   "si-",    "gcn-",     "amdgpu-", "aarch64-",
-      "amdgcn-", "polly-", "riscv-"};
+      "amdgcn-", "polly-", "riscv-", "dxil-"};
   std::vector<StringRef> PassNameContain = {"ehprepare"};
   std::vector<StringRef> PassNameExact = {
       "safe-stack",           "cost-model",
@@ -506,7 +454,9 @@ static bool shouldPinPassToLegacyPM(StringRef Pass) {
       "polyhedral-info",      "print-polyhedral-info",
       "replace-with-veclib",  "jmc-instrument",
       "dot-regions",          "dot-regions-only",
-      "view-regions",         "view-regions-only"};
+      "view-regions",         "view-regions-only",
+      "select-optimize",      "expand-large-div-rem",
+      "structurizecfg",       "fix-irreducible"};
   for (const auto &P : PassNamePrefix)
     if (Pass.startswith(P))
       return true;
@@ -543,21 +493,20 @@ int main(int argc, char **argv) {
   // Initialize passes
   PassRegistry &Registry = *PassRegistry::getPassRegistry();
   initializeCore(Registry);
-  initializeCoroutines(Registry);
   initializeScalarOpts(Registry);
-  initializeObjCARCOpts(Registry);
   initializeVectorization(Registry);
   initializeIPO(Registry);
   initializeAnalysis(Registry);
   initializeTransformUtils(Registry);
   initializeInstCombine(Registry);
   initializeAggressiveInstCombine(Registry);
-  initializeInstrumentation(Registry);
   initializeTarget(Registry);
   // For codegen passes, only passes that do IR to IR transformation are
   // supported.
+  initializeExpandLargeDivRemLegacyPassPass(Registry);
   initializeExpandMemCmpPassPass(Registry);
   initializeScalarizeMaskedMemIntrinLegacyPassPass(Registry);
+  initializeSelectOptimizePass(Registry);
   initializeCodeGenPreparePass(Registry);
   initializeAtomicExpandPass(Registry);
   initializeRewriteSymbolsLegacyPassPass(Registry);
@@ -570,8 +519,6 @@ int main(int argc, char **argv) {
   initializeIndirectBrExpandPassPass(Registry);
   initializeInterleavedLoadCombinePass(Registry);
   initializeInterleavedAccessPass(Registry);
-  initializeEntryExitInstrumenterPass(Registry);
-  initializePostInlineEntryExitInstrumenterPass(Registry);
   initializeUnreachableBlockElimLegacyPassPass(Registry);
   initializeExpandReductionsPass(Registry);
   initializeExpandVectorPredicationPass(Registry);
@@ -601,11 +548,6 @@ int main(int argc, char **argv) {
     "llvm .bc -> .bc modular optimizer and analysis printer\n");
 
   LLVMContext Context;
-
-  if (AnalyzeOnly && NoOutput) {
-    errs() << argv[0] << ": analyze mode conflicts with no-output mode.\n";
-    return 1;
-  }
 
   // If `-passes=` is specified, use NPM.
   // If `-enable-new-pm` is specified and there are no codegen passes, use NPM.
@@ -755,7 +697,7 @@ int main(int argc, char **argv) {
   // If the output is set to be emitted to standard out, and standard out is a
   // console, print out a warning message and refuse to do it.  We don't
   // impress anyone by spewing tons of binary goo to a terminal.
-  if (!Force && !NoOutput && !AnalyzeOnly && !OutputAssembly)
+  if (!Force && !NoOutput && !OutputAssembly)
     if (CheckBitcodeOutputToConsole(Out->os()))
       NoOutput = true;
 
@@ -782,13 +724,6 @@ int main(int argc, char **argv) {
   }
 
   if (UseNPM) {
-    if (AnalyzeOnly) {
-      errs() << "Cannot specify -analyze under new pass manager, either "
-                "specify '-enable-new-pm=0', or use the corresponding new pass "
-                "manager pass, e.g. '-passes=print<scalar-evolution>'. For a "
-                "full list of passes, see the '--print-passes' flag.\n";
-      return 1;
-    }
     if (legacy::debugPassSpecified()) {
       errs()
           << "-debug-pass does not work with the new PM, either use "
@@ -806,8 +741,9 @@ int main(int argc, char **argv) {
       errs() << "Cannot specify multiple -O#\n";
       return 1;
     }
-    if (NumOLevel > 0 && PassPipeline.getNumOccurrences() > 0) {
-      errs() << "Cannot specify -O# and --passes=, use "
+    if (NumOLevel > 0 &&
+        (PassPipeline.getNumOccurrences() > 0 || PassList.size() > 0)) {
+      errs() << "Cannot specify -O# and --passes=/--foo-pass, use "
                 "-passes='default<O#>,other-pass'\n";
       return 1;
     }
@@ -847,7 +783,8 @@ int main(int argc, char **argv) {
                            ThinLinkOut.get(), RemarksFile.get(), Pipeline,
                            Passes, PluginList, OK, VK, PreserveAssemblyUseListOrder,
                            PreserveBitcodeUseListOrder, EmitSummaryIndex,
-                           EmitModuleHash, EnableDebugify)
+                           EmitModuleHash, EnableDebugify,
+                           VerifyDebugInfoPreserve)
                ? 0
                : 1;
   }
@@ -857,13 +794,13 @@ int main(int argc, char **argv) {
   // the (-check)-debugify passes.
   DebugifyCustomPassManager Passes;
   DebugifyStatsMap DIStatsMap;
-  DebugInfoPerPassMap DIPreservationMap;
+  DebugInfoPerPass DebugInfoBeforePass;
   if (DebugifyEach) {
     Passes.setDebugifyMode(DebugifyMode::SyntheticDebugInfo);
     Passes.setDIStatsMap(DIStatsMap);
   } else if (VerifyEachDebugInfoPreserve) {
     Passes.setDebugifyMode(DebugifyMode::OriginalDebugInfo);
-    Passes.setDIPreservationMap(DIPreservationMap);
+    Passes.setDebugInfoBeforePass(DebugInfoBeforePass);
     if (!VerifyDIPreserveExport.empty())
       Passes.setOrigDIVerifyBugsReportFilePath(VerifyDIPreserveExport);
   }
@@ -883,10 +820,10 @@ int main(int argc, char **argv) {
       Passes.setDIStatsMap(DIStatsMap);
       Passes.add(createDebugifyModulePass());
     } else if (VerifyDebugInfoPreserve) {
-      Passes.setDIPreservationMap(DIPreservationMap);
+      Passes.setDebugInfoBeforePass(DebugInfoBeforePass);
       Passes.add(createDebugifyModulePass(
           DebugifyMode::OriginalDebugInfo, "",
-          &(Passes.getDebugInfoPerPassMap())));
+          &(Passes.getDebugInfoPerPass())));
     }
   }
 
@@ -962,30 +899,8 @@ int main(int argc, char **argv) {
     else
       errs() << argv[0] << ": cannot create pass: "
              << PassInf->getPassName() << "\n";
-    if (P) {
-      PassKind Kind = P->getPassKind();
+    if (P)
       addPass(Passes, P);
-
-      if (AnalyzeOnly) {
-        switch (Kind) {
-        case PT_Region:
-          Passes.add(createRegionPassPrinter(PassInf, Out->os()));
-          break;
-        case PT_Loop:
-          Passes.add(createLoopPassPrinter(PassInf, Out->os()));
-          break;
-        case PT_Function:
-          Passes.add(createFunctionPassPrinter(PassInf, Out->os()));
-          break;
-        case PT_CallGraphSCC:
-          Passes.add(createCallGraphPassPrinter(PassInf, Out->os()));
-          break;
-        default:
-          Passes.add(createModulePassPrinter(PassInf, Out->os()));
-          break;
-        }
-      }
-    }
   }
 
   if (OptLevelO0)
@@ -1025,7 +940,7 @@ int main(int argc, char **argv) {
         Passes.setOrigDIVerifyBugsReportFilePath(VerifyDIPreserveExport);
       Passes.add(createCheckDebugifyModulePass(
           false, "", nullptr, DebugifyMode::OriginalDebugInfo,
-          &(Passes.getDebugInfoPerPassMap()), VerifyDIPreserveExport));
+          &(Passes.getDebugInfoPerPass()), VerifyDIPreserveExport));
     }
   }
 
@@ -1038,7 +953,7 @@ int main(int argc, char **argv) {
   std::unique_ptr<raw_svector_ostream> BOS;
   raw_ostream *OS = nullptr;
 
-  const bool ShouldEmitOutput = !NoOutput && !AnalyzeOnly;
+  const bool ShouldEmitOutput = !NoOutput;
 
   // Write bitcode or assembly to the output as the last step...
   if (ShouldEmitOutput || RunTwice) {
@@ -1055,8 +970,8 @@ int main(int argc, char **argv) {
         report_fatal_error("Text output is incompatible with -module-hash");
       Passes.add(createPrintModulePass(*OS, "", PreserveAssemblyUseListOrder));
     } else if (OutputThinLTOBC)
-      Passes.add(createWriteThinLTOBitcodePass(
-          *OS, ThinLinkOut ? &ThinLinkOut->os() : nullptr));
+      report_fatal_error(
+          "Use the new pass manager for printing ThinLTO bitcode");
     else
       Passes.add(createBitcodeWriterPass(*OS, PreserveBitcodeUseListOrder,
                                          EmitSummaryIndex, EmitModuleHash));

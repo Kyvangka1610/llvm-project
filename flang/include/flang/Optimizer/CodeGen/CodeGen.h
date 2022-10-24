@@ -20,6 +20,12 @@ namespace fir {
 
 struct NameUniquer;
 
+#define GEN_PASS_DECL_FIRTOLLVMLOWERING
+#define GEN_PASS_DECL_CODEGENREWRITE
+#define GEN_PASS_DECL_TARGETREWRITEPASS
+#define GEN_PASS_DECL_BOXEDPROCEDUREPASS
+#include "flang/Optimizer/CodeGen/CGPasses.h.inc"
+
 /// Prerequiste pass for code gen. Perform intermediate rewrites to perform
 /// the code gen (to LLVM-IR dialect) conversion.
 std::unique_ptr<mlir::Pass> createFirCodeGenRewritePass();
@@ -55,11 +61,17 @@ std::unique_ptr<mlir::Pass> createFIRToLLVMPass(FIRToLLVMPassOptions options);
 
 using LLVMIRLoweringPrinter =
     std::function<void(llvm::Module &, llvm::raw_ostream &)>;
+
 /// Convert the LLVM IR dialect to LLVM-IR proper
 std::unique_ptr<mlir::Pass> createLLVMDialectToLLVMPass(
     llvm::raw_ostream &output,
     LLVMIRLoweringPrinter printer =
         [](llvm::Module &m, llvm::raw_ostream &out) { m.print(out, nullptr); });
+
+/// Convert boxproc values to a lower level representation. The default is to
+/// use function pointers and thunks.
+std::unique_ptr<mlir::Pass> createBoxedProcedurePass();
+std::unique_ptr<mlir::Pass> createBoxedProcedurePass(bool useThunks);
 
 // declarative passes
 #define GEN_PASS_REGISTRATION

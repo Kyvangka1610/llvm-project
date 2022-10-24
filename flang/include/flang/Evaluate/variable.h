@@ -174,7 +174,6 @@ public:
   Triplet &set_stride(Expr<SubscriptInteger> &&);
 
   bool operator==(const Triplet &) const;
-  bool IsStrideOne() const;
   llvm::raw_ostream &AsFortran(llvm::raw_ostream &) const;
 
 private:
@@ -353,6 +352,7 @@ public:
   ENUM_CLASS(Part, RE, IM)
   CLASS_BOILERPLATE(ComplexPart)
   ComplexPart(DataRef &&z, Part p) : complex_{std::move(z)}, part_{p} {}
+  DataRef &complex() { return complex_; }
   const DataRef &complex() const { return complex_; }
   Part part() const { return part_; }
   int Rank() const;

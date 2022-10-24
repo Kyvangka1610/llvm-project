@@ -6,18 +6,25 @@ import lldb
 import lldbsuite.test.lldbutil as lldbutil
 
 from lldbsuite.test.lldbtest import *
-from lldbsuite.test.eventlistener import EventListenerTestBase
 
 
-class TestProgressReporting(EventListenerTestBase):
+class TestProgressReporting(TestBase):
 
-    mydir = TestBase.compute_mydir(__file__)
-    event_mask = lldb.SBDebugger.eBroadcastBitProgress
-    event_data_extractor = lldb.SBDebugger.GetProgressFromEvent
+    def setUp(self):
+        TestBase.setUp(self)
+        self.broadcaster = self.dbg.GetBroadcaster()
+        self.listener = lldbutil.start_listening_from(self.broadcaster,
+                                        lldb.SBDebugger.eBroadcastBitProgress)
 
     def test_dwarf_symbol_loading_progress_report(self):
         """Test that we are able to fetch dwarf symbol loading progress events"""
         self.build()
 
         lldbutil.run_to_source_breakpoint(self, 'break here', lldb.SBFileSpec('main.c'))
-        self.assertGreater(len(self.events), 0)
+
+        event = lldbutil.fetch_next_event(self, self.listener, self.broadcaster)
+        ret_args = lldb.SBDebugger.GetProgressFromEvent(event)
+        self.assertGreater(len(ret_args), 0)
+        message = ret_args[0]
+        self.assertGreater(len(message), 0)
+

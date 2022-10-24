@@ -16,9 +16,6 @@ void test3(T f) {
   f();
 }
 
-int a(int);
-int a() {return 1;}
-
 void f0(void) {}
 // CHECK-LABEL: define{{.*}} void @f0()
 
@@ -55,8 +52,8 @@ void f8_user(void (*callback)(struct Incomplete));
 void f8_test(void) {
   f8_user(&f8_callback);
 // CHECK-LABEL: define{{.*}} void @f8_test()
-// CHECK: call void @f8_user({{.*}}* noundef bitcast (void ()* @f8_callback to {{.*}}*))
-// CHECK: declare void @f8_user({{.*}}* noundef)
+// CHECK: call void @f8_user(ptr noundef @f8_callback)
+// CHECK: declare void @f8_user(ptr noundef)
 // CHECK: declare void @f8_callback()
 }
 

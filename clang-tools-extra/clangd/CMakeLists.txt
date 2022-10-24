@@ -119,6 +119,7 @@ add_clang_library(clangDaemon
   index/Ref.cpp
   index/Relation.cpp
   index/Serialization.cpp
+  index/StdLib.cpp
   index/Symbol.cpp
   index/SymbolCollector.cpp
   index/SymbolID.cpp
@@ -159,6 +160,7 @@ clang_target_link_libraries(clangDaemon
   clangTooling
   clangToolingCore
   clangToolingInclusions
+  clangToolingInclusionsStdlib
   clangToolingSyntax
   )
 
@@ -169,6 +171,8 @@ target_link_libraries(clangDaemon
   clangTidy
 
   clangdSupport
+
+  clangPseudo
   )
 if(CLANGD_TIDY_CHECKS)
   target_link_libraries(clangDaemon PRIVATE ${ALL_CLANG_TIDY_CHECKS})
@@ -190,7 +194,7 @@ if ( CLANGD_BUILD_XPC )
 endif ()
 
 if (CLANGD_ENABLE_REMOTE)
-  include(FindGRPC)
+  include(AddGRPC)
 endif()
 
 if(CLANG_INCLUDE_TESTS)

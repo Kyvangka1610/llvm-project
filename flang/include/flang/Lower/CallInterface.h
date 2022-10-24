@@ -12,10 +12,10 @@
 //
 // Utility that defines fir call interface for procedure both on caller and
 // and callee side and get the related FuncOp.
-// It does not emit any FIR code but for the created mlir::FuncOp, instead it
-// provides back a container of Symbol (callee side)/ActualArgument (caller
+// It does not emit any FIR code but for the created mlir::func::FuncOp, instead
+// it provides back a container of Symbol (callee side)/ActualArgument (caller
 // side) with additional information for each element describing how it must be
-// plugged with the mlir::FuncOp.
+// plugged with the mlir::func::FuncOp.
 // It handles the fact that hidden arguments may be inserted for the result.
 // while lowering.
 //
@@ -76,8 +76,8 @@ template <typename T>
 class CallInterfaceImpl;
 
 /// CallInterface defines all the logic to determine FIR function interfaces
-/// from a characteristic, build the mlir::FuncOp and describe back the argument
-/// mapping to its user.
+/// from a characteristic, build the mlir::func::FuncOp and describe back the
+/// argument mapping to its user.
 /// The logic is shared between the callee and caller sides that it accepts as
 /// a curiously recursive template to handle the few things that cannot be
 /// shared between both sides (getting characteristics, mangled name, location).
@@ -131,7 +131,7 @@ public:
   using FirValue = typename PassedEntityTypes<T>::FirValue;
 
   /// FirPlaceHolder are place holders for the mlir inputs and outputs that are
-  /// created during the first pass before the mlir::FuncOp is created.
+  /// created during the first pass before the mlir::func::FuncOp is created.
   struct FirPlaceHolder {
     FirPlaceHolder(mlir::Type t, int passedPosition, Property p,
                    llvm::ArrayRef<mlir::NamedAttribute> attrs)
@@ -159,11 +159,15 @@ public:
     bool mayBeModifiedByCall() const;
     /// Can the argument be read by the callee ?
     bool mayBeReadByCall() const;
+    /// Is the argument INTENT(OUT)
+    bool isIntentOut() const;
+    /// Does the argument have the CONTIGUOUS attribute or have explicit shape ?
+    bool mustBeMadeContiguous() const;
     /// How entity is passed by.
     PassEntityBy passBy;
     /// What is the entity (SymbolRef for callee/ActualArgument* for caller)
-    /// What is the related mlir::FuncOp argument(s) (mlir::Value for callee /
-    /// index for the caller).
+    /// What is the related mlir::func::FuncOp argument(s) (mlir::Value for
+    /// callee / index for the caller).
     FortranEntity entity;
     FirValue firArgument;
     FirValue firLength; /* only for AddressAndLength */
@@ -173,9 +177,9 @@ public:
         nullptr;
   };
 
-  /// Return the mlir::FuncOp. Note that front block is added by this
+  /// Return the mlir::func::FuncOp. Note that front block is added by this
   /// utility if callee side.
-  mlir::FuncOp getFuncOp() const { return func; }
+  mlir::func::FuncOp getFuncOp() const { return func; }
   /// Number of MLIR inputs/outputs of the created FuncOp.
   std::size_t getNumFIRArguments() const { return inputs.size(); }
   std::size_t getNumFIRResults() const { return outputs.size(); }
@@ -183,7 +187,7 @@ public:
   llvm::SmallVector<mlir::Type> getResultType() const;
 
   /// Return a container of Symbol/ActualArgument* and how they must
-  /// be plugged with the mlir::FuncOp.
+  /// be plugged with the mlir::func::FuncOp.
   llvm::ArrayRef<PassedEntity> getPassedArguments() const {
     return passedArguments;
   }
@@ -194,7 +198,7 @@ public:
   mlir::FunctionType genFunctionType();
 
   /// determineInterface is the entry point of the first pass that defines the
-  /// interface and is required to get the mlir::FuncOp.
+  /// interface and is required to get the mlir::func::FuncOp.
   void
   determineInterface(bool isImplicit,
                      const Fortran::evaluate::characteristics::Procedure &);
@@ -219,16 +223,16 @@ protected:
   /// CRTP handle.
   T &side() { return *static_cast<T *>(this); }
   /// Entry point to be called by child ctor to analyze the signature and
-  /// create/find the mlir::FuncOp. Child needs to be initialized first.
+  /// create/find the mlir::func::FuncOp. Child needs to be initialized first.
   void declare();
-  /// Second pass entry point, once the mlir::FuncOp is created.
+  /// Second pass entry point, once the mlir::func::FuncOp is created.
   /// Nothing is done if it was already called.
   void mapPassedEntities();
   void mapBackInputToPassedEntity(const FirPlaceHolder &, FirValue);
 
   llvm::SmallVector<FirPlaceHolder> outputs;
   llvm::SmallVector<FirPlaceHolder> inputs;
-  mlir::FuncOp func;
+  mlir::func::FuncOp func;
   llvm::SmallVector<PassedEntity> passedArguments;
   std::optional<PassedEntity> passedResult;
   bool saveResult = false;
@@ -270,11 +274,23 @@ public:
     return procRef;
   }
 
+  /// Get the SubprogramDetails that defines the interface of this call if it is
+  /// known at the call site. Return nullptr if it is not known.
+  const Fortran::semantics::SubprogramDetails *getInterfaceDetails() const;
+
   bool isMainProgram() const { return false; }
 
   /// Returns true if this is a call to a procedure pointer of a dummy
   /// procedure.
   bool isIndirectCall() const;
+
+  /// Returns true if this is a call of a type-bound procedure with a
+  /// polymorphic entity.
+  bool requireDispatchCall() const;
+
+  /// Get the passed-object argument index. nullopt if there is no passed-object
+  /// index.
+  std::optional<unsigned> getPassArgIndex() const;
 
   /// Return the procedure symbol if this is a call to a user defined
   /// procedure.
@@ -364,13 +380,17 @@ public:
   /// called through pointers or not.
   bool isIndirectCall() const { return false; }
 
+  /// On the callee side it does not matter whether the procedure is called
+  /// through dynamic dispatch or not.
+  bool requireDispatchCall() const { return false; };
+
   /// Return the procedure symbol if this is a call to a user defined
   /// procedure.
   const Fortran::semantics::Symbol *getProcedureSymbol() const;
 
-  /// Add mlir::FuncOp entry block and map fir block arguments to Fortran dummy
-  /// argument symbols.
-  mlir::FuncOp addEntryBlockAndMapArguments();
+  /// Add mlir::func::FuncOp entry block and map fir block arguments to Fortran
+  /// dummy argument symbols.
+  mlir::func::FuncOp addEntryBlockAndMapArguments();
 
   bool hasHostAssociated() const;
   mlir::Type getHostAssociatedTy() const;
@@ -385,13 +405,13 @@ mlir::FunctionType
 translateSignature(const Fortran::evaluate::ProcedureDesignator &,
                    Fortran::lower::AbstractConverter &);
 
-/// Declare or find the mlir::FuncOp named \p name. If the mlir::FuncOp does
-/// not exist yet, declare it with the signature translated from the
-/// ProcedureDesignator argument.
+/// Declare or find the mlir::func::FuncOp named \p name. If the
+/// mlir::func::FuncOp does not exist yet, declare it with the signature
+/// translated from the ProcedureDesignator argument.
 /// Due to Fortran implicit function typing rules, the returned FuncOp is not
 /// guaranteed to have the signature from ProcedureDesignator if the FuncOp was
 /// already declared.
-mlir::FuncOp
+mlir::func::FuncOp
 getOrDeclareFunction(llvm::StringRef name,
                      const Fortran::evaluate::ProcedureDesignator &,
                      Fortran::lower::AbstractConverter &);
@@ -402,6 +422,10 @@ getOrDeclareFunction(llvm::StringRef name,
 /// functions).
 mlir::Type getDummyProcedureType(const Fortran::semantics::Symbol &dummyProc,
                                  Fortran::lower::AbstractConverter &);
+
+/// Return true if \p ty is "!fir.ref<i64>", which is the interface for
+/// type(C_PTR/C_FUNPTR) passed by value.
+bool isCPtrArgByValueType(mlir::Type ty);
 
 /// Is it required to pass \p proc as a tuple<function address, result length> ?
 // This is required to convey  the length of character functions passed as dummy

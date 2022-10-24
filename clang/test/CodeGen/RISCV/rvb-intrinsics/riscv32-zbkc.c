@@ -6,10 +6,10 @@
 // RV32ZBKC-NEXT:  entry:
 // RV32ZBKC-NEXT:    [[A_ADDR:%.*]] = alloca i32, align 4
 // RV32ZBKC-NEXT:    [[B_ADDR:%.*]] = alloca i32, align 4
-// RV32ZBKC-NEXT:    store i32 [[A:%.*]], i32* [[A_ADDR]], align 4
-// RV32ZBKC-NEXT:    store i32 [[B:%.*]], i32* [[B_ADDR]], align 4
-// RV32ZBKC-NEXT:    [[TMP0:%.*]] = load i32, i32* [[A_ADDR]], align 4
-// RV32ZBKC-NEXT:    [[TMP1:%.*]] = load i32, i32* [[B_ADDR]], align 4
+// RV32ZBKC-NEXT:    store i32 [[A:%.*]], ptr [[A_ADDR]], align 4
+// RV32ZBKC-NEXT:    store i32 [[B:%.*]], ptr [[B_ADDR]], align 4
+// RV32ZBKC-NEXT:    [[TMP0:%.*]] = load i32, ptr [[A_ADDR]], align 4
+// RV32ZBKC-NEXT:    [[TMP1:%.*]] = load i32, ptr [[B_ADDR]], align 4
 // RV32ZBKC-NEXT:    [[TMP2:%.*]] = call i32 @llvm.riscv.clmul.i32(i32 [[TMP0]], i32 [[TMP1]])
 // RV32ZBKC-NEXT:    ret i32 [[TMP2]]
 //
@@ -21,10 +21,10 @@ long clmul(long a, long b) {
 // RV32ZBKC-NEXT:  entry:
 // RV32ZBKC-NEXT:    [[A_ADDR:%.*]] = alloca i32, align 4
 // RV32ZBKC-NEXT:    [[B_ADDR:%.*]] = alloca i32, align 4
-// RV32ZBKC-NEXT:    store i32 [[A:%.*]], i32* [[A_ADDR]], align 4
-// RV32ZBKC-NEXT:    store i32 [[B:%.*]], i32* [[B_ADDR]], align 4
-// RV32ZBKC-NEXT:    [[TMP0:%.*]] = load i32, i32* [[A_ADDR]], align 4
-// RV32ZBKC-NEXT:    [[TMP1:%.*]] = load i32, i32* [[B_ADDR]], align 4
+// RV32ZBKC-NEXT:    store i32 [[A:%.*]], ptr [[A_ADDR]], align 4
+// RV32ZBKC-NEXT:    store i32 [[B:%.*]], ptr [[B_ADDR]], align 4
+// RV32ZBKC-NEXT:    [[TMP0:%.*]] = load i32, ptr [[A_ADDR]], align 4
+// RV32ZBKC-NEXT:    [[TMP1:%.*]] = load i32, ptr [[B_ADDR]], align 4
 // RV32ZBKC-NEXT:    [[TMP2:%.*]] = call i32 @llvm.riscv.clmulh.i32(i32 [[TMP0]], i32 [[TMP1]])
 // RV32ZBKC-NEXT:    ret i32 [[TMP2]]
 //

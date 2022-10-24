@@ -148,6 +148,7 @@ cxx_sources = [
   "legacy_pointer_safety.cpp",
   "locale.cpp",
   "memory.cpp",
+  "memory_resource.cpp",
   "mutex.cpp",
   "mutex_destructor.cpp",
   "new.cpp",
@@ -181,6 +182,7 @@ cxx_sources = [
   "valarray.cpp",
   "variant.cpp",
   "vector.cpp",
+  "verbose_abort.cpp",
 ]
 if (target_os == "win") {
   cxx_sources += [
@@ -201,8 +203,8 @@ if (target_os == "zos") {
 }
 if (libcxx_enable_debug_mode) {
   cxx_sources += [
-    "assert.cpp",
     "debug.cpp",
+    "legacy_debug_handler.cpp",
   ]
 }
 if (libcxx_enable_filesystem) {

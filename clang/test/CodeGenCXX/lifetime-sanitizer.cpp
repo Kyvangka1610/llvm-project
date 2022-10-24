@@ -27,12 +27,12 @@ extern "C" void a(), b(), c(), d();
 
 // CHECK: define dso_local void @_Z3fooi(i32 noundef %[[N:[^)]+]])
 void foo(int n) {
-  // CHECK: store i32 %[[N]], i32* %[[NADDR:[^,]+]]
+  // CHECK: store i32 %[[N]], ptr %[[NADDR:[^,]+]]
   // CHECK-LABEL: call void @a()
   a();
 
   // CHECK-LABEL: call void @b()
-  // CHECK: [[NARG:%[^ ]+]] = load i32, i32* %[[NADDR]]
+  // CHECK: [[NARG:%[^ ]+]] = load i32, ptr %[[NADDR]]
   // CHECK: [[BOOL:%[^ ]+]] = icmp ne i32 [[NARG]], 0
   // CHECK: store i1 false
   // CHECK: br i1 [[BOOL]], label %[[ONTRUE:[^,]+]], label %[[ONFALSE:[^,]+]]
