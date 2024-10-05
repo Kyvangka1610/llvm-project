@@ -8,20 +8,21 @@
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 
+#include "mlir/Conversion/ConvertToLLVM/ToLLVMInterface.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/CommonFolders.h"
+#include "mlir/Dialect/Bufferization/IR/BufferDeallocationOpInterface.h"
+#include "mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/AffineMap.h"
-#include "mlir/IR/BlockAndValueMapping.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/OpImplementation.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/Value.h"
-#include "mlir/Support/MathExtras.h"
 #include "mlir/Transforms/InliningUtils.h"
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/STLExtras.h"
@@ -49,8 +50,7 @@ struct ControlFlowInlinerInterface : public DialectInlinerInterface {
                        bool wouldBeCloned) const final {
     return true;
   }
-  bool isLegalToInline(Operation *, Region *, bool,
-                       BlockAndValueMapping &) const final {
+  bool isLegalToInline(Operation *, Region *, bool, IRMapping &) const final {
     return true;
   }
 
@@ -69,6 +69,11 @@ void ControlFlowDialect::initialize() {
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.cpp.inc"
       >();
   addInterfaces<ControlFlowInlinerInterface>();
+  declarePromisedInterface<ConvertToLLVMPatternInterface, ControlFlowDialect>();
+  declarePromisedInterfaces<bufferization::BufferizableOpInterface, BranchOp,
+                            CondBranchOp>();
+  declarePromisedInterface<bufferization::BufferDeallocationOpInterface,
+                           CondBranchOp>();
 }
 
 //===----------------------------------------------------------------------===//
@@ -82,6 +87,13 @@ LogicalResult AssertOp::canonicalize(AssertOp op, PatternRewriter &rewriter) {
     return success();
   }
   return failure();
+}
+
+// This side effect models "program termination". 
+void AssertOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Write::get());
 }
 
 //===----------------------------------------------------------------------===//
@@ -126,7 +138,7 @@ static LogicalResult collapseBranch(Block *&successor,
 
   // Otherwise, we need to remap any argument operands.
   for (Value operand : operands) {
-    BlockArgument argOperand = operand.dyn_cast<BlockArgument>();
+    BlockArgument argOperand = llvm::dyn_cast<BlockArgument>(operand);
     if (argOperand && argOperand.getOwner() == successor)
       argStorage.push_back(successorOperands[argOperand.getArgNumber()]);
     else
@@ -148,8 +160,9 @@ simplifyBrToBlockWithSinglePred(BranchOp op, PatternRewriter &rewriter) {
     return failure();
 
   // Merge the successor into the current block and erase the branch.
-  rewriter.mergeBlocks(succ, opParent, op.getOperands());
+  SmallVector<Value> brOperands(op.getOperands());
   rewriter.eraseOp(op);
+  rewriter.mergeBlocks(succ, opParent, brOperands);
   return success();
 }
 
@@ -402,8 +415,8 @@ struct CondBranchTruthPropagation : public OpRewritePattern<CondBranchOp> {
             constantTrue = rewriter.create<arith::ConstantOp>(
                 condbr.getLoc(), ty, rewriter.getBoolAttr(true));
 
-          rewriter.updateRootInPlace(use.getOwner(),
-                                     [&] { use.set(constantTrue); });
+          rewriter.modifyOpInPlace(use.getOwner(),
+                                   [&] { use.set(constantTrue); });
         }
       }
     }
@@ -417,8 +430,8 @@ struct CondBranchTruthPropagation : public OpRewritePattern<CondBranchOp> {
             constantFalse = rewriter.create<arith::ConstantOp>(
                 condbr.getLoc(), ty, rewriter.getBoolAttr(false));
 
-          rewriter.updateRootInPlace(use.getOwner(),
-                                     [&] { use.set(constantFalse); });
+          rewriter.modifyOpInPlace(use.getOwner(),
+                                   [&] { use.set(constantFalse); });
         }
       }
     }
@@ -442,8 +455,9 @@ SuccessorOperands CondBranchOp::getSuccessorOperands(unsigned index) {
 }
 
 Block *CondBranchOp::getSuccessorForOperands(ArrayRef<Attribute> operands) {
-  if (IntegerAttr condAttr = operands.front().dyn_cast_or_null<IntegerAttr>())
-    return condAttr.getValue().isOneValue() ? getTrueDest() : getFalseDest();
+  if (IntegerAttr condAttr =
+          llvm::dyn_cast_or_null<IntegerAttr>(operands.front()))
+    return condAttr.getValue().isOne() ? getTrueDest() : getFalseDest();
   return nullptr;
 }
 
@@ -523,8 +537,8 @@ static ParseResult parseSwitchOpCases(
         failed(parser.parseSuccessor(destination)))
       return failure();
     if (succeeded(parser.parseOptionalLParen())) {
-      if (failed(parser.parseOperandList(operands, OpAsmParser::Delimiter::None,
-                                         /*allowResultNumber=*/false)) ||
+      if (failed(parser.parseOperandList(operands,
+                                         OpAsmParser::Delimiter::None)) ||
           failed(parser.parseColonTypeList(operandTypes)) ||
           failed(parser.parseRParen()))
         return failure();
@@ -595,13 +609,13 @@ SuccessorOperands SwitchOp::getSuccessorOperands(unsigned index) {
 }
 
 Block *SwitchOp::getSuccessorForOperands(ArrayRef<Attribute> operands) {
-  Optional<DenseIntElementsAttr> caseValues = getCaseValues();
+  std::optional<DenseIntElementsAttr> caseValues = getCaseValues();
 
   if (!caseValues)
     return getDefaultDestination();
 
   SuccessorRange caseDests = getCaseDestinations();
-  if (auto value = operands.front().dyn_cast_or_null<IntegerAttr>()) {
+  if (auto value = llvm::dyn_cast_or_null<IntegerAttr>(operands.front())) {
     for (const auto &it : llvm::enumerate(caseValues->getValues<APInt>()))
       if (it.value() == value.getValue())
         return caseDests[it.index()];
@@ -805,7 +819,8 @@ simplifySwitchFromSwitchOnSameCondition(SwitchOp op,
   SuccessorRange predDests = predSwitch.getCaseDestinations();
   auto it = llvm::find(predDests, currentBlock);
   if (it != predDests.end()) {
-    Optional<DenseIntElementsAttr> predCaseValues = predSwitch.getCaseValues();
+    std::optional<DenseIntElementsAttr> predCaseValues =
+        predSwitch.getCaseValues();
     foldSwitch(op, rewriter,
                predCaseValues->getValues<APInt>()[it - predDests.begin()]);
   } else {

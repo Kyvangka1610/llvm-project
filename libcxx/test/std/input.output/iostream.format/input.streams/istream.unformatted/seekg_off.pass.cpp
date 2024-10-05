@@ -6,8 +6,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-// XFAIL: use_system_cxx_lib && target={{.+}}-apple-macosx10.{{9|10|11}}
-
 // <istream>
 
 // basic_istream<charT,traits>& seekg(off_type off, ios_base::seekdir dir);

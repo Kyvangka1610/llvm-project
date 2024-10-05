@@ -15,12 +15,13 @@
 #include "ASTTableGen.h"
 #include "llvm/TableGen/Record.h"
 #include "llvm/TableGen/Error.h"
+#include <optional>
 
 using namespace llvm;
 using namespace clang;
 using namespace clang::tblgen;
 
-llvm::StringRef clang::tblgen::HasProperties::getName() const {
+StringRef clang::tblgen::HasProperties::getName() const {
   if (auto node = getAs<ASTNode>()) {
     return node.getName();
   } else if (auto typeCase = getAs<TypeCase>()) {
@@ -30,9 +31,10 @@ llvm::StringRef clang::tblgen::HasProperties::getName() const {
   }
 }
 
-static StringRef removeExpectedNodeNameSuffix(Record *node, StringRef suffix) {
+static StringRef removeExpectedNodeNameSuffix(const Record *node,
+                                              StringRef suffix) {
   StringRef nodeName = node->getName();
-  if (!nodeName.endswith(suffix)) {
+  if (!nodeName.ends_with(suffix)) {
     PrintFatalError(node->getLoc(),
                     Twine("name of node doesn't end in ") + suffix);
   }
@@ -81,7 +83,7 @@ void PropertyType::emitCXXValueTypeName(bool forRead, raw_ostream &out) const {
     elementType.emitCXXValueTypeName(forRead, out);
     out << ">";
   } else if (auto valueType = getOptionalElementType()) {
-    out << "llvm::Optional<";
+    out << "std::optional<";
     valueType.emitCXXValueTypeName(forRead, out);
     out << ">";
   } else {
@@ -104,8 +106,7 @@ static void visitASTNodeRecursive(ASTNode node, ASTNode base,
   }
 }
 
-static void visitHierarchy(RecordKeeper &records,
-                           StringRef nodeClassName,
+static void visitHierarchy(const RecordKeeper &records, StringRef nodeClassName,
                            ASTNodeHierarchyVisitor<ASTNode> visit) {
   // Check for the node class, just as a basic correctness check.
   if (!records.getClass(nodeClassName)) {
@@ -113,13 +114,10 @@ static void visitHierarchy(RecordKeeper &records,
                       + nodeClassName);
   }
 
-  // Find all the nodes in the hierarchy.
-  auto nodes = records.getAllDerivedDefinitions(nodeClassName);
-
-  // Derive the child map.
+  // Derive the child map for all nodes in the hierarchy.
   ChildMap hierarchy;
   ASTNode root;
-  for (ASTNode node : nodes) {
+  for (ASTNode node : records.getAllDerivedDefinitions(nodeClassName)) {
     if (auto base = node.getBase())
       hierarchy.insert(std::make_pair(base, node));
     else if (root)
@@ -135,8 +133,8 @@ static void visitHierarchy(RecordKeeper &records,
   visitASTNodeRecursive(root, ASTNode(), hierarchy, visit);
 }
 
-void clang::tblgen::visitASTNodeHierarchyImpl(RecordKeeper &records,
-                                              StringRef nodeClassName,
-                                      ASTNodeHierarchyVisitor<ASTNode> visit) {
+void clang::tblgen::visitASTNodeHierarchyImpl(
+    const RecordKeeper &records, StringRef nodeClassName,
+    ASTNodeHierarchyVisitor<ASTNode> visit) {
   visitHierarchy(records, nodeClassName, visit);
 }

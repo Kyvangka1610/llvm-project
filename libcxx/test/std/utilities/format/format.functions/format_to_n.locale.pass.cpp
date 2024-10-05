@@ -1,4 +1,5 @@
 //===----------------------------------------------------------------------===//
+//
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
@@ -7,11 +8,9 @@
 
 // UNSUPPORTED: c++03, c++11, c++14, c++17
 // UNSUPPORTED: no-localization
-// UNSUPPORTED: libcpp-has-no-incomplete-format
-// TODO FMT Evaluate gcc-12 status
-// UNSUPPORTED: gcc-12
-// TODO FMT Investigate AppleClang ICE
-// UNSUPPORTED: apple-clang-13
+// UNSUPPORTED: GCC-ALWAYS_INLINE-FIXME
+
+// XFAIL: availability-fp_to_chars-missing
 
 // <format>
 
@@ -28,6 +27,7 @@
 #include <algorithm>
 #include <cassert>
 #include <list>
+#include <locale>
 #include <vector>
 
 #include "test_macros.h"
@@ -108,11 +108,11 @@ auto test_exception = []<class CharT, class... Args>(std::string_view, std::basi
 };
 
 int main(int, char**) {
-  format_tests<char>(test, test_exception);
+  format_tests<char, execution_modus::partial>(test, test_exception);
 
 #ifndef TEST_HAS_NO_WIDE_CHARACTERS
   format_tests_char_to_wchar_t(test);
-  format_tests<wchar_t>(test, test_exception);
+  format_tests<wchar_t, execution_modus::partial>(test, test_exception);
 #endif
 
   return 0;

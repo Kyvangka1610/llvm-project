@@ -20,7 +20,7 @@ static const DiagnosticRecord BuiltinDiagnosticsByName[] = {
 };
 
 llvm::ArrayRef<DiagnosticRecord> diagtool::getBuiltinDiagnosticsByName() {
-  return llvm::makeArrayRef(BuiltinDiagnosticsByName);
+  return llvm::ArrayRef(BuiltinDiagnosticsByName);
 }
 
 
@@ -42,6 +42,7 @@ static const DiagnosticRecord BuiltinDiagnosticsByID[] = {
 #include "clang/Basic/DiagnosticSemaKinds.inc"
 #include "clang/Basic/DiagnosticAnalysisKinds.inc"
 #include "clang/Basic/DiagnosticRefactoringKinds.inc"
+#include "clang/Basic/DiagnosticInstallAPIKinds.inc"
 #undef DIAG
 };
 
@@ -103,5 +104,5 @@ GroupRecord::diagnostics() const {
 }
 
 llvm::ArrayRef<GroupRecord> diagtool::getDiagnosticGroups() {
-  return llvm::makeArrayRef(OptionTable);
+  return llvm::ArrayRef(OptionTable);
 }

@@ -26,7 +26,6 @@
 #include "clang/StaticAnalyzer/Core/PathSensitive/ExprEngine.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/FunctionSummary.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/WorkList.h"
-#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Support/Casting.h"
@@ -34,6 +33,7 @@
 #include <algorithm>
 #include <cassert>
 #include <memory>
+#include <optional>
 #include <utility>
 
 using namespace clang;
@@ -222,18 +222,6 @@ void CoreEngine::dispatchWorkItem(ExplodedNode* Pred, ProgramPoint Loc,
   }
 }
 
-bool CoreEngine::ExecuteWorkListWithInitialState(const LocationContext *L,
-                                                 unsigned Steps,
-                                                 ProgramStateRef InitState,
-                                                 ExplodedNodeSet &Dst) {
-  bool DidNotFinish = ExecuteWorkList(L, Steps, InitState);
-  for (ExplodedGraph::eop_iterator I = G.eop_begin(), E = G.eop_end(); I != E;
-       ++I) {
-    Dst.Add(*I);
-  }
-  return DidNotFinish;
-}
-
 void CoreEngine::HandleBlockEdge(const BlockEdge &L, ExplodedNode *Pred) {
   const CFGBlock *Blk = L.getDst();
   NodeBuilderContext BuilderCtx(*this, Blk, Pred);
@@ -273,10 +261,10 @@ void CoreEngine::HandleBlockEdge(const BlockEdge &L, ExplodedNode *Pred) {
     const ReturnStmt *RS = nullptr;
     if (!L.getSrc()->empty()) {
       CFGElement LastElement = L.getSrc()->back();
-      if (Optional<CFGStmt> LastStmt = LastElement.getAs<CFGStmt>()) {
+      if (std::optional<CFGStmt> LastStmt = LastElement.getAs<CFGStmt>()) {
         RS = dyn_cast<ReturnStmt>(LastStmt->getStmt());
-      } else if (Optional<CFGAutomaticObjDtor> AutoDtor =
-                 LastElement.getAs<CFGAutomaticObjDtor>()) {
+      } else if (std::optional<CFGAutomaticObjDtor> AutoDtor =
+                     LastElement.getAs<CFGAutomaticObjDtor>()) {
         RS = dyn_cast<ReturnStmt>(AutoDtor->getTriggerStmt());
       }
     }
@@ -314,11 +302,10 @@ void CoreEngine::HandleBlockEntrance(const BlockEntrance &L,
   setBlockCounter(Counter);
 
   // Process the entrance of the block.
-  if (Optional<CFGElement> E = L.getFirstElement()) {
+  if (std::optional<CFGElement> E = L.getFirstElement()) {
     NodeBuilderContext Ctx(*this, L.getBlock(), Pred);
     ExprEng.processCFGElement(*E, Pred, 0, &Ctx);
-  }
-  else
+  } else
     HandleBlockExit(L.getBlock(), Pred);
 }
 
@@ -504,8 +491,8 @@ void CoreEngine::HandleVirtualBaseBranch(const CFGBlock *B,
   if (const auto *CallerCtor = dyn_cast_or_null<CXXConstructExpr>(
           LCtx->getStackFrame()->getCallSite())) {
     switch (CallerCtor->getConstructionKind()) {
-    case CXXConstructExpr::CK_NonVirtualBase:
-    case CXXConstructExpr::CK_VirtualBase: {
+    case CXXConstructionKind::NonVirtualBase:
+    case CXXConstructionKind::VirtualBase: {
       BlockEdge Loc(B, *B->succ_begin(), LCtx);
       HandleBlockEdge(Loc, Pred);
       return;
@@ -638,8 +625,8 @@ ExplodedNode* NodeBuilder::generateNodeImpl(const ProgramPoint &Loc,
                                             bool MarkAsSink) {
   HasGeneratedNodes = true;
   bool IsNew;
-  ExplodedNode *N = C.Eng.G.getNode(Loc, State, MarkAsSink, &IsNew);
-  N->addPredecessor(FromN, C.Eng.G);
+  ExplodedNode *N = C.getEngine().G.getNode(Loc, State, MarkAsSink, &IsNew);
+  N->addPredecessor(FromN, C.getEngine().G);
   Frontier.erase(FromN);
 
   if (!IsNew)
@@ -668,7 +655,7 @@ ExplodedNode *BranchNodeBuilder::generateNode(ProgramStateRef State,
   if (!isFeasible(branch))
     return nullptr;
 
-  ProgramPoint Loc = BlockEdge(C.Block, branch ? DstT:DstF,
+  ProgramPoint Loc = BlockEdge(C.getBlock(), branch ? DstT : DstF,
                                NodePred->getLocationContext());
   ExplodedNode *Succ = generateNodeImpl(Loc, State, NodePred);
   return Succ;

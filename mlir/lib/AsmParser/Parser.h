@@ -12,6 +12,7 @@
 #include "ParserState.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/OpImplementation.h"
+#include <optional>
 
 namespace mlir {
 namespace detail {
@@ -101,6 +102,9 @@ public:
   const Token &getToken() const { return state.curToken; }
   StringRef getTokenSpelling() const { return state.curToken.getSpelling(); }
 
+  /// Return the last parsed token.
+  const Token &getLastToken() const { return state.lastToken; }
+
   /// If the current token has the specified kind, consume it and return true.
   /// If not, return false.
   bool consumeIf(Token::Kind kind) {
@@ -114,6 +118,7 @@ public:
   void consumeToken() {
     assert(state.curToken.isNot(Token::eof, Token::error) &&
            "shouldn't advance past EOF or errors");
+    state.lastToken = state.curToken;
     state.curToken = state.lex.lexToken();
   }
 
@@ -125,7 +130,12 @@ public:
     consumeToken();
   }
 
-  /// Reset the parser to the given lexer position.
+  /// Reset the parser to the given lexer position. Resetting the parser/lexer
+  /// position does not update 'state.lastToken'. 'state.lastToken' is the
+  /// last parsed token, and is used to provide the scope end location for
+  /// OperationDefinitions. To ensure the correctness of the end location, the
+  /// last consumed token of an OperationDefinition needs to be the last token
+  /// belonging to it.
   void resetToken(const char *tokPos) {
     state.lex.resetPointer(tokPos);
     state.curToken = state.lex.lexToken();
@@ -138,8 +148,11 @@ public:
   /// Parse an optional integer value from the stream.
   OptionalParseResult parseOptionalInteger(APInt &result);
 
+  /// Parse an optional integer value only in decimal format from the stream.
+  OptionalParseResult parseOptionalDecimalInteger(APInt &result);
+
   /// Parse a floating point value from an integer literal token.
-  ParseResult parseFloatFromIntegerLiteral(Optional<APFloat> &result,
+  ParseResult parseFloatFromIntegerLiteral(std::optional<APFloat> &result,
                                            const Token &tok, bool isNegative,
                                            const llvm::fltSemantics &semantics,
                                            size_t typeSizeInBits);
@@ -210,7 +223,7 @@ public:
   /// Parse a vector type.
   VectorType parseVectorType();
   ParseResult parseVectorDimensionList(SmallVectorImpl<int64_t> &dimensions,
-                                       unsigned &numScalableDims);
+                                       SmallVectorImpl<bool> &scalableDims);
   ParseResult parseDimensionListRanked(SmallVectorImpl<int64_t> &dimensions,
                                        bool allowDynamic = true,
                                        bool withTrailingX = true);
@@ -229,6 +242,7 @@ public:
                                              Type type = {});
   OptionalParseResult parseOptionalAttribute(ArrayAttr &attribute, Type type);
   OptionalParseResult parseOptionalAttribute(StringAttr &attribute, Type type);
+  OptionalParseResult parseOptionalAttribute(SymbolRefAttr &result, Type type);
 
   /// Parse an optional attribute that is demarcated by a specific token.
   template <typename AttributeT>
@@ -236,10 +250,10 @@ public:
                                                       AttributeT &attr,
                                                       Type type = {}) {
     if (getToken().isNot(kind))
-      return llvm::None;
+      return std::nullopt;
 
     if (Attribute parsedAttr = parseAttribute(type)) {
-      attr = parsedAttr.cast<AttributeT>();
+      attr = cast<AttributeT>(parsedAttr);
       return success();
     }
     return failure();
@@ -247,6 +261,9 @@ public:
 
   /// Parse an attribute dictionary.
   ParseResult parseAttributeDict(NamedAttrList &attributes);
+
+  /// Parse a distinct attribute.
+  Attribute parseDistinctAttr(Type type);
 
   /// Parse an extended attribute.
   Attribute parseExtendedAttr(Type type);
@@ -294,10 +311,13 @@ public:
   // Affine Parsing
   //===--------------------------------------------------------------------===//
 
-  /// Parse a reference to either an affine map, or an integer set.
+  /// Parse a reference to either an affine map, expr, or an integer set.
   ParseResult parseAffineMapOrIntegerSetReference(AffineMap &map,
                                                   IntegerSet &set);
   ParseResult parseAffineMapReference(AffineMap &map);
+  ParseResult
+  parseAffineExprReference(ArrayRef<std::pair<StringRef, AffineExpr>> symbolSet,
+                           AffineExpr &expr);
   ParseResult parseIntegerSetReference(IntegerSet &set);
 
   /// Parse an AffineMap where the dim and symbol identifiers are SSA ids.

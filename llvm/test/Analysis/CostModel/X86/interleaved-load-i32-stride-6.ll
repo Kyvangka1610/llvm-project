@@ -22,8 +22,8 @@ define void @test() {
 ; AVX1:  LV: Found an estimated cost of 1 for VF 1 For instruction: %v0 = load i32, ptr %in0, align 4
 ; AVX1:  LV: Found an estimated cost of 27 for VF 2 For instruction: %v0 = load i32, ptr %in0, align 4
 ; AVX1:  LV: Found an estimated cost of 54 for VF 4 For instruction: %v0 = load i32, ptr %in0, align 4
-; AVX1:  LV: Found an estimated cost of 120 for VF 8 For instruction: %v0 = load i32, ptr %in0, align 4
-; AVX1:  LV: Found an estimated cost of 240 for VF 16 For instruction: %v0 = load i32, ptr %in0, align 4
+; AVX1:  LV: Found an estimated cost of 114 for VF 8 For instruction: %v0 = load i32, ptr %in0, align 4
+; AVX1:  LV: Found an estimated cost of 228 for VF 16 For instruction: %v0 = load i32, ptr %in0, align 4
 ;
 ; AVX2-LABEL: 'test'
 ; AVX2:  LV: Found an estimated cost of 1 for VF 1 For instruction: %v0 = load i32, ptr %in0, align 4
@@ -76,7 +76,7 @@ for.body:
   %reduce.add.4.narrow = trunc i32 %reduce.add.4 to i8
 
   %out = getelementptr inbounds [1024 x i8], ptr @B, i64 0, i64 %iv.0
-  store i8 %reduce.add.4.narrow, i8* %out
+  store i8 %reduce.add.4.narrow, ptr %out
 
   %iv.next = add nuw nsw i64 %iv.0, 6
   %cmp = icmp ult i64 %iv.next, 1024

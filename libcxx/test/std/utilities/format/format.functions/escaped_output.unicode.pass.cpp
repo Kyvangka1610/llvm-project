@@ -1,4 +1,5 @@
 //===----------------------------------------------------------------------===//
+//
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
@@ -6,14 +7,13 @@
 //===----------------------------------------------------------------------===//
 
 // UNSUPPORTED: c++03, c++11, c++14, c++17, c++20
-// UNSUPPORTED: libcpp-has-no-incomplete-format
+// UNSUPPORTED: GCC-ALWAYS_INLINE-FIXME
 
 // This version runs the test when the platform has Unicode support.
 // UNSUPPORTED: libcpp-has-no-unicode
 
-// TODO FMT Investigate Windows and AIX issues.
-// UNSUPPORTED: msvc, target={{.+}}-windows-gnu
-// UNSUPPORTED: LIBCXX-AIX-FIXME
+// TODO FMT This test should not require std::to_chars(floating-point)
+// XFAIL: availability-fp_to_chars-missing
 
 // <format>
 
@@ -24,12 +24,16 @@
 
 #include <cassert>
 #include <concepts>
+#include <cstdint>
+#include <iterator>
 #include <list>
 #include <vector>
 
 #include "test_macros.h"
 #include "make_string.h"
 #include "test_format_string.h"
+#include "assert_macros.h"
+#include "concat_macros.h"
 
 #ifndef TEST_HAS_NO_LOCALIZATION
 #  include <iostream>
@@ -41,19 +45,9 @@ auto test_format = []<class CharT, class... Args>(
                        std::basic_string_view<CharT> expected, test_format_string<CharT, Args...> fmt, Args&&... args) {
   {
     std::basic_string<CharT> out = std::format(fmt, std::forward<Args>(args)...);
-#ifndef TEST_HAS_NO_LOCALIZATION
-    if (out != expected) {
-      if constexpr (std::same_as<CharT, char>)
-        std::cerr << "\nFormat string   " << fmt.get() << "\nExpected output " << expected << "\nActual output   "
-                  << out << '\n';
-#  ifndef TEST_HAS_NO_WIDE_CHARACTERS
-      else
-        std::wcerr << L"\nFormat string   " << fmt.get() << L"\nExpected output " << expected << L"\nActual output   "
-                   << out << L'\n';
-#  endif // TEST_HAS_NO_WIDE_CHARACTERS
-    }
-#endif // TEST_HAS_NO_LOCALIZATION
-    assert(out == expected);
+    TEST_REQUIRE(out == expected,
+                 TEST_WRITE_CONCATENATED(
+                     "\nFormat string   ", fmt.get(), "\nExpected output ", expected, "\nActual output   ", out, '\n'));
   }
 #ifndef TEST_HAS_NO_LOCALIZATION
   {
@@ -104,12 +98,12 @@ auto test_formatted_size =
     []<class CharT, class... Args>(
         std::basic_string_view<CharT> expected, test_format_string<CharT, Args...> fmt, Args&&... args) {
       {
-        size_t size = std::formatted_size(fmt, std::forward<Args>(args)...);
+        std::size_t size = std::formatted_size(fmt, std::forward<Args>(args)...);
         assert(size == expected.size());
       }
 #ifndef TEST_HAS_NO_LOCALIZATION
       {
-        size_t size = std::formatted_size(std::locale(), fmt, std::forward<Args>(args)...);
+        std::size_t size = std::formatted_size(std::locale(), fmt, std::forward<Args>(args)...);
         assert(size == expected.size());
       }
 #endif // TEST_HAS_NO_LOCALIZATION
@@ -119,37 +113,37 @@ auto test_format_to_n =
     []<class CharT, class... Args>(
         std::basic_string_view<CharT> expected, test_format_string<CharT, Args...> fmt, Args&&... args) {
       {
-        size_t n = expected.size();
+        std::size_t n = expected.size();
         std::basic_string<CharT> out(n, CharT(' '));
         std::format_to_n_result result = std::format_to_n(out.begin(), n, fmt, std::forward<Args>(args)...);
-        assert(result.size == static_cast<ptrdiff_t>(expected.size()));
+        assert(result.size == static_cast<std::ptrdiff_t>(expected.size()));
         assert(result.out == out.end());
         assert(out == expected);
       }
 #ifndef TEST_HAS_NO_LOCALIZATION
       {
-        size_t n = expected.size();
+        std::size_t n = expected.size();
         std::basic_string<CharT> out(n, CharT(' '));
         std::format_to_n_result result =
             std::format_to_n(out.begin(), n, std::locale(), fmt, std::forward<Args>(args)...);
-        assert(result.size == static_cast<ptrdiff_t>(expected.size()));
+        assert(result.size == static_cast<std::ptrdiff_t>(expected.size()));
         assert(result.out == out.end());
         assert(out == expected);
       }
 #endif // TEST_HAS_NO_LOCALIZATION
       {
-        ptrdiff_t n = 0;
+        std::ptrdiff_t n = 0;
         std::basic_string<CharT> out;
         std::format_to_n_result result = std::format_to_n(out.begin(), n, fmt, std::forward<Args>(args)...);
-        assert(result.size == static_cast<ptrdiff_t>(expected.size()));
+        assert(result.size == static_cast<std::ptrdiff_t>(expected.size()));
         assert(result.out == out.end());
         assert(out.empty());
       }
       {
-        ptrdiff_t n = expected.size() / 2;
+        std::ptrdiff_t n = expected.size() / 2;
         std::basic_string<CharT> out(n, CharT(' '));
         std::format_to_n_result result = std::format_to_n(out.begin(), n, fmt, std::forward<Args>(args)...);
-        assert(result.size == static_cast<ptrdiff_t>(expected.size()));
+        assert(result.size == static_cast<std::ptrdiff_t>(expected.size()));
         assert(result.out == out.end());
         assert(out == expected.substr(0, n));
       }
@@ -160,7 +154,7 @@ void test_char() {
   // *** P2286 examples ***
   test_format(SV("['\\'', '\"']"), SV("[{:?}, {:?}]"), CharT('\''), CharT('"'));
 
-  // *** Specical cases ***
+  // *** Special cases ***
   test_format(SV("'\\t'"), SV("{:?}"), CharT('\t'));
   test_format(SV("'\\n'"), SV("{:?}"), CharT('\n'));
   test_format(SV("'\\r'"), SV("{:?}"), CharT('\r'));
@@ -209,14 +203,9 @@ void test_char() {
     test_format(V{L"'\\u{600}'"}, L"{:?}", L'\x600');   // ARABIC NUMBER SIGN
     test_format(V{L"'\\u{feff}'"}, L"{:?}", L'\xfeff'); // ZERO WIDTH NO-BREAK SPACE
 
-    if constexpr (sizeof(CharT) == 2) {
-      // Incomplete surrogate pair in UTF-16
-      test_format(V{L"'\\x{d800}'"}, L"{:?}", L'\xd800'); // <surrogate-D800>
-      test_format(V{L"'\\x{dfff}'"}, L"{:?}", L'\xdfff'); // <surrogate-DFFF>
-    } else {
-      test_format(V{L"'\\u{d800}'"}, L"{:?}", L'\xd800'); // <surrogate-D800>
-      test_format(V{L"'\\u{dfff}'"}, L"{:?}", L'\xdfff'); // <surrogate-DFFF>
-    }
+    // Incomplete surrogate pair in UTF-16
+    test_format(V{L"'\\x{d800}'"}, L"{:?}", L'\xd800'); // <surrogate-D800>
+    test_format(V{L"'\\x{dfff}'"}, L"{:?}", L'\xdfff'); // <surrogate-DFFF>
 
     // Private_Use
     test_format(V{L"'\\u{e000}'"}, L"{:?}", L'\xe000'); // <private-use-E000>
@@ -236,8 +225,8 @@ void test_char() {
     static_assert(sizeof(CharT) == 4, "add support for unexpected size");
     // Unicode fitting in a 32-bit wchar_t
 
-    constexpr wchar_t x  = 0x1ffff;
-    constexpr uint32_t y = 0x1ffff;
+    constexpr wchar_t x       = 0x1ffff;
+    constexpr std::uint32_t y = 0x1ffff;
     static_assert(x == y);
 
     using V = std::basic_string_view<CharT>;
@@ -284,15 +273,58 @@ void test_string() {
     // Ill-formend UTF-8
     test_format(SV(R"(["\x{c3}"])"), SV("[{:?}]"), "\xc3");
     test_format(SV(R"(["\x{c3}("])"), SV("[{:?}]"), "\xc3\x28");
+
+    /* U+0000..U+0007F 1 code unit range, encoded in 2 code units. */
+    test_format(SV(R"(["\x{c0}\x{80}"])"), SV("[{:?}]"), "\xc0\x80"); // U+0000
+    test_format(SV(R"(["\x{c1}\x{bf}"])"), SV("[{:?}]"), "\xc1\xbf"); // U+007F
+    test_format(SV(R"(["\u{80}"])"), SV("[{:?}]"), "\xc2\x80");       // U+0080 first valid (General_Category=Control)
+
+    /* U+0000..U+07FFF 1 and 2 code unit range, encoded in 3 code units. */
+    test_format(SV(R"(["\x{e0}\x{80}\x{80}"])"), SV("[{:?}]"), "\xe0\x80\x80"); // U+0000
+    test_format(SV(R"(["\x{e0}\x{81}\x{bf}"])"), SV("[{:?}]"), "\xe0\x81\xbf"); // U+007F
+    test_format(SV(R"(["\x{e0}\x{82}\x{80}"])"), SV("[{:?}]"), "\xe0\x82\x80"); // U+0080
+    test_format(SV(R"(["\x{e0}\x{9f}\x{bf}"])"), SV("[{:?}]"), "\xe0\x9f\xbf"); // U+07FF
+    test_format(SV("[\"\u0800\"]"), SV("[{:?}]"), "\xe0\xa0\x80");              // U+0800 first valid
+
+#if 0
+	// This code point is in the Hangul Jamo Extended-B block and at the time of writing
+	// it's unassigned. When it comes defined, this branch might become true.
+    test_format(SV("[\"\ud7ff\"]"), SV("[{:?}]"), "\xed\x9f\xbf");              // U+D7FF last valid
+#else
+    /* U+D800..D+DFFFF surrogate range */
+    test_format(SV(R"(["\u{d7ff}"])"), SV("[{:?}]"), "\xed\x9f\xbf"); // U+D7FF last valid
+#endif
+    test_format(SV(R"(["\x{ed}\x{a0}\x{80}"])"), SV("[{:?}]"), "\xed\xa0\x80"); // U+D800
+    test_format(SV(R"(["\x{ed}\x{af}\x{bf}"])"), SV("[{:?}]"), "\xed\xaf\xbf"); // U+DBFF
+    test_format(SV(R"(["\x{ed}\x{bf}\x{80}"])"), SV("[{:?}]"), "\xed\xbf\x80"); // U+DC00
+    test_format(SV(R"(["\x{ed}\x{bf}\x{bf}"])"), SV("[{:?}]"), "\xed\xbf\xbf"); // U+DFFF
+    test_format(SV(R"(["\u{e000}"])"), SV("[{:?}]"), "\xee\x80\x80");           // U+E000 first valid
+                                                                                // (in the Private Use Area block)
+
+    /* U+0000..U+FFFF 1, 2, and 3 code unit range */
+    test_format(SV(R"(["\x{f0}\x{80}\x{80}\x{80}"])"), SV("[{:?}]"), "\xf0\x80\x80\x80"); // U+0000
+    test_format(SV(R"(["\x{f0}\x{80}\x{81}\x{bf}"])"), SV("[{:?}]"), "\xf0\x80\x81\xbf"); // U+007F
+    test_format(SV(R"(["\x{f0}\x{80}\x{82}\x{80}"])"), SV("[{:?}]"), "\xf0\x80\x82\x80"); // U+0080
+    test_format(SV(R"(["\x{f0}\x{80}\x{9f}\x{bf}"])"), SV("[{:?}]"), "\xf0\x80\x9f\xbf"); // U+07FF
+    test_format(SV(R"(["\x{f0}\x{80}\x{a0}\x{80}"])"), SV("[{:?}]"), "\xf0\x80\xa0\x80"); // U+0800
+    test_format(SV(R"(["\x{f0}\x{8f}\x{bf}\x{bf}"])"), SV("[{:?}]"), "\xf0\x8f\xbf\xbf"); // U+FFFF
+    test_format(SV("[\"\U00010000\"]"), SV("[{:?}]"), "\xf0\x90\x80\x80");                // U+10000 first valid
+
+    /* U+10FFFF..U+1FFFFF invalid range */
+    test_format(SV(R"(["\u{10ffff}"])"), SV("[{:?}]"), "\xf4\x8f\xbf\xbf"); // U+10FFFF last valid
+                                                                            // (in Supplementary Private Use Area-B)
+    test_format(SV(R"(["\x{f4}\x{90}\x{80}\x{80}"])"), SV("[{:?}]"), "\xf4\x90\x80\x80"); // U+110000
+    test_format(SV(R"(["\x{f4}\x{bf}\x{bf}\x{bf}"])"), SV("[{:?}]"), "\xf4\xbf\xbf\xbf"); // U+11FFFF
   } else {
     // Valid UTF-16 and UTF-32
     test_format(SV("[\"\u00c3\"]"), SV("[{:?}]"), L"\xc3"); // LATIN CAPITAL LETTER A WITH TILDE
     test_format(SV("[\"\u00c3(\"]"), SV("[{:?}]"), L"\xc3\x28");
   }
 
-  test_format(SV(R"(["🤷🏻\u{200d}♂\u{fe0f}"])"), SV("[{:?}]"), SV("🤷🏻‍♂️"));
+  // LWG-3965
+  test_format(SV(R"(["🤷🏻\u{200d}♂️"])"), SV("[{:?}]"), SV("🤷🏻‍♂️"));
 
-  // *** Specical cases ***
+  // *** Special cases ***
   test_format(SV(R"("\t\n\r\\'\" ")"), SV("{:?}"), SV("\t\n\r\\'\" "));
 
   // *** Printable ***
@@ -306,6 +338,11 @@ void test_string() {
   // Ill-formed
   if constexpr (sizeof(CharT) == 1)
     test_format(SV(R"("\x{80}")"), SV("{:?}"), SV("\x80"));
+
+  // *** P2713R1 examples ***
+  test_format(SV(R"(["\u{301}"])"), SV("[{:?}]"), SV("\u0301"));
+  test_format(SV(R"(["\\\u{301}"])"), SV("[{:?}]"), SV("\\\u0301"));
+  test_format(SV(R"(["ẹ́"])"), SV("[{:?}]"), SV("e\u0301\u0323"));
 
 #ifndef TEST_HAS_NO_WIDE_CHARACTERS
   if constexpr (sizeof(CharT) > 1) {
@@ -327,11 +364,8 @@ void test_string() {
     // Format
     test_format(V{LR"("\u{ad}\u{600}\u{feff}")"}, L"{:?}", L"\xad\x600\xfeff");
 
-    if constexpr (sizeof(CharT) == 2)
-      // Incomplete surrogate pair in UTF-16
-      test_format(V{LR"("\x{d800}")"}, L"{:?}", L"\xd800");
-    else
-      test_format(V{LR"("\u{d800}")"}, L"{:?}", L"\xd800");
+    // Incomplete surrogate pair in UTF-16
+    test_format(V{LR"("\x{d800}")"}, L"{:?}", L"\xd800");
 
     // Private_Use
     test_format(V{LR"("\u{e000}\u{f8ff}")"}, L"{:?}", L"\xe000\xf8ff");
@@ -347,8 +381,8 @@ void test_string() {
     static_assert(sizeof(CharT) == 4, "add support for unexpected size");
     // Unicode fitting in a 32-bit wchar_t
 
-    constexpr wchar_t x  = 0x1ffff;
-    constexpr uint32_t y = 0x1ffff;
+    constexpr wchar_t x       = 0x1ffff;
+    constexpr std::uint32_t y = 0x1ffff;
     static_assert(x == y);
 
     using V = std::basic_string_view<CharT>;
@@ -380,20 +414,18 @@ void test_format_functions(TestFunction check) {
   check(SV(R"(*"hellö"**)"), SV("{:*^10?}"), SV("hellö"));
   check(SV(R"("hellö"***)"), SV("{:*<10?}"), SV("hellö"));
 
-  check(SV(R"("hello\u{308}")"), SV("{:*>10?}"), SV("hello\u0308"));
-  check(SV(R"(***"hello\u{308}")"), SV("{:*>17?}"), SV("hello\u0308"));
-  check(SV(R"(*"hello\u{308}"**)"), SV("{:*^17?}"), SV("hello\u0308"));
-  check(SV(R"("hello\u{308}"***)"), SV("{:*<17?}"), SV("hello\u0308"));
+  check(SV(R"(***"hellö")"), SV("{:*>10?}"), SV("hello\u0308"));
+  check(SV(R"(*"hellö"**)"), SV("{:*^10?}"), SV("hello\u0308"));
+  check(SV(R"("hellö"***)"), SV("{:*<10?}"), SV("hello\u0308"));
 
-  check(SV(R"("hello 🤷🏻\u{200d}♂\u{fe0f}")"), SV("{:*>10?}"), SV("hello 🤷🏻‍♂️"));
-  check(SV(R"(***"hello 🤷🏻\u{200d}♂\u{fe0f}")"), SV("{:*>30?}"), SV("hello 🤷🏻‍♂️"));
-  check(SV(R"(*"hello 🤷🏻\u{200d}♂\u{fe0f}"**)"), SV("{:*^30?}"), SV("hello 🤷🏻‍♂️"));
-  check(SV(R"("hello 🤷🏻\u{200d}♂\u{fe0f}"***)"), SV("{:*<30?}"), SV("hello 🤷🏻‍♂️"));
+  check(SV(R"(***"hello 🤷🏻\u{200d}♂️")"), SV("{:*>22?}"), SV("hello 🤷🏻‍♂️"));
+  check(SV(R"(*"hello 🤷🏻\u{200d}♂️"**)"), SV("{:*^22?}"), SV("hello 🤷🏻‍♂️"));
+  check(SV(R"("hello 🤷🏻\u{200d}♂️"***)"), SV("{:*<22?}"), SV("hello 🤷🏻‍♂️"));
 
   // *** width ***
-  check(SV(R"(   "hellö")"), SV("{:10?}"), SV("hellö"));
-  check(SV(R"(   "hello\u{308}")"), SV("{:17?}"), SV("hello\u0308"));
-  check(SV(R"(   "hello 🤷🏻\u{200d}♂\u{fe0f}")"), SV("{:30?}"), SV("hello 🤷🏻‍♂️"));
+  check(SV(R"("hellö"   )"), SV("{:10?}"), SV("hellö"));
+  check(SV(R"("hellö"   )"), SV("{:10?}"), SV("hello\u0308"));
+  check(SV(R"("hello 🤷🏻\u{200d}♂️"   )"), SV("{:22?}"), SV("hello 🤷🏻‍♂️"));
 
   // *** precision ***
   check(SV(R"("hell)"), SV("{:.5?}"), SV("hellö"));
@@ -405,9 +437,8 @@ void test_format_functions(TestFunction check) {
   check(SV(R"("hello 🤷🏻)"), SV("{:.9?}"), SV("hello 🤷🏻‍♂️"));
   check(SV(R"("hello 🤷🏻\)"), SV("{:.10?}"), SV("hello 🤷🏻‍♂️"));
   check(SV(R"("hello 🤷🏻\u{200d})"), SV("{:.17?}"), SV("hello 🤷🏻‍♂️"));
-  check(SV(R"("hello 🤷🏻\u{200d}♂)"), SV("{:.18?}"), SV("hello 🤷🏻‍♂️"));
-  check(SV(R"("hello 🤷🏻\u{200d}♂\)"), SV("{:.19?}"), SV("hello 🤷🏻‍♂️"));
-  check(SV(R"("hello 🤷🏻\u{200d}♂\u{fe0f}")"), SV("{:.28?}"), SV("hello 🤷🏻‍♂️"));
+  check(SV(R"("hello 🤷🏻\u{200d}♂️)"), SV("{:.18?}"), SV("hello 🤷🏻‍♂️"));
+  check(SV(R"("hello 🤷🏻\u{200d}♂️")"), SV("{:.19?}"), SV("hello 🤷🏻‍♂️"));
 
   // *** width & precision ***
   check(SV(R"("hell#########################)"), SV("{:#<30.5?}"), SV("hellö"));
@@ -419,9 +450,8 @@ void test_format_functions(TestFunction check) {
   check(SV(R"("hello 🤷🏻#####################)"), SV("{:#<30.9?}"), SV("hello 🤷🏻‍♂️"));
   check(SV(R"("hello 🤷🏻\####################)"), SV("{:#<30.10?}"), SV("hello 🤷🏻‍♂️"));
   check(SV(R"("hello 🤷🏻\u{200d}#############)"), SV("{:#<30.17?}"), SV("hello 🤷🏻‍♂️"));
-  check(SV(R"("hello 🤷🏻\u{200d}♂############)"), SV("{:#<30.18?}"), SV("hello 🤷🏻‍♂️"));
-  check(SV(R"("hello 🤷🏻\u{200d}♂\###########)"), SV("{:#<30.19?}"), SV("hello 🤷🏻‍♂️"));
-  check(SV(R"("hello 🤷🏻\u{200d}♂\u{fe0f}"###)"), SV("{:#<30.28?}"), SV("hello 🤷🏻‍♂️"));
+  check(SV(R"("hello 🤷🏻\u{200d}♂️############)"), SV("{:#<30.18?}"), SV("hello 🤷🏻‍♂️"));
+  check(SV(R"("hello 🤷🏻\u{200d}♂️"###########)"), SV("{:#<30.19?}"), SV("hello 🤷🏻‍♂️"));
 }
 
 template <class CharT>
@@ -472,6 +502,12 @@ static void test_ill_formed_utf8() {
               "\xf7\xbf\xbf"
               "a");
 
+  test_format(R"("a\x{f1}\x{80}\x{80}\x{e1}\x{80}\x{c2}b")"sv,
+              "{:?}",
+              "a"
+              "\xf1\x80\x80\xe1\x80\xc2"
+              "b");
+
   // Code unit out of range
   test_format(R"("\u{10ffff}")"sv, "{:?}", "\xf4\x8f\xbf\xbf");               // last valid code point
   test_format(R"("\x{f4}\x{90}\x{80}\x{80}")"sv, "{:?}", "\xf4\x90\x80\x80"); // first invalid code point
@@ -480,7 +516,7 @@ static void test_ill_formed_utf8() {
 }
 
 #ifndef TEST_HAS_NO_WIDE_CHARACTERS
-#  ifdef _LIBCPP_SHORT_WCHAR
+#  ifdef TEST_SHORT_WCHAR
 static void test_ill_formed_utf16() {
   using namespace std::literals;
 
@@ -508,7 +544,7 @@ static void test_ill_formed_utf16() {
               L"\xdbff"
               "a");
 }
-#  else // _LIBCPP_SHORT_WCHAR
+#  else // TEST_SHORT_WCHAR
 static void test_ill_formed_utf32() {
   using namespace std::literals;
 
@@ -517,7 +553,7 @@ static void test_ill_formed_utf32() {
   test_format(LR"("\x{ffffffff}")"sv, L"{:?}", L"\xffffffff"); // largest encoded code point
 }
 
-#  endif // _LIBCPP_SHORT_WCHAR
+#  endif // TEST_SHORT_WCHAR
 #endif   // TEST_HAS_NO_WIDE_CHARACTERS
 
 int main(int, char**) {
@@ -528,12 +564,11 @@ int main(int, char**) {
 
   test_ill_formed_utf8();
 #ifndef TEST_HAS_NO_WIDE_CHARACTERS
-#  ifdef _LIBCPP_SHORT_WCHAR
+#  ifdef TEST_SHORT_WCHAR
   test_ill_formed_utf16();
-  assert(false);
-#  else  // _LIBCPP_SHORT_WCHAR
+#  else  // TEST_SHORT_WCHAR
   test_ill_formed_utf32();
-#  endif // _LIBCPP_SHORT_WCHAR
+#  endif // TEST_SHORT_WCHAR
 #endif   // TEST_HAS_NO_WIDE_CHARACTERS
 
   return 0;

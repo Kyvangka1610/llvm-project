@@ -2,10 +2,12 @@
 
 // Round-tripping the syntax.
 
+// CHECK: #[[MAP:.*]] = affine_map<(d0) -> (d0)>
+
 "test.unknown_op"() {
   // CHECK: #dlti.dl_entry<"test.identifier", 42 : i64>
   test.unknown_attr_1 = #dlti.dl_entry<"test.identifier", 42 : i64>,
-  // CHECK: #dlti.dl_entry<"test.identifier", affine_map<(d0) -> (d0)>>
+  // CHECK: #dlti.dl_entry<"test.identifier", #[[MAP]]>
   test.unknown_attr_2 = #dlti.dl_entry<"test.identifier", affine_map<(d0) -> (d0)>>,
   // CHECK: #dlti.dl_entry<i32, 32 : index>
   test.unknown_attr_3 = #dlti.dl_entry<i32, 32 : index>,
@@ -51,3 +53,21 @@
   }) { dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<"unknown.unknown", 32>> } : () -> ()
   "test.maybe_terminator_op"() : () -> ()
 }) { dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<"unknown.unknown", 32>> } : () -> ()
+
+// A valid target system description
+// CHECK: module attributes {
+// CHECK: dlti.target_system_spec = #dlti.target_system_spec<
+// CHECK:  "CPU" : #dlti.target_device_spec<
+// CHECK:   #dlti.dl_entry<"dlti.L1_cache_size_in_bytes", 4096 : ui32>>,
+// CHECK: "GPU" : #dlti.target_device_spec<
+// CHECK:   #dlti.dl_entry<"dlti.max_vector_op_width", 128 : ui32>>
+// CHECK: >} {
+// CHECK: }
+module attributes {
+  dlti.target_system_spec = #dlti.target_system_spec<
+    "CPU": #dlti.target_device_spec<
+      #dlti.dl_entry<"dlti.L1_cache_size_in_bytes", 4096 : ui32>>,
+    "GPU": #dlti.target_device_spec<
+      #dlti.dl_entry<"dlti.max_vector_op_width", 128 : ui32>>
+  >} {}
+ 

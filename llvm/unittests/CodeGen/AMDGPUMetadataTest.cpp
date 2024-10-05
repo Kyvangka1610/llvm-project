@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/IR/LegacyPassManager.h"
+#include "llvm/IR/Module.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/TargetSelect.h"
@@ -58,7 +59,7 @@ protected:
     TargetOptions Options;
     TM = std::unique_ptr<LLVMTargetMachine>(
         static_cast<LLVMTargetMachine *>(T->createTargetMachine(
-            "amdgcn--amdpal", "gfx1010", "", Options, None)));
+            "amdgcn--amdpal", "gfx1010", "", Options, std::nullopt)));
     if (!TM)
       GTEST_SKIP();
 
@@ -70,7 +71,7 @@ protected:
     PM.add(new AddMetadataPass(PalMDString));
     raw_svector_ostream OutStream(Elf);
     if (TM->addPassesToEmitFile(PM, OutStream, nullptr,
-                                CodeGenFileType::CGFT_ObjectFile))
+                                CodeGenFileType::ObjectFile))
       report_fatal_error("Target machine cannot emit a file of this type");
 
     PM.run(*M);

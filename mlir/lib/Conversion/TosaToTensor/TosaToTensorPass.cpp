@@ -35,11 +35,17 @@ public:
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
     ConversionTarget target(getContext());
+    target.addIllegalOp<tosa::ConcatOp>();
+    target.addIllegalOp<tosa::ReshapeOp>();
     target.addIllegalOp<tosa::SliceOp>();
+    target.addIllegalOp<tosa::PadOp>();
     target.addLegalDialect<arith::ArithDialect>();
     target.addLegalDialect<tensor::TensorDialect>();
 
-    mlir::tosa::populateTosaToTensorConversionPatterns(&patterns);
+    TypeConverter converter;
+    mlir::tosa::populateTosaTypeConversion(converter);
+
+    mlir::tosa::populateTosaToTensorConversionPatterns(converter, &patterns);
 
     if (failed(applyPartialConversion(getOperation(), target,
                                       std::move(patterns))))

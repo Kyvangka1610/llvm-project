@@ -69,8 +69,9 @@ public:
   class Key {
   public:
     /// Constructs a key for an identified struct.
-    Key(StringRef name, bool opaque)
-        : name(name), identified(true), packed(false), opaque(opaque) {}
+    Key(StringRef name, bool opaque, ArrayRef<Type> types = std::nullopt)
+        : types(types), name(name), identified(true), packed(false),
+          opaque(opaque) {}
     /// Constructs a key for a literal struct.
     Key(ArrayRef<Type> types, bool packed)
         : types(types), identified(false), packed(packed), opaque(false) {}
@@ -102,6 +103,13 @@ public:
       return types;
     }
 
+    /// Returns the list of type contained in an identified struct.
+    ArrayRef<Type> getIdentifiedStructBody() const {
+      assert(isIdentified() &&
+             "requested struct body on a non-identified struct");
+      return types;
+    }
+
     /// Returns the hash value of the key. This combines various flags into a
     /// single value: the identified flag sets the first bit, and the packedness
     /// flag sets the second bit. Opacity bit is only used for construction and
@@ -123,8 +131,7 @@ public:
     /// Compares two keys.
     bool operator==(const Key &other) const {
       if (isIdentified())
-        return other.isIdentified() &&
-               other.getIdentifier().equals(getIdentifier());
+        return other.isIdentified() && other.getIdentifier() == getIdentifier();
 
       return !other.isIdentified() && other.isPacked() == isPacked() &&
              other.getTypeList() == getTypeList();
@@ -220,7 +227,7 @@ public:
   }
 
   /// Hook into the type uniquing infrastructure.
-  bool operator==(const KeyTy &other) const { return getKey() == other; };
+  bool operator==(const KeyTy &other) const { return getAsKey() == other; };
   static llvm::hash_code hashKey(const KeyTy &key) { return key.hashValue(); }
   static LLVMStructTypeStorage *construct(TypeStorageAllocator &allocator,
                                           const KeyTy &key) {
@@ -251,6 +258,13 @@ public:
     return success();
   }
 
+  /// Returns the key for the current storage.
+  Key getAsKey() const {
+    if (isIdentified())
+      return Key(getIdentifier(), isOpaque(), getIdentifiedStructBody());
+    return Key(getTypeList(), isPacked());
+  }
+
 private:
   /// Returns the number of elements in the key.
   unsigned keySize() const {
@@ -269,13 +283,6 @@ private:
   /// Sets the number of types contained in an identified struct.
   void setIdentifiedBodySize(unsigned value) {
     llvm::Bitfield::set<MutableSize>(identifiedBodySizeAndFlags, value);
-  }
-
-  /// Returns the key for the current storage.
-  Key getKey() const {
-    if (isIdentified())
-      return Key(getIdentifier(), isOpaque());
-    return Key(getTypeList(), isPacked());
   }
 
   /// Bitfield elements for `keyAndSizeFlags`:
@@ -320,7 +327,35 @@ private:
   /// mutable flags. Must only be used through the Mutable* bitfields.
   unsigned identifiedBodySizeAndFlags = 0;
 };
+} // end namespace detail
+} // end namespace LLVM
 
+/// Allow walking and replacing the subelements of a LLVMStructTypeStorage key.
+template <>
+struct AttrTypeSubElementHandler<LLVM::detail::LLVMStructTypeStorage::Key> {
+  static void walk(const LLVM::detail::LLVMStructTypeStorage::Key &param,
+                   AttrTypeImmediateSubElementWalker &walker) {
+    if (param.isIdentified())
+      walker.walkRange(param.getIdentifiedStructBody());
+    else
+      walker.walkRange(param.getTypeList());
+  }
+  static FailureOr<LLVM::detail::LLVMStructTypeStorage::Key>
+  replace(const LLVM::detail::LLVMStructTypeStorage::Key &param,
+          AttrSubElementReplacements &attrRepls,
+          TypeSubElementReplacements &typeRepls) {
+    // TODO: It's not clear how we support replacing sub-elements of mutable
+    // types.
+    if (param.isIdentified())
+      return failure();
+
+    return LLVM::detail::LLVMStructTypeStorage::Key(
+        typeRepls.take_front(param.getTypeList().size()), param.isPacked());
+  }
+};
+
+namespace LLVM {
+namespace detail {
 //===----------------------------------------------------------------------===//
 // LLVMTypeAndSizeStorage.
 //===----------------------------------------------------------------------===//

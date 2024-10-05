@@ -11,51 +11,15 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "mlir/Dialect/Transform/IR/TransformInterfaces.h"
+#include "mlir/Dialect/Transform/Interfaces/TransformInterfaces.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
 
 using namespace mlir;
 
 namespace {
-/// Simple pass that applies transform dialect ops directly contained in a
-/// module.
-class TestTransformDialectInterpreterPass
-    : public PassWrapper<TestTransformDialectInterpreterPass,
-                         OperationPass<ModuleOp>> {
-public:
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(
-      TestTransformDialectInterpreterPass)
-
-  TestTransformDialectInterpreterPass() = default;
-  TestTransformDialectInterpreterPass(
-      const TestTransformDialectInterpreterPass &) {}
-
-  StringRef getArgument() const override {
-    return "test-transform-dialect-interpreter";
-  }
-
-  StringRef getDescription() const override {
-    return "apply transform dialect operations one by one";
-  }
-
-  void runOnOperation() override {
-    ModuleOp module = getOperation();
-    for (auto op :
-         module.getBody()->getOps<transform::TransformOpInterface>()) {
-      if (failed(transform::applyTransforms(
-              module, op,
-              transform::TransformOptions().enableExpensiveChecks(
-                  enableExpensiveChecks))))
-        return signalPassFailure();
-    }
-  }
-
-  Option<bool> enableExpensiveChecks{
-      *this, "enable-expensive-checks", llvm::cl::init(false),
-      llvm::cl::desc("perform expensive checks to better report errors in the "
-                     "transform IR")};
-};
+template <typename Derived>
+class OpPassWrapper : public PassWrapper<Derived, OperationPass<>> {};
 
 struct TestTransformDialectEraseSchedulePass
     : public PassWrapper<TestTransformDialectEraseSchedulePass,
@@ -88,10 +52,6 @@ namespace test {
 /// Registers the test pass for erasing transform dialect ops.
 void registerTestTransformDialectEraseSchedulePass() {
   PassRegistration<TestTransformDialectEraseSchedulePass> reg;
-}
-/// Registers the test pass for applying transform dialect ops.
-void registerTestTransformDialectInterpreterPass() {
-  PassRegistration<TestTransformDialectInterpreterPass> reg;
 }
 } // namespace test
 } // namespace mlir

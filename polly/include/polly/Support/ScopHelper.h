@@ -18,6 +18,7 @@
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/ValueHandle.h"
 #include "isl/isl-noexceptions.h"
+#include <optional>
 
 namespace llvm {
 class LoopInfo;
@@ -34,6 +35,9 @@ class RegionNode;
 namespace polly {
 class Scop;
 class ScopStmt;
+
+/// Same as llvm/Analysis/ScalarEvolutionExpressions.h
+using LoopToScevMapT = llvm::DenseMap<const llvm::Loop *, const llvm::SCEV *>;
 
 /// Enumeration of assumptions Polly can take.
 enum AssumptionKind {
@@ -382,20 +386,24 @@ void splitEntryBlockForAlloca(llvm::BasicBlock *EntryBlock,
 /// as the call to SCEVExpander::expandCodeFor:
 ///
 /// @param S     The current Scop.
-/// @param SE    The Scalar Evolution pass.
+/// @param SE    The Scalar Evolution pass used by @p S.
+/// @param GenFn The function to generate code in. Can be the same as @p SE.
+/// @param GenSE The Scalar Evolution pass for @p GenFn.
 /// @param DL    The module data layout.
 /// @param Name  The suffix added to the new instruction names.
 /// @param E     The expression for which code is actually generated.
 /// @param Ty    The type of the resulting code.
 /// @param IP    The insertion point for the new code.
 /// @param VMap  A remapping of values used in @p E.
+/// @param LoopMap A remapping of loops used in @p E.
 /// @param RTCBB The last block of the RTC. Used to insert loop-invariant
 ///              instructions in rare cases.
 llvm::Value *expandCodeFor(Scop &S, llvm::ScalarEvolution &SE,
+                           llvm::Function *GenFn, llvm::ScalarEvolution &GenSE,
                            const llvm::DataLayout &DL, const char *Name,
                            const llvm::SCEV *E, llvm::Type *Ty,
                            llvm::Instruction *IP, ValueMapT *VMap,
-                           llvm::BasicBlock *RTCBB);
+                           LoopToScevMapT *LoopMap, llvm::BasicBlock *RTCBB);
 
 /// Return the condition for the terminator @p TI.
 ///
@@ -521,17 +529,17 @@ bool hasDebugCall(ScopStmt *Stmt);
 ///   !{ !"Name" }
 ///
 /// Then `nullptr` is set to mark the property is existing, but does not carry
-/// any value. If the property does not exist, `None` is returned.
-llvm::Optional<llvm::Metadata *> findMetadataOperand(llvm::MDNode *LoopMD,
-                                                     llvm::StringRef Name);
+/// any value. If the property does not exist, `std::nullopt` is returned.
+std::optional<llvm::Metadata *> findMetadataOperand(llvm::MDNode *LoopMD,
+                                                    llvm::StringRef Name);
 
 /// Find a boolean property value in a LoopID. The value not being defined is
 /// interpreted as a false value.
 bool getBooleanLoopAttribute(llvm::MDNode *LoopID, llvm::StringRef Name);
 
 /// Find an integers property value in a LoopID.
-llvm::Optional<int> getOptionalIntLoopAttribute(llvm::MDNode *LoopID,
-                                                llvm::StringRef Name);
+std::optional<int> getOptionalIntLoopAttribute(llvm::MDNode *LoopID,
+                                               llvm::StringRef Name);
 
 /// Does the loop's LoopID contain a 'llvm.loop.disable_heuristics' property?
 ///

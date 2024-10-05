@@ -1,4 +1,4 @@
-// RUN: mlir-opt -pass-pipeline="func.func(convert-arith-to-llvm)" %s -split-input-file | FileCheck %s
+// RUN: mlir-opt -pass-pipeline="builtin.module(func.func(convert-arith-to-llvm))" %s -split-input-file | FileCheck %s
 
 // CHECK-LABEL: @vec_bin
 func.func @vec_bin(%arg0: vector<2x2x2xf32>) -> vector<2x2x2xf32> {
@@ -199,9 +199,9 @@ func.func @bitcast_2d(%arg0: vector<2x4xf32>) {
 
 // CHECK-LABEL: func @select_2d(
 func.func @select_2d(%arg0 : vector<4x3xi1>, %arg1 : vector<4x3xi32>, %arg2 : vector<4x3xi32>) {
-  // CHECK: %[[ARG0:.*]] = builtin.unrealized_conversion_cast %arg0
-  // CHECK: %[[ARG1:.*]] = builtin.unrealized_conversion_cast %arg1
-  // CHECK: %[[ARG2:.*]] = builtin.unrealized_conversion_cast %arg2
+  // CHECK-DAG: %[[ARG0:.*]] = builtin.unrealized_conversion_cast %arg0
+  // CHECK-DAG: %[[ARG1:.*]] = builtin.unrealized_conversion_cast %arg1
+  // CHECK-DAG: %[[ARG2:.*]] = builtin.unrealized_conversion_cast %arg2
   // CHECK: %[[EXTRACT1:.*]] = llvm.extractvalue %[[ARG0]][0] : !llvm.array<4 x vector<3xi1>>
   // CHECK: %[[EXTRACT2:.*]] = llvm.extractvalue %[[ARG1]][0] : !llvm.array<4 x vector<3xi32>>
   // CHECK: %[[EXTRACT3:.*]] = llvm.extractvalue %[[ARG2]][0] : !llvm.array<4 x vector<3xi32>>

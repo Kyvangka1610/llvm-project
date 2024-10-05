@@ -30,6 +30,7 @@
 #include "llvm/Support/Threading.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <optional>
 #include <psapi.h>
 
 #ifndef STATUS_WX86_BREAKPOINT
@@ -56,7 +57,7 @@ Status DebuggerThread::DebugLaunch(const ProcessLaunchInfo &launch_info) {
       "lldb.plugin.process-windows.secondary[?]",
       [this, launch_info] { return DebuggerThreadLaunchRoutine(launch_info); });
   if (!secondary_thread) {
-    result = Status(secondary_thread.takeError());
+    result = Status::FromError(secondary_thread.takeError());
     LLDB_LOG(log, "couldn't launch debugger thread. {0}", result);
   }
 
@@ -74,7 +75,7 @@ Status DebuggerThread::DebugAttach(lldb::pid_t pid,
         return DebuggerThreadAttachRoutine(pid, attach_info);
       });
   if (!secondary_thread) {
-    result = Status(secondary_thread.takeError());
+    result = Status::FromError(secondary_thread.takeError());
     LLDB_LOG(log, "couldn't attach to process '{0}'. {1}", pid, result);
   }
 
@@ -186,7 +187,7 @@ Status DebuggerThread::StopDebugging(bool terminate) {
     // thread.
     if (!::DebugBreakProcess(
             GetProcess().GetNativeProcess().GetSystemHandle())) {
-      error.SetError(::GetLastError(), eErrorTypeWin32);
+      error = Status(::GetLastError(), eErrorTypeWin32);
     }
   }
 
@@ -194,7 +195,7 @@ Status DebuggerThread::StopDebugging(bool terminate) {
 
   DWORD wait_result = WaitForSingleObject(m_debugging_ended_event, 5000);
   if (wait_result != WAIT_OBJECT_0) {
-    error.SetError(GetLastError(), eErrorTypeWin32);
+    error = Status(GetLastError(), eErrorTypeWin32);
     LLDB_LOG(log, "error: WaitForSingleObject({0}, 5000) returned {1}",
              m_debugging_ended_event, wait_result);
   } else
@@ -373,7 +374,6 @@ DebuggerThread::HandleCreateProcessEvent(const CREATE_PROCESS_DEBUG_INFO &info,
   std::string thread_name;
   llvm::raw_string_ostream name_stream(thread_name);
   name_stream << "lldb.plugin.process-windows.secondary[" << process_id << "]";
-  name_stream.flush();
   llvm::set_thread_name(thread_name);
 
   // info.hProcess and info.hThread are closed automatically by Windows when
@@ -412,34 +412,34 @@ DebuggerThread::HandleExitProcessEvent(const EXIT_PROCESS_DEBUG_INFO &info,
   return DBG_CONTINUE;
 }
 
-static llvm::Optional<std::string> GetFileNameFromHandleFallback(HANDLE hFile) {
+static std::optional<std::string> GetFileNameFromHandleFallback(HANDLE hFile) {
   // Check that file is not empty as we cannot map a file with zero length.
   DWORD dwFileSizeHi = 0;
   DWORD dwFileSizeLo = ::GetFileSize(hFile, &dwFileSizeHi);
   if (dwFileSizeLo == 0 && dwFileSizeHi == 0)
-    return llvm::None;
+    return std::nullopt;
 
   AutoHandle filemap(
       ::CreateFileMappingW(hFile, nullptr, PAGE_READONLY, 0, 1, NULL), nullptr);
   if (!filemap.IsValid())
-    return llvm::None;
+    return std::nullopt;
 
   auto view_deleter = [](void *pMem) { ::UnmapViewOfFile(pMem); };
   std::unique_ptr<void, decltype(view_deleter)> pMem(
       ::MapViewOfFile(filemap.get(), FILE_MAP_READ, 0, 0, 1), view_deleter);
   if (!pMem)
-    return llvm::None;
+    return std::nullopt;
 
   std::array<wchar_t, MAX_PATH + 1> mapped_filename;
   if (!::GetMappedFileNameW(::GetCurrentProcess(), pMem.get(),
                             mapped_filename.data(), mapped_filename.size()))
-    return llvm::None;
+    return std::nullopt;
 
   // A series of null-terminated strings, plus an additional null character
   std::array<wchar_t, 512> drive_strings;
   drive_strings[0] = L'\0';
   if (!::GetLogicalDriveStringsW(drive_strings.size(), drive_strings.data()))
-    return llvm::None;
+    return std::nullopt;
 
   std::array<wchar_t, 3> drive = {L"_:"};
   for (const wchar_t *it = drive_strings.data(); *it != L'\0';
@@ -464,7 +464,7 @@ static llvm::Optional<std::string> GetFileNameFromHandleFallback(HANDLE hFile) {
       }
     }
   }
-  return llvm::None;
+  return std::nullopt;
 }
 
 DWORD
@@ -500,11 +500,11 @@ DebuggerThread::HandleLoadDllEvent(const LOAD_DLL_DEBUG_INFO &info,
     llvm::convertWideToUTF8(buffer.data(), path_str_utf8);
     llvm::StringRef path_str = path_str_utf8;
     const char *path = path_str.data();
-    if (path_str.startswith("\\\\?\\"))
+    if (path_str.starts_with("\\\\?\\"))
       path += 4;
 
     on_load_dll(path);
-  } else if (llvm::Optional<std::string> path =
+  } else if (std::optional<std::string> path =
                  GetFileNameFromHandleFallback(info.hFile)) {
     on_load_dll(*path);
   } else {

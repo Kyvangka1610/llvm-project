@@ -11,10 +11,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "X86MCAsmInfo.h"
-#include "llvm/ADT/Triple.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/TargetParser/Triple.h"
 using namespace llvm;
 
 enum AsmWriterFlavorTy {
@@ -42,8 +42,6 @@ X86MCAsmInfoDarwin::X86MCAsmInfoDarwin(const Triple &T) {
     CodePointerSize = CalleeSaveStackSlotSize = 8;
 
   AssemblerDialect = AsmWriterFlavor;
-
-  TextAlignFillValue = 0x90;
 
   if (!is64Bit)
     Data64bitsDirective = nullptr;       // we can't emit a 64-bit unit
@@ -93,8 +91,6 @@ X86ELFMCAsmInfo::X86ELFMCAsmInfo(const Triple &T) {
 
   AssemblerDialect = AsmWriterFlavor;
 
-  TextAlignFillValue = 0x90;
-
   // Debug Information
   SupportsDebugInformation = true;
 
@@ -132,8 +128,6 @@ X86MCAsmInfoMicrosoft::X86MCAsmInfoMicrosoft(const Triple &Triple) {
 
   AssemblerDialect = AsmWriterFlavor;
 
-  TextAlignFillValue = 0x90;
-
   AllowAtInName = true;
 }
 
@@ -153,7 +147,8 @@ X86MCAsmInfoMicrosoftMASM::X86MCAsmInfoMicrosoftMASM(const Triple &Triple)
 void X86MCAsmInfoGNUCOFF::anchor() { }
 
 X86MCAsmInfoGNUCOFF::X86MCAsmInfoGNUCOFF(const Triple &Triple) {
-  assert(Triple.isOSWindows() && "Windows is the only supported COFF target");
+  assert((Triple.isOSWindows() || Triple.isUEFI()) &&
+         "Windows and UEFI are the only supported COFF targets");
   if (Triple.getArch() == Triple::x86_64) {
     PrivateGlobalPrefix = ".L";
     PrivateLabelPrefix = ".L";
@@ -165,8 +160,6 @@ X86MCAsmInfoGNUCOFF::X86MCAsmInfoGNUCOFF(const Triple &Triple) {
   }
 
   AssemblerDialect = AsmWriterFlavor;
-
-  TextAlignFillValue = 0x90;
 
   AllowAtInName = true;
 }

@@ -38,34 +38,20 @@ void BuiltinDialect::registerLocationAttributes() {
 //===----------------------------------------------------------------------===//
 
 WalkResult LocationAttr::walk(function_ref<WalkResult(Location)> walkFn) {
-  if (walkFn(*this).wasInterrupted())
-    return WalkResult::interrupt();
+  AttrTypeWalker walker;
+  // Walk locations, but skip any other attribute.
+  walker.addWalk([&](Attribute attr) {
+    if (auto loc = llvm::dyn_cast<LocationAttr>(attr))
+      return walkFn(loc);
 
-  return TypeSwitch<LocationAttr, WalkResult>(*this)
-      .Case([&](CallSiteLoc callLoc) -> WalkResult {
-        if (callLoc.getCallee()->walk(walkFn).wasInterrupted())
-          return WalkResult::interrupt();
-        return callLoc.getCaller()->walk(walkFn);
-      })
-      .Case([&](FusedLoc fusedLoc) -> WalkResult {
-        for (Location subLoc : fusedLoc.getLocations())
-          if (subLoc->walk(walkFn).wasInterrupted())
-            return WalkResult::interrupt();
-        return WalkResult::advance();
-      })
-      .Case([&](NameLoc nameLoc) -> WalkResult {
-        return nameLoc.getChildLoc()->walk(walkFn);
-      })
-      .Case([&](OpaqueLoc opaqueLoc) -> WalkResult {
-        return opaqueLoc.getFallbackLocation()->walk(walkFn);
-      })
-      .Default(WalkResult::advance());
+    return WalkResult::skip();
+  });
+  return walker.walk<WalkOrder::PreOrder>(*this);
 }
 
 /// Methods for support type inquiry through isa, cast, and dyn_cast.
 bool LocationAttr::classof(Attribute attr) {
-  return attr.isa<CallSiteLoc, FileLineColLoc, FusedLoc, NameLoc, OpaqueLoc,
-                  UnknownLoc>();
+  return attr.hasTrait<AttributeTrait::IsLocation>();
 }
 
 //===----------------------------------------------------------------------===//
@@ -80,20 +66,6 @@ CallSiteLoc CallSiteLoc::get(Location name, ArrayRef<Location> frames) {
   return CallSiteLoc::get(name, caller);
 }
 
-void CallSiteLoc::walkImmediateSubElements(
-    function_ref<void(Attribute)> walkAttrsFn,
-    function_ref<void(Type)> walkTypesFn) const {
-  walkAttrsFn(getCallee());
-  walkAttrsFn(getCaller());
-}
-
-Attribute
-CallSiteLoc::replaceImmediateSubElements(ArrayRef<Attribute> replAttrs,
-                                         ArrayRef<Type> replTypes) const {
-  return get(replAttrs[0].cast<LocationAttr>(),
-             replAttrs[1].cast<LocationAttr>());
-}
-
 //===----------------------------------------------------------------------===//
 // FusedLoc
 //===----------------------------------------------------------------------===//
@@ -105,7 +77,7 @@ Location FusedLoc::get(ArrayRef<Location> locs, Attribute metadata,
   for (auto loc : locs) {
     // If the location is a fused location we decompose it if it has no
     // metadata or the metadata is the same as the top level metadata.
-    if (auto fusedLoc = loc.dyn_cast<FusedLoc>()) {
+    if (auto fusedLoc = llvm::dyn_cast<FusedLoc>(loc)) {
       if (fusedLoc.getMetadata() == metadata) {
         // UnknownLoc's have already been removed from FusedLocs so we can
         // simply add all of the internal locations.
@@ -115,7 +87,7 @@ Location FusedLoc::get(ArrayRef<Location> locs, Attribute metadata,
       }
     }
     // Otherwise, only add known locations to the set.
-    if (!loc.isa<UnknownLoc>())
+    if (!llvm::isa<UnknownLoc>(loc))
       decomposedLocs.insert(loc);
   }
   locs = decomposedLocs.getArrayRef();
@@ -134,56 +106,4 @@ Location FusedLoc::get(ArrayRef<Location> locs, Attribute metadata,
     return locs.front();
 
   return Base::get(context, locs, metadata);
-}
-
-void FusedLoc::walkImmediateSubElements(
-    function_ref<void(Attribute)> walkAttrsFn,
-    function_ref<void(Type)> walkTypesFn) const {
-  for (Attribute attr : getLocations())
-    walkAttrsFn(attr);
-  walkAttrsFn(getMetadata());
-}
-
-Attribute
-FusedLoc::replaceImmediateSubElements(ArrayRef<Attribute> replAttrs,
-                                      ArrayRef<Type> replTypes) const {
-  SmallVector<Location> newLocs;
-  newLocs.reserve(replAttrs.size() - 1);
-  for (Attribute attr : replAttrs.drop_back())
-    newLocs.push_back(attr.cast<LocationAttr>());
-  return get(getContext(), newLocs, replAttrs.back());
-}
-
-//===----------------------------------------------------------------------===//
-// NameLoc
-//===----------------------------------------------------------------------===//
-
-void NameLoc::walkImmediateSubElements(
-    function_ref<void(Attribute)> walkAttrsFn,
-    function_ref<void(Type)> walkTypesFn) const {
-  walkAttrsFn(getName());
-  walkAttrsFn(getChildLoc());
-}
-
-Attribute NameLoc::replaceImmediateSubElements(ArrayRef<Attribute> replAttrs,
-                                               ArrayRef<Type> replTypes) const {
-  return get(replAttrs[0].cast<StringAttr>(),
-             replAttrs[1].cast<LocationAttr>());
-}
-
-//===----------------------------------------------------------------------===//
-// OpaqueLoc
-//===----------------------------------------------------------------------===//
-
-void OpaqueLoc::walkImmediateSubElements(
-    function_ref<void(Attribute)> walkAttrsFn,
-    function_ref<void(Type)> walkTypesFn) const {
-  walkAttrsFn(getFallbackLocation());
-}
-
-Attribute
-OpaqueLoc::replaceImmediateSubElements(ArrayRef<Attribute> replAttrs,
-                                       ArrayRef<Type> replTypes) const {
-  return get(getUnderlyingLocation(), getUnderlyingTypeID(),
-             replAttrs[0].cast<LocationAttr>());
 }

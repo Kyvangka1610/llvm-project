@@ -238,11 +238,11 @@ class SPIRVOpInterface<string name> : OpInterface<name> {
 // Remove them once we are able to support dialect-specific contents in ODS.
 def QueryMinVersionInterface : SPIRVOpInterface<"QueryMinVersionInterface"> {
   let methods = [InterfaceMethod<
-    "", "::llvm::Optional<::mlir::spirv::Version>", "getMinVersion">];
+    "", "::std::optional<::mlir::spirv::Version>", "getMinVersion">];
 }
 def QueryMaxVersionInterface : SPIRVOpInterface<"QueryMaxVersionInterface"> {
   let methods = [InterfaceMethod<
-    "", "::llvm::Optional<::mlir::spirv::Version>", "getMaxVersion">];
+    "", "::std::optional<::mlir::spirv::Version>", "getMaxVersion">];
 }
 def QueryExtensionInterface : SPIRVOpInterface<"QueryExtensionInterface"> {
   let methods = [InterfaceMethod<
@@ -267,7 +267,7 @@ def SPIRV_DT_IntegratedGPU : I32EnumAttrCase<"IntegratedGPU", 2>;
 // An accelerator other than GPU or CPU
 def SPIRV_DT_Other         : I32EnumAttrCase<"Other", 3>;
 // Information missing.
-def SPIRV_DT_Unknown       : I32EnumAttrCase<"Unknown", 4>;
+def SPIRV_DT_Unknown       : I32EnumAttrCase<"Unknown", 0xffffffff>;
 
 def SPIRV_DeviceTypeAttr : SPIRV_I32EnumAttr<
   "DeviceType", "valid SPIR-V device types", "device_type", [
@@ -283,13 +283,25 @@ def SPIRV_V_Intel       : I32EnumAttrCase<"Intel", 4>;
 def SPIRV_V_NVIDIA      : I32EnumAttrCase<"NVIDIA", 5>;
 def SPIRV_V_Qualcomm    : I32EnumAttrCase<"Qualcomm", 6>;
 def SPIRV_V_SwiftShader : I32EnumAttrCase<"SwiftShader", 7>;
-def SPIRV_V_Unknown     : I32EnumAttrCase<"Unknown", 0xff>;
+def SPIRV_V_Unknown     : I32EnumAttrCase<"Unknown", 0xffffffff>;
 
 def SPIRV_VendorAttr : SPIRV_I32EnumAttr<
   "Vendor", "recognized SPIR-V vendor strings", "vendor", [
     SPIRV_V_AMD, SPIRV_V_Apple, SPIRV_V_ARM, SPIRV_V_Imagination,
     SPIRV_V_Intel, SPIRV_V_NVIDIA, SPIRV_V_Qualcomm, SPIRV_V_SwiftShader,
     SPIRV_V_Unknown
+  ]>;
+
+def SPIRV_CA_Metal   : I32EnumAttrCase<"Metal", 0>;
+def SPIRV_CA_OpenCL  : I32EnumAttrCase<"OpenCL", 1>;
+def SPIRV_CA_Vulkan  : I32EnumAttrCase<"Vulkan", 2>;
+def SPIRV_CA_WebGPU  : I32EnumAttrCase<"WebGPU", 3>;
+def SPIRV_CA_Unknown : I32EnumAttrCase<"Unknown", 0xffffffff>;
+
+def SPIRV_ClientAPIAttr : SPIRV_I32EnumAttr<
+  "ClientAPI", "recognized SPIR-V client APIs", "client_api", [
+    SPIRV_CA_Metal, SPIRV_CA_OpenCL, SPIRV_CA_Vulkan, SPIRV_CA_WebGPU,
+    SPIRV_CA_Unknown
   ]>;
 
 //===----------------------------------------------------------------------===//
@@ -328,6 +340,9 @@ def SPV_KHR_fragment_shader_barycentric      : I32EnumAttrCase<"SPV_KHR_fragment
 def SPV_KHR_ray_cull_mask                    : I32EnumAttrCase<"SPV_KHR_ray_cull_mask", 26>;
 def SPV_KHR_uniform_group_instructions       : I32EnumAttrCase<"SPV_KHR_uniform_group_instructions", 27>;
 def SPV_KHR_subgroup_rotate                  : I32EnumAttrCase<"SPV_KHR_subgroup_rotate", 28>;
+def SPV_KHR_non_semantic_info                : I32EnumAttrCase<"SPV_KHR_non_semantic_info", 29>;
+def SPV_KHR_terminate_invocation             : I32EnumAttrCase<"SPV_KHR_terminate_invocation", 30>;
+def SPV_KHR_cooperative_matrix               : I32EnumAttrCase<"SPV_KHR_cooperative_matrix", 31>;
 
 def SPV_EXT_demote_to_helper_invocation  : I32EnumAttrCase<"SPV_EXT_demote_to_helper_invocation", 1000>;
 def SPV_EXT_descriptor_indexing          : I32EnumAttrCase<"SPV_EXT_descriptor_indexing", 1001>;
@@ -384,7 +399,7 @@ def SPV_INTEL_debug_module                       : I32EnumAttrCase<"SPV_INTEL_de
 def SPV_INTEL_fp_fast_math_mode                  : I32EnumAttrCase<"SPV_INTEL_fp_fast_math_mode", 4027>;
 def SPV_INTEL_memory_access_aliasing             : I32EnumAttrCase<"SPV_INTEL_memory_access_aliasing", 4028>;
 def SPV_INTEL_split_barrier                      : I32EnumAttrCase<"SPV_INTEL_split_barrier", 4029>;
-def SPV_INTEL_joint_matrix                       : I32EnumAttrCase<"SPV_INTEL_joint_matrix", 4030>;
+def SPV_INTEL_bfloat16_conversion                : I32EnumAttrCase<"SPV_INTEL_bfloat16_conversion", 4031>;
 
 def SPV_NV_compute_shader_derivatives    : I32EnumAttrCase<"SPV_NV_compute_shader_derivatives", 5000>;
 def SPV_NV_cooperative_matrix            : I32EnumAttrCase<"SPV_NV_cooperative_matrix", 5001>;
@@ -418,6 +433,8 @@ def SPIRV_ExtensionAttr :
       SPV_KHR_ray_tracing, SPV_KHR_subgroup_uniform_control_flow, SPV_KHR_linkonce_odr,
       SPV_KHR_fragment_shader_barycentric, SPV_KHR_ray_cull_mask,
       SPV_KHR_uniform_group_instructions, SPV_KHR_subgroup_rotate,
+      SPV_KHR_non_semantic_info, SPV_KHR_terminate_invocation,
+      SPV_KHR_cooperative_matrix,
       SPV_EXT_demote_to_helper_invocation, SPV_EXT_descriptor_indexing,
       SPV_EXT_fragment_fully_covered, SPV_EXT_fragment_invocation_density,
       SPV_EXT_fragment_shader_interlock, SPV_EXT_physical_storage_buffer,
@@ -441,8 +458,8 @@ def SPIRV_ExtensionAttr :
       SPV_INTEL_usm_storage_classes, SPV_INTEL_io_pipes, SPV_INTEL_blocking_pipes,
       SPV_INTEL_fpga_reg, SPV_INTEL_long_constant_composite, SPV_INTEL_optnone,
       SPV_INTEL_debug_module, SPV_INTEL_fp_fast_math_mode,
-      SPV_INTEL_memory_access_aliasing, SPV_INTEL_split_barrier, SPV_INTEL_joint_matrix,
-      SPV_NV_compute_shader_derivatives, SPV_NV_cooperative_matrix,
+      SPV_INTEL_memory_access_aliasing, SPV_INTEL_split_barrier,
+      SPV_INTEL_bfloat16_conversion, SPV_NV_compute_shader_derivatives, SPV_NV_cooperative_matrix,
       SPV_NV_fragment_shader_barycentric, SPV_NV_geometry_shader_passthrough,
       SPV_NV_mesh_shader, SPV_NV_ray_tracing, SPV_NV_sample_mask_override_coverage,
       SPV_NV_shader_image_footprint, SPV_NV_shader_sm_builtins,
@@ -790,22 +807,38 @@ def SPIRV_C_FPGARegINTEL                                : I32EnumAttrCase<"FPGAR
 }
 def SPIRV_C_DotProductInputAll                          : I32EnumAttrCase<"DotProductInputAll", 6016> {
   list<Availability> availability = [
+    Extension<[SPV_KHR_integer_dot_product]>,
+    MinVersion<SPIRV_V_1_6>
+  ];
+}
+def SPIRV_C_DotProductInput4x8Bit                       : I32EnumAttrCase<"DotProductInput4x8Bit", 6017> {
+  list<I32EnumAttrCase> implies = [SPIRV_C_Int8];
+  list<Availability> availability = [
+    Extension<[SPV_KHR_integer_dot_product]>,
     MinVersion<SPIRV_V_1_6>
   ];
 }
 def SPIRV_C_DotProductInput4x8BitPacked                 : I32EnumAttrCase<"DotProductInput4x8BitPacked", 6018> {
   list<Availability> availability = [
+    Extension<[SPV_KHR_integer_dot_product]>,
     MinVersion<SPIRV_V_1_6>
   ];
 }
 def SPIRV_C_DotProduct                                  : I32EnumAttrCase<"DotProduct", 6019> {
   list<Availability> availability = [
+    Extension<[SPV_KHR_integer_dot_product]>,
     MinVersion<SPIRV_V_1_6>
   ];
 }
 def SPIRV_C_RayCullMaskKHR                              : I32EnumAttrCase<"RayCullMaskKHR", 6020> {
   list<Availability> availability = [
     Extension<[SPV_KHR_ray_cull_mask]>
+  ];
+}
+def SPIRV_C_CooperativeMatrixKHR                        : I32EnumAttrCase<"CooperativeMatrixKHR", 6022> {
+  list<Availability> availability = [
+    Extension<[SPV_KHR_cooperative_matrix]>,
+    MinVersion<SPIRV_V_1_6>
   ];
 }
 def SPIRV_C_BitInstructions                             : I32EnumAttrCase<"BitInstructions", 6025> {
@@ -962,12 +995,6 @@ def SPIRV_C_FPFastMathModeINTEL                         : I32EnumAttrCase<"FPFas
   list<I32EnumAttrCase> implies = [SPIRV_C_Kernel];
   list<Availability> availability = [
     Extension<[SPV_INTEL_fp_fast_math_mode]>
-  ];
-}
-def SPIRV_C_DotProductInput4x8Bit                       : I32EnumAttrCase<"DotProductInput4x8Bit", 6017> {
-  list<I32EnumAttrCase> implies = [SPIRV_C_Int8];
-  list<Availability> availability = [
-    MinVersion<SPIRV_V_1_6>
   ];
 }
 def SPIRV_C_GroupNonUniformRotateKHR                    : I32EnumAttrCase<"GroupNonUniformRotateKHR", 6026> {
@@ -1225,12 +1252,6 @@ def SPIRV_C_RayTracingProvisionalKHR                    : I32EnumAttrCase<"RayTr
     Extension<[SPV_KHR_ray_tracing]>
   ];
 }
-def SPIRV_C_CooperativeMatrixNV                         : I32EnumAttrCase<"CooperativeMatrixNV", 5357> {
-  list<I32EnumAttrCase> implies = [SPIRV_C_Shader];
-  list<Availability> availability = [
-    Extension<[SPV_NV_cooperative_matrix]>
-  ];
-}
 def SPIRV_C_FragmentShaderSampleInterlockEXT            : I32EnumAttrCase<"FragmentShaderSampleInterlockEXT", 5363> {
   list<I32EnumAttrCase> implies = [SPIRV_C_Shader];
   list<Availability> availability = [
@@ -1388,9 +1409,9 @@ def SPIRV_C_ShaderStereoViewNV                          : I32EnumAttrCase<"Shade
   ];
 }
 
-def SPIRV_C_JointMatrixINTEL                         : I32EnumAttrCase<"JointMatrixINTEL", 6118> {
+def SPIRV_C_Bfloat16ConversionINTEL                         : I32EnumAttrCase<"Bfloat16ConversionINTEL", 6115> {
   list<Availability> availability = [
-    Extension<[SPV_INTEL_joint_matrix]>
+    Extension<[SPV_INTEL_bfloat16_conversion]>
   ];
 }
 
@@ -1430,6 +1451,7 @@ def SPIRV_CapabilityAttr :
       SPIRV_C_USMStorageClassesINTEL, SPIRV_C_IOPipesINTEL, SPIRV_C_BlockingPipesINTEL,
       SPIRV_C_FPGARegINTEL, SPIRV_C_DotProductInputAll,
       SPIRV_C_DotProductInput4x8BitPacked, SPIRV_C_DotProduct, SPIRV_C_RayCullMaskKHR,
+      SPIRV_C_CooperativeMatrixKHR,
       SPIRV_C_BitInstructions, SPIRV_C_AtomicFloat32AddEXT, SPIRV_C_AtomicFloat64AddEXT,
       SPIRV_C_LongConstantCompositeINTEL, SPIRV_C_OptNoneINTEL,
       SPIRV_C_AtomicFloat16AddEXT, SPIRV_C_DebugInfoModuleINTEL, SPIRV_C_SplitBarrierINTEL,
@@ -1466,7 +1488,7 @@ def SPIRV_CapabilityAttr :
       SPIRV_C_ShaderNonUniform, SPIRV_C_RuntimeDescriptorArray,
       SPIRV_C_StorageTexelBufferArrayDynamicIndexing, SPIRV_C_RayTracingNV,
       SPIRV_C_RayTracingMotionBlurNV, SPIRV_C_PhysicalStorageBufferAddresses,
-      SPIRV_C_RayTracingProvisionalKHR, SPIRV_C_CooperativeMatrixNV,
+      SPIRV_C_RayTracingProvisionalKHR,
       SPIRV_C_FragmentShaderSampleInterlockEXT,
       SPIRV_C_FragmentShaderShadingRateInterlockEXT, SPIRV_C_ShaderSMBuiltinsNV,
       SPIRV_C_FragmentShaderPixelInterlockEXT, SPIRV_C_DemoteToHelperInvocation,
@@ -1485,7 +1507,7 @@ def SPIRV_CapabilityAttr :
       SPIRV_C_UniformTexelBufferArrayNonUniformIndexing,
       SPIRV_C_StorageTexelBufferArrayNonUniformIndexing,
       SPIRV_C_ShaderViewportIndexLayerEXT, SPIRV_C_ShaderViewportMaskNV,
-      SPIRV_C_ShaderStereoViewNV, SPIRV_C_JointMatrixINTEL
+      SPIRV_C_ShaderStereoViewNV, SPIRV_C_Bfloat16ConversionINTEL
     ]>;
 
 def SPIRV_AM_Logical                 : I32EnumAttrCase<"Logical", 0>;
@@ -3079,6 +3101,11 @@ def SPIRV_EM_SchedulerTargetFmaxMhzINTEL      : I32EnumAttrCase<"SchedulerTarget
     Capability<[SPIRV_C_FPGAKernelAttributesINTEL]>
   ];
 }
+def SPIRV_EM_StreamingInterfaceINTEL          : I32EnumAttrCase<"StreamingInterfaceINTEL", 6154> {
+  list<Availability> availability = [
+    Capability<[SPIRV_C_FPGAKernelAttributesINTEL]>
+  ];
+}
 def SPIRV_EM_NamedBarrierCountINTEL           : I32EnumAttrCase<"NamedBarrierCountINTEL", 6417> {
   list<Availability> availability = [
     Capability<[SPIRV_C_VectorComputeINTEL]>
@@ -3116,7 +3143,8 @@ def SPIRV_ExecutionModeAttr :
       SPIRV_EM_FloatingPointModeALTINTEL, SPIRV_EM_FloatingPointModeIEEEINTEL,
       SPIRV_EM_MaxWorkgroupSizeINTEL, SPIRV_EM_MaxWorkDimINTEL,
       SPIRV_EM_NoGlobalOffsetINTEL, SPIRV_EM_NumSIMDWorkitemsINTEL,
-      SPIRV_EM_SchedulerTargetFmaxMhzINTEL, SPIRV_EM_NamedBarrierCountINTEL
+      SPIRV_EM_SchedulerTargetFmaxMhzINTEL, SPIRV_EM_StreamingInterfaceINTEL,
+      SPIRV_EM_NamedBarrierCountINTEL
     ]>;
 
 def SPIRV_EM_Vertex                 : I32EnumAttrCase<"Vertex", 0> {
@@ -3213,6 +3241,19 @@ def SPIRV_FC_OptNoneINTEL : I32BitEnumAttrCaseBit<"OptNoneINTEL", 16> {
     Capability<[SPIRV_C_OptNoneINTEL]>
   ];
 }
+
+def SPIRV_FPRM_RTE : I32EnumAttrCase<"RTE", 0>;
+def SPIRV_FPRM_RTZ : I32EnumAttrCase<"RTZ", 1>;
+def SPIRV_FPRM_RTP : I32EnumAttrCase<"RTP", 2>;
+def SPIRV_FPRM_RTN : I32EnumAttrCase<"RTN", 3>;
+
+// TODO: Enforce SPIR-V spec validation rule for Shader capability: only permit
+//       FPRoundingMode on a value stored to certain storage classes?
+//       (The OpenCL environment also has FPRoundingMode rules, but different.)
+def SPIRV_FPRoundingModeAttr :
+    SPIRV_I32EnumAttr<"FPRoundingMode", "valid SPIR-V FPRoundingMode", "fp_rounding_mode", [
+      SPIRV_FPRM_RTE, SPIRV_FPRM_RTZ, SPIRV_FPRM_RTP, SPIRV_FPRM_RTN
+    ]>;
 
 def SPIRV_FunctionControlAttr :
     SPIRV_BitEnumAttr<"FunctionControl", "valid SPIR-V FunctionControl", "function_control", [
@@ -3950,6 +3991,18 @@ def SPIRV_StorageClassAttr :
       SPIRV_SC_CodeSectionINTEL, SPIRV_SC_DeviceOnlyINTEL, SPIRV_SC_HostOnlyINTEL
     ]>;
 
+def SPIRV_PVF_PackedVectorFormat4x8Bit : I32EnumAttrCase<"PackedVectorFormat4x8Bit", 0> {
+  list<Availability> availability = [
+    MinVersion<SPIRV_V_1_6>,
+    Extension<[SPV_KHR_integer_dot_product]>
+  ];
+}
+
+def SPIRV_PackedVectorFormatAttr :
+    SPIRV_I32EnumAttr<"PackedVectorFormat", "valid SPIR-V PackedVectorFormat", "packed_vector_format", [
+      SPIRV_PVF_PackedVectorFormat4x8Bit
+    ]>;
+
 // End enum section. Generated from SPIR-V spec; DO NOT MODIFY!
 
 // Enums added manually that are not part of SPIR-V spec
@@ -3972,7 +4025,7 @@ def SPIRV_ArrayedAttr : SPIRV_I32EnumAttr<
 def SPIRV_ISI_SingleSampled : I32EnumAttrCase<"SingleSampled", 0>;
 def SPIRV_ISI_MultiSampled  : I32EnumAttrCase<"MultiSampled", 1>;
 
-def SPIRV_SamplingAttr: SPIRV_I32EnumAttr<
+def SPIRV_SamplingAttr : SPIRV_I32EnumAttr<
   "ImageSamplingInfo", "valid SPIR-V Image Sampling specification",
   "image_sampling_info", [SPIRV_ISI_SingleSampled, SPIRV_ISI_MultiSampled]>;
 
@@ -3990,9 +4043,53 @@ def SPIRV_ML_RowMajor    : I32EnumAttrCase<"RowMajor", 1>;
 def SPIRV_ML_PackedA     : I32EnumAttrCase<"PackedA", 2>;
 def SPIRV_ML_PackedB     : I32EnumAttrCase<"PackedB", 3>;
 
-def SPIRV_MatrixLayoutAttr  :
+def SPIRV_MatrixLayoutAttr :
     SPIRV_I32EnumAttr<"MatrixLayout", "valid SPIR-V MatrixLayout", "matrixLayout", [
       SPIRV_ML_ColumnMajor, SPIRV_ML_RowMajor, SPIRV_ML_PackedA, SPIRV_ML_PackedB
+    ]>;
+
+// Cooperative Matrix Use for the SPV_KHR_cooperative_matrix extension.
+def SPIRV_KHR_CMU_MatrixA   : I32EnumAttrCase<"MatrixA", 0>;
+def SPIRV_KHR_CMU_MatrixB   : I32EnumAttrCase<"MatrixB", 1>;
+def SPIRV_KHR_CMU_MatrixAcc : I32EnumAttrCase<"MatrixAcc", 2>;
+
+// NOTE: This is an attribute in the SPIR-V *dialect* but a constant (<id>) in
+// SPIR-V proper.
+def SPIRV_KHR_CooperativeMatrixUseAttr :
+    SPIRV_I32EnumAttr<"CooperativeMatrixUseKHR",
+                      "valid SPIR-V Cooperative Matrix Use (KHR)",
+                      "coop_matrix_use_khr", [
+      SPIRV_KHR_CMU_MatrixA, SPIRV_KHR_CMU_MatrixB, SPIRV_KHR_CMU_MatrixAcc
+    ]>;
+
+// Cooperative Matrix Layout for the SPV_KHR_cooperative_matrix extension.
+def SPIRV_KHR_CML_RowMajor    : I32EnumAttrCase<"RowMajor", 0>;
+def SPIRV_KHR_CML_ColumnMajor : I32EnumAttrCase<"ColumnMajor", 1>;
+
+// NOTE: This is an attribute in the SPIR-V *dialect* but a constant (<id>) in
+// SPIR-V proper.
+def SPIRV_KHR_CooperativeMatrixLayoutAttr :
+    SPIRV_I32EnumAttr<"CooperativeMatrixLayoutKHR",
+                      "valid SPIR-V Cooperative Matrix Layout (KHR)",
+                      "coop_matrix_layout_khr", [
+      SPIRV_KHR_CML_RowMajor, SPIRV_KHR_CML_ColumnMajor
+    ]>;
+
+// Cooperative Matrix Operands for the SPV_KHR_cooperative_matrix extension.
+def SPIRV_KHR_CMO_None           : I32BitEnumAttrCaseNone<"None">;
+def SPIRV_KHR_CMO_MatrixA_Signed : I32BitEnumAttrCaseBit<"ASigned", 0>;
+def SPIRV_KHR_CMO_MatrixB_Signed : I32BitEnumAttrCaseBit<"BSigned", 1>;
+def SPIRV_KHR_CMO_MatrixC_Signed : I32BitEnumAttrCaseBit<"CSigned", 2>;
+def SPIRV_KHR_CMO_Result_Signed  : I32BitEnumAttrCaseBit<"ResultSigned", 3>;
+def SPIRV_KHR_CMO_AccSat         : I32BitEnumAttrCaseBit<"AccSat", 4>;
+
+def SPIRV_KHR_CooperativeMatrixOperandsAttr :
+    SPIRV_BitEnumAttr<"CooperativeMatrixOperandsKHR",
+                      "valid SPIR-V Cooperative Matrix Operands (KHR)",
+                      "cooperative_matrix_operands_khr", [
+      SPIRV_KHR_CMO_None, SPIRV_KHR_CMO_MatrixA_Signed,
+      SPIRV_KHR_CMO_MatrixB_Signed, SPIRV_KHR_CMO_MatrixC_Signed,
+      SPIRV_KHR_CMO_Result_Signed, SPIRV_KHR_CMO_AccSat
     ]>;
 
 //===----------------------------------------------------------------------===//
@@ -4001,7 +4098,7 @@ def SPIRV_MatrixLayoutAttr  :
 
 def SPIRV_VerCapExtAttr : DialectAttr<
     SPIRV_Dialect,
-    CPred<"$_self.isa<::mlir::spirv::VerCapExtAttr>()">,
+    CPred<"::llvm::isa<::mlir::spirv::VerCapExtAttr>($_self)">,
     "version-capability-extension attribute"> {
   let storageType = "::mlir::spirv::VerCapExtAttr";
   let returnType = "::mlir::spirv::VerCapExtAttr";
@@ -4023,17 +4120,15 @@ class SignlessOrUnsignedIntOfWidths<list<int> widths> :
     AnyTypeOf<!foreach(w, widths, IOrUI<w>),
               !interleave(widths, "/") # "-bit signless/unsigned integer">;
 
-def SPIRV_IsArrayType : CPred<"$_self.isa<::mlir::spirv::ArrayType>()">;
+def SPIRV_IsArrayType : CPred<"::llvm::isa<::mlir::spirv::ArrayType>($_self)">;
 def SPIRV_IsCooperativeMatrixType :
-  CPred<"$_self.isa<::mlir::spirv::CooperativeMatrixNVType>()">;
-def SPIRV_IsImageType : CPred<"$_self.isa<::mlir::spirv::ImageType>()">;
-def SPIRV_IsJointMatrixType :
-  CPred<"$_self.isa<::mlir::spirv::JointMatrixINTELType>()">;
-def SPIRV_IsMatrixType : CPred<"$_self.isa<::mlir::spirv::MatrixType>()">;
-def SPIRV_IsPtrType : CPred<"$_self.isa<::mlir::spirv::PointerType>()">;
-def SPIRV_IsRTArrayType : CPred<"$_self.isa<::mlir::spirv::RuntimeArrayType>()">;
-def SPIRV_IsSampledImageType : CPred<"$_self.isa<::mlir::spirv::SampledImageType>()">;
-def SPIRV_IsStructType : CPred<"$_self.isa<::mlir::spirv::StructType>()">;
+  CPred<"::llvm::isa<::mlir::spirv::CooperativeMatrixType>($_self)">;
+def SPIRV_IsImageType : CPred<"::llvm::isa<::mlir::spirv::ImageType>($_self)">;
+def SPIRV_IsMatrixType : CPred<"::llvm::isa<::mlir::spirv::MatrixType>($_self)">;
+def SPIRV_IsPtrType : CPred<"::llvm::isa<::mlir::spirv::PointerType>($_self)">;
+def SPIRV_IsRTArrayType : CPred<"::llvm::isa<::mlir::spirv::RuntimeArrayType>($_self)">;
+def SPIRV_IsSampledImageType : CPred<"::llvm::isa<::mlir::spirv::SampledImageType>($_self)">;
+def SPIRV_IsStructType : CPred<"::llvm::isa<::mlir::spirv::StructType>($_self)">;
 
 
 // See https://www.khronos.org/registry/spir-v/specs/unified1/SPIRV.html#_types
@@ -4042,6 +4137,7 @@ def SPIRV_IsStructType : CPred<"$_self.isa<::mlir::spirv::StructType>()">;
 def SPIRV_Void : TypeAlias<NoneType, "void">;
 def SPIRV_Bool : TypeAlias<I1, "bool">;
 def SPIRV_Integer : AnyIntOfWidths<[8, 16, 32, 64]>;
+def SPIRV_Int16 : TypeAlias<I16, "Int16">;
 def SPIRV_Int32 : TypeAlias<I32, "Int32">;
 def SPIRV_Float32 : TypeAlias<F32, "Float32">;
 def SPIRV_Float : FloatOfWidths<[16, 32, 64]>;
@@ -4055,12 +4151,10 @@ def SPIRV_AnyPtr : DialectType<SPIRV_Dialect, SPIRV_IsPtrType,
 def SPIRV_AnyArray : DialectType<SPIRV_Dialect, SPIRV_IsArrayType,
                                "any SPIR-V array type">;
 def SPIRV_AnyCooperativeMatrix : DialectType<SPIRV_Dialect,
-                               SPIRV_IsCooperativeMatrixType,
-                               "any SPIR-V cooperative matrix type">;
+                                   SPIRV_IsCooperativeMatrixType,
+                                  "any SPIR-V cooperative matrix type">;
 def SPIRV_AnyImage : DialectType<SPIRV_Dialect, SPIRV_IsImageType,
                                 "any SPIR-V image type">;
-def SPIRV_AnyJointMatrix : DialectType<SPIRV_Dialect, SPIRV_IsJointMatrixType,
-                                "any SPIR-V joint matrix type">;
 def SPIRV_AnyMatrix : DialectType<SPIRV_Dialect, SPIRV_IsMatrixType,
                                 "any SPIR-V matrix type">;
 def SPIRV_AnyRTArray : DialectType<SPIRV_Dialect, SPIRV_IsRTArrayType,
@@ -4075,12 +4169,11 @@ def SPIRV_Scalar : AnyTypeOf<[SPIRV_Numerical, SPIRV_Bool]>;
 def SPIRV_Aggregate : AnyTypeOf<[SPIRV_AnyArray, SPIRV_AnyRTArray, SPIRV_AnyStruct]>;
 def SPIRV_Composite :
     AnyTypeOf<[SPIRV_Vector, SPIRV_AnyArray, SPIRV_AnyRTArray, SPIRV_AnyStruct,
-               SPIRV_AnyCooperativeMatrix, SPIRV_AnyJointMatrix, SPIRV_AnyMatrix]>;
+               SPIRV_AnyCooperativeMatrix, SPIRV_AnyMatrix]>;
 def SPIRV_Type : AnyTypeOf<[
     SPIRV_Void, SPIRV_Bool, SPIRV_Integer, SPIRV_Float, SPIRV_Vector,
     SPIRV_AnyPtr, SPIRV_AnyArray, SPIRV_AnyRTArray, SPIRV_AnyStruct,
-    SPIRV_AnyCooperativeMatrix, SPIRV_AnyJointMatrix, SPIRV_AnyMatrix,
-    SPIRV_AnySampledImage
+    SPIRV_AnyCooperativeMatrix, SPIRV_AnyMatrix, SPIRV_AnySampledImage
   ]>;
 
 def SPIRV_SignedInt : SignedIntOfWidths<[8, 16, 32, 64]>;
@@ -4088,19 +4181,21 @@ def SPIRV_SignlessOrUnsignedInt : SignlessOrUnsignedIntOfWidths<[8, 16, 32, 64]>
 
 class SPIRV_CoopMatrixOfType<list<Type> allowedTypes> :
   ContainerType<AnyTypeOf<allowedTypes>, SPIRV_IsCooperativeMatrixType,
-    "$_self.cast<::mlir::spirv::CooperativeMatrixNVType>().getElementType()",
+    "::llvm::cast<::mlir::spirv::CooperativeMatrixType>($_self).getElementType()",
     "Cooperative Matrix">;
 
-class SPIRV_JointMatrixOfType<list<Type> allowedTypes> :
-  ContainerType<AnyTypeOf<allowedTypes>, SPIRV_IsJointMatrixType,
-    "$_self.cast<::mlir::spirv::JointMatrixINTELType>().getElementType()",
-    "Joint Matrix">;
+class SPIRV_VectorOf<Type type> :
+    VectorOfLengthAndType<[2, 3, 4, 8,16], [type]>;
 
 class SPIRV_ScalarOrVectorOf<Type type> :
-    AnyTypeOf<[type, VectorOfLengthAndType<[2, 3, 4, 8, 16], [type]>]>;
+    AnyTypeOf<[type, SPIRV_VectorOf<type>]>;
 
 class SPIRV_ScalarOrVectorOrCoopMatrixOf<Type type> :
-    AnyTypeOf<[type, VectorOfLengthAndType<[2, 3, 4, 8, 16], [type]>,
+    AnyTypeOf<[type, SPIRV_VectorOf<type>,
+               SPIRV_CoopMatrixOfType<[type]>]>;
+
+class SPIRV_MatrixOrCoopMatrixOf<Type type> :
+    AnyTypeOf<[SPIRV_AnyMatrix,
                SPIRV_CoopMatrixOfType<[type]>]>;
 
 def SPIRV_ScalarOrVector : AnyTypeOf<[SPIRV_Scalar, SPIRV_Vector]>;
@@ -4148,279 +4243,321 @@ class SPIRV_OpCode<string name, int val> {
 
 // Begin opcode section. Generated from SPIR-V spec; DO NOT MODIFY!
 
-def SPIRV_OC_OpNop                        : I32EnumAttrCase<"OpNop", 0>;
-def SPIRV_OC_OpUndef                      : I32EnumAttrCase<"OpUndef", 1>;
-def SPIRV_OC_OpSourceContinued            : I32EnumAttrCase<"OpSourceContinued", 2>;
-def SPIRV_OC_OpSource                     : I32EnumAttrCase<"OpSource", 3>;
-def SPIRV_OC_OpSourceExtension            : I32EnumAttrCase<"OpSourceExtension", 4>;
-def SPIRV_OC_OpName                       : I32EnumAttrCase<"OpName", 5>;
-def SPIRV_OC_OpMemberName                 : I32EnumAttrCase<"OpMemberName", 6>;
-def SPIRV_OC_OpString                     : I32EnumAttrCase<"OpString", 7>;
-def SPIRV_OC_OpLine                       : I32EnumAttrCase<"OpLine", 8>;
-def SPIRV_OC_OpExtension                  : I32EnumAttrCase<"OpExtension", 10>;
-def SPIRV_OC_OpExtInstImport              : I32EnumAttrCase<"OpExtInstImport", 11>;
-def SPIRV_OC_OpExtInst                    : I32EnumAttrCase<"OpExtInst", 12>;
-def SPIRV_OC_OpMemoryModel                : I32EnumAttrCase<"OpMemoryModel", 14>;
-def SPIRV_OC_OpEntryPoint                 : I32EnumAttrCase<"OpEntryPoint", 15>;
-def SPIRV_OC_OpExecutionMode              : I32EnumAttrCase<"OpExecutionMode", 16>;
-def SPIRV_OC_OpCapability                 : I32EnumAttrCase<"OpCapability", 17>;
-def SPIRV_OC_OpTypeVoid                   : I32EnumAttrCase<"OpTypeVoid", 19>;
-def SPIRV_OC_OpTypeBool                   : I32EnumAttrCase<"OpTypeBool", 20>;
-def SPIRV_OC_OpTypeInt                    : I32EnumAttrCase<"OpTypeInt", 21>;
-def SPIRV_OC_OpTypeFloat                  : I32EnumAttrCase<"OpTypeFloat", 22>;
-def SPIRV_OC_OpTypeVector                 : I32EnumAttrCase<"OpTypeVector", 23>;
-def SPIRV_OC_OpTypeMatrix                 : I32EnumAttrCase<"OpTypeMatrix", 24>;
-def SPIRV_OC_OpTypeImage                  : I32EnumAttrCase<"OpTypeImage", 25>;
-def SPIRV_OC_OpTypeSampledImage           : I32EnumAttrCase<"OpTypeSampledImage", 27>;
-def SPIRV_OC_OpTypeArray                  : I32EnumAttrCase<"OpTypeArray", 28>;
-def SPIRV_OC_OpTypeRuntimeArray           : I32EnumAttrCase<"OpTypeRuntimeArray", 29>;
-def SPIRV_OC_OpTypeStruct                 : I32EnumAttrCase<"OpTypeStruct", 30>;
-def SPIRV_OC_OpTypePointer                : I32EnumAttrCase<"OpTypePointer", 32>;
-def SPIRV_OC_OpTypeFunction               : I32EnumAttrCase<"OpTypeFunction", 33>;
-def SPIRV_OC_OpTypeForwardPointer         : I32EnumAttrCase<"OpTypeForwardPointer", 39>;
-def SPIRV_OC_OpConstantTrue               : I32EnumAttrCase<"OpConstantTrue", 41>;
-def SPIRV_OC_OpConstantFalse              : I32EnumAttrCase<"OpConstantFalse", 42>;
-def SPIRV_OC_OpConstant                   : I32EnumAttrCase<"OpConstant", 43>;
-def SPIRV_OC_OpConstantComposite          : I32EnumAttrCase<"OpConstantComposite", 44>;
-def SPIRV_OC_OpConstantNull               : I32EnumAttrCase<"OpConstantNull", 46>;
-def SPIRV_OC_OpSpecConstantTrue           : I32EnumAttrCase<"OpSpecConstantTrue", 48>;
-def SPIRV_OC_OpSpecConstantFalse          : I32EnumAttrCase<"OpSpecConstantFalse", 49>;
-def SPIRV_OC_OpSpecConstant               : I32EnumAttrCase<"OpSpecConstant", 50>;
-def SPIRV_OC_OpSpecConstantComposite      : I32EnumAttrCase<"OpSpecConstantComposite", 51>;
-def SPIRV_OC_OpSpecConstantOp             : I32EnumAttrCase<"OpSpecConstantOp", 52>;
-def SPIRV_OC_OpFunction                   : I32EnumAttrCase<"OpFunction", 54>;
-def SPIRV_OC_OpFunctionParameter          : I32EnumAttrCase<"OpFunctionParameter", 55>;
-def SPIRV_OC_OpFunctionEnd                : I32EnumAttrCase<"OpFunctionEnd", 56>;
-def SPIRV_OC_OpFunctionCall               : I32EnumAttrCase<"OpFunctionCall", 57>;
-def SPIRV_OC_OpVariable                   : I32EnumAttrCase<"OpVariable", 59>;
-def SPIRV_OC_OpLoad                       : I32EnumAttrCase<"OpLoad", 61>;
-def SPIRV_OC_OpStore                      : I32EnumAttrCase<"OpStore", 62>;
-def SPIRV_OC_OpCopyMemory                 : I32EnumAttrCase<"OpCopyMemory", 63>;
-def SPIRV_OC_OpAccessChain                : I32EnumAttrCase<"OpAccessChain", 65>;
-def SPIRV_OC_OpPtrAccessChain             : I32EnumAttrCase<"OpPtrAccessChain", 67>;
-def SPIRV_OC_OpInBoundsPtrAccessChain     : I32EnumAttrCase<"OpInBoundsPtrAccessChain", 70>;
-def SPIRV_OC_OpDecorate                   : I32EnumAttrCase<"OpDecorate", 71>;
-def SPIRV_OC_OpMemberDecorate             : I32EnumAttrCase<"OpMemberDecorate", 72>;
-def SPIRV_OC_OpVectorExtractDynamic       : I32EnumAttrCase<"OpVectorExtractDynamic", 77>;
-def SPIRV_OC_OpVectorInsertDynamic        : I32EnumAttrCase<"OpVectorInsertDynamic", 78>;
-def SPIRV_OC_OpVectorShuffle              : I32EnumAttrCase<"OpVectorShuffle", 79>;
-def SPIRV_OC_OpCompositeConstruct         : I32EnumAttrCase<"OpCompositeConstruct", 80>;
-def SPIRV_OC_OpCompositeExtract           : I32EnumAttrCase<"OpCompositeExtract", 81>;
-def SPIRV_OC_OpCompositeInsert            : I32EnumAttrCase<"OpCompositeInsert", 82>;
-def SPIRV_OC_OpTranspose                  : I32EnumAttrCase<"OpTranspose", 84>;
-def SPIRV_OC_OpImageDrefGather            : I32EnumAttrCase<"OpImageDrefGather", 97>;
-def SPIRV_OC_OpImage                      : I32EnumAttrCase<"OpImage", 100>;
-def SPIRV_OC_OpImageQuerySize             : I32EnumAttrCase<"OpImageQuerySize", 104>;
-def SPIRV_OC_OpConvertFToU                : I32EnumAttrCase<"OpConvertFToU", 109>;
-def SPIRV_OC_OpConvertFToS                : I32EnumAttrCase<"OpConvertFToS", 110>;
-def SPIRV_OC_OpConvertSToF                : I32EnumAttrCase<"OpConvertSToF", 111>;
-def SPIRV_OC_OpConvertUToF                : I32EnumAttrCase<"OpConvertUToF", 112>;
-def SPIRV_OC_OpUConvert                   : I32EnumAttrCase<"OpUConvert", 113>;
-def SPIRV_OC_OpSConvert                   : I32EnumAttrCase<"OpSConvert", 114>;
-def SPIRV_OC_OpFConvert                   : I32EnumAttrCase<"OpFConvert", 115>;
-def SPIRV_OC_OpPtrCastToGeneric           : I32EnumAttrCase<"OpPtrCastToGeneric", 121>;
-def SPIRV_OC_OpGenericCastToPtr           : I32EnumAttrCase<"OpGenericCastToPtr", 122>;
-def SPIRV_OC_OpGenericCastToPtrExplicit   : I32EnumAttrCase<"OpGenericCastToPtrExplicit", 123>;
-def SPIRV_OC_OpBitcast                    : I32EnumAttrCase<"OpBitcast", 124>;
-def SPIRV_OC_OpSNegate                    : I32EnumAttrCase<"OpSNegate", 126>;
-def SPIRV_OC_OpFNegate                    : I32EnumAttrCase<"OpFNegate", 127>;
-def SPIRV_OC_OpIAdd                       : I32EnumAttrCase<"OpIAdd", 128>;
-def SPIRV_OC_OpFAdd                       : I32EnumAttrCase<"OpFAdd", 129>;
-def SPIRV_OC_OpISub                       : I32EnumAttrCase<"OpISub", 130>;
-def SPIRV_OC_OpFSub                       : I32EnumAttrCase<"OpFSub", 131>;
-def SPIRV_OC_OpIMul                       : I32EnumAttrCase<"OpIMul", 132>;
-def SPIRV_OC_OpFMul                       : I32EnumAttrCase<"OpFMul", 133>;
-def SPIRV_OC_OpUDiv                       : I32EnumAttrCase<"OpUDiv", 134>;
-def SPIRV_OC_OpSDiv                       : I32EnumAttrCase<"OpSDiv", 135>;
-def SPIRV_OC_OpFDiv                       : I32EnumAttrCase<"OpFDiv", 136>;
-def SPIRV_OC_OpUMod                       : I32EnumAttrCase<"OpUMod", 137>;
-def SPIRV_OC_OpSRem                       : I32EnumAttrCase<"OpSRem", 138>;
-def SPIRV_OC_OpSMod                       : I32EnumAttrCase<"OpSMod", 139>;
-def SPIRV_OC_OpFRem                       : I32EnumAttrCase<"OpFRem", 140>;
-def SPIRV_OC_OpFMod                       : I32EnumAttrCase<"OpFMod", 141>;
-def SPIRV_OC_OpVectorTimesScalar          : I32EnumAttrCase<"OpVectorTimesScalar", 142>;
-def SPIRV_OC_OpMatrixTimesScalar          : I32EnumAttrCase<"OpMatrixTimesScalar", 143>;
-def SPIRV_OC_OpMatrixTimesMatrix          : I32EnumAttrCase<"OpMatrixTimesMatrix", 146>;
-def SPIRV_OC_OpIAddCarry                  : I32EnumAttrCase<"OpIAddCarry", 149>;
-def SPIRV_OC_OpISubBorrow                 : I32EnumAttrCase<"OpISubBorrow", 150>;
-def SPIRV_OC_OpIsNan                      : I32EnumAttrCase<"OpIsNan", 156>;
-def SPIRV_OC_OpIsInf                      : I32EnumAttrCase<"OpIsInf", 157>;
-def SPIRV_OC_OpOrdered                    : I32EnumAttrCase<"OpOrdered", 162>;
-def SPIRV_OC_OpUnordered                  : I32EnumAttrCase<"OpUnordered", 163>;
-def SPIRV_OC_OpLogicalEqual               : I32EnumAttrCase<"OpLogicalEqual", 164>;
-def SPIRV_OC_OpLogicalNotEqual            : I32EnumAttrCase<"OpLogicalNotEqual", 165>;
-def SPIRV_OC_OpLogicalOr                  : I32EnumAttrCase<"OpLogicalOr", 166>;
-def SPIRV_OC_OpLogicalAnd                 : I32EnumAttrCase<"OpLogicalAnd", 167>;
-def SPIRV_OC_OpLogicalNot                 : I32EnumAttrCase<"OpLogicalNot", 168>;
-def SPIRV_OC_OpSelect                     : I32EnumAttrCase<"OpSelect", 169>;
-def SPIRV_OC_OpIEqual                     : I32EnumAttrCase<"OpIEqual", 170>;
-def SPIRV_OC_OpINotEqual                  : I32EnumAttrCase<"OpINotEqual", 171>;
-def SPIRV_OC_OpUGreaterThan               : I32EnumAttrCase<"OpUGreaterThan", 172>;
-def SPIRV_OC_OpSGreaterThan               : I32EnumAttrCase<"OpSGreaterThan", 173>;
-def SPIRV_OC_OpUGreaterThanEqual          : I32EnumAttrCase<"OpUGreaterThanEqual", 174>;
-def SPIRV_OC_OpSGreaterThanEqual          : I32EnumAttrCase<"OpSGreaterThanEqual", 175>;
-def SPIRV_OC_OpULessThan                  : I32EnumAttrCase<"OpULessThan", 176>;
-def SPIRV_OC_OpSLessThan                  : I32EnumAttrCase<"OpSLessThan", 177>;
-def SPIRV_OC_OpULessThanEqual             : I32EnumAttrCase<"OpULessThanEqual", 178>;
-def SPIRV_OC_OpSLessThanEqual             : I32EnumAttrCase<"OpSLessThanEqual", 179>;
-def SPIRV_OC_OpFOrdEqual                  : I32EnumAttrCase<"OpFOrdEqual", 180>;
-def SPIRV_OC_OpFUnordEqual                : I32EnumAttrCase<"OpFUnordEqual", 181>;
-def SPIRV_OC_OpFOrdNotEqual               : I32EnumAttrCase<"OpFOrdNotEqual", 182>;
-def SPIRV_OC_OpFUnordNotEqual             : I32EnumAttrCase<"OpFUnordNotEqual", 183>;
-def SPIRV_OC_OpFOrdLessThan               : I32EnumAttrCase<"OpFOrdLessThan", 184>;
-def SPIRV_OC_OpFUnordLessThan             : I32EnumAttrCase<"OpFUnordLessThan", 185>;
-def SPIRV_OC_OpFOrdGreaterThan            : I32EnumAttrCase<"OpFOrdGreaterThan", 186>;
-def SPIRV_OC_OpFUnordGreaterThan          : I32EnumAttrCase<"OpFUnordGreaterThan", 187>;
-def SPIRV_OC_OpFOrdLessThanEqual          : I32EnumAttrCase<"OpFOrdLessThanEqual", 188>;
-def SPIRV_OC_OpFUnordLessThanEqual        : I32EnumAttrCase<"OpFUnordLessThanEqual", 189>;
-def SPIRV_OC_OpFOrdGreaterThanEqual       : I32EnumAttrCase<"OpFOrdGreaterThanEqual", 190>;
-def SPIRV_OC_OpFUnordGreaterThanEqual     : I32EnumAttrCase<"OpFUnordGreaterThanEqual", 191>;
-def SPIRV_OC_OpShiftRightLogical          : I32EnumAttrCase<"OpShiftRightLogical", 194>;
-def SPIRV_OC_OpShiftRightArithmetic       : I32EnumAttrCase<"OpShiftRightArithmetic", 195>;
-def SPIRV_OC_OpShiftLeftLogical           : I32EnumAttrCase<"OpShiftLeftLogical", 196>;
-def SPIRV_OC_OpBitwiseOr                  : I32EnumAttrCase<"OpBitwiseOr", 197>;
-def SPIRV_OC_OpBitwiseXor                 : I32EnumAttrCase<"OpBitwiseXor", 198>;
-def SPIRV_OC_OpBitwiseAnd                 : I32EnumAttrCase<"OpBitwiseAnd", 199>;
-def SPIRV_OC_OpNot                        : I32EnumAttrCase<"OpNot", 200>;
-def SPIRV_OC_OpBitFieldInsert             : I32EnumAttrCase<"OpBitFieldInsert", 201>;
-def SPIRV_OC_OpBitFieldSExtract           : I32EnumAttrCase<"OpBitFieldSExtract", 202>;
-def SPIRV_OC_OpBitFieldUExtract           : I32EnumAttrCase<"OpBitFieldUExtract", 203>;
-def SPIRV_OC_OpBitReverse                 : I32EnumAttrCase<"OpBitReverse", 204>;
-def SPIRV_OC_OpBitCount                   : I32EnumAttrCase<"OpBitCount", 205>;
-def SPIRV_OC_OpControlBarrier             : I32EnumAttrCase<"OpControlBarrier", 224>;
-def SPIRV_OC_OpMemoryBarrier              : I32EnumAttrCase<"OpMemoryBarrier", 225>;
-def SPIRV_OC_OpAtomicExchange             : I32EnumAttrCase<"OpAtomicExchange", 229>;
-def SPIRV_OC_OpAtomicCompareExchange      : I32EnumAttrCase<"OpAtomicCompareExchange", 230>;
-def SPIRV_OC_OpAtomicCompareExchangeWeak  : I32EnumAttrCase<"OpAtomicCompareExchangeWeak", 231>;
-def SPIRV_OC_OpAtomicIIncrement           : I32EnumAttrCase<"OpAtomicIIncrement", 232>;
-def SPIRV_OC_OpAtomicIDecrement           : I32EnumAttrCase<"OpAtomicIDecrement", 233>;
-def SPIRV_OC_OpAtomicIAdd                 : I32EnumAttrCase<"OpAtomicIAdd", 234>;
-def SPIRV_OC_OpAtomicISub                 : I32EnumAttrCase<"OpAtomicISub", 235>;
-def SPIRV_OC_OpAtomicSMin                 : I32EnumAttrCase<"OpAtomicSMin", 236>;
-def SPIRV_OC_OpAtomicUMin                 : I32EnumAttrCase<"OpAtomicUMin", 237>;
-def SPIRV_OC_OpAtomicSMax                 : I32EnumAttrCase<"OpAtomicSMax", 238>;
-def SPIRV_OC_OpAtomicUMax                 : I32EnumAttrCase<"OpAtomicUMax", 239>;
-def SPIRV_OC_OpAtomicAnd                  : I32EnumAttrCase<"OpAtomicAnd", 240>;
-def SPIRV_OC_OpAtomicOr                   : I32EnumAttrCase<"OpAtomicOr", 241>;
-def SPIRV_OC_OpAtomicXor                  : I32EnumAttrCase<"OpAtomicXor", 242>;
-def SPIRV_OC_OpPhi                        : I32EnumAttrCase<"OpPhi", 245>;
-def SPIRV_OC_OpLoopMerge                  : I32EnumAttrCase<"OpLoopMerge", 246>;
-def SPIRV_OC_OpSelectionMerge             : I32EnumAttrCase<"OpSelectionMerge", 247>;
-def SPIRV_OC_OpLabel                      : I32EnumAttrCase<"OpLabel", 248>;
-def SPIRV_OC_OpBranch                     : I32EnumAttrCase<"OpBranch", 249>;
-def SPIRV_OC_OpBranchConditional          : I32EnumAttrCase<"OpBranchConditional", 250>;
-def SPIRV_OC_OpReturn                     : I32EnumAttrCase<"OpReturn", 253>;
-def SPIRV_OC_OpReturnValue                : I32EnumAttrCase<"OpReturnValue", 254>;
-def SPIRV_OC_OpUnreachable                : I32EnumAttrCase<"OpUnreachable", 255>;
-def SPIRV_OC_OpGroupBroadcast             : I32EnumAttrCase<"OpGroupBroadcast", 263>;
-def SPIRV_OC_OpNoLine                     : I32EnumAttrCase<"OpNoLine", 317>;
-def SPIRV_OC_OpModuleProcessed            : I32EnumAttrCase<"OpModuleProcessed", 330>;
-def SPIRV_OC_OpGroupNonUniformElect       : I32EnumAttrCase<"OpGroupNonUniformElect", 333>;
-def SPIRV_OC_OpGroupNonUniformBroadcast   : I32EnumAttrCase<"OpGroupNonUniformBroadcast", 337>;
-def SPIRV_OC_OpGroupNonUniformBallot      : I32EnumAttrCase<"OpGroupNonUniformBallot", 339>;
-def SPIRV_OC_OpGroupNonUniformShuffle     : I32EnumAttrCase<"OpGroupNonUniformShuffle", 345>;
-def SPIRV_OC_OpGroupNonUniformShuffleXor  : I32EnumAttrCase<"OpGroupNonUniformShuffleXor", 346>;
-def SPIRV_OC_OpGroupNonUniformShuffleUp   : I32EnumAttrCase<"OpGroupNonUniformShuffleUp", 347>;
-def SPIRV_OC_OpGroupNonUniformShuffleDown : I32EnumAttrCase<"OpGroupNonUniformShuffleDown", 348>;
-def SPIRV_OC_OpGroupNonUniformIAdd        : I32EnumAttrCase<"OpGroupNonUniformIAdd", 349>;
-def SPIRV_OC_OpGroupNonUniformFAdd        : I32EnumAttrCase<"OpGroupNonUniformFAdd", 350>;
-def SPIRV_OC_OpGroupNonUniformIMul        : I32EnumAttrCase<"OpGroupNonUniformIMul", 351>;
-def SPIRV_OC_OpGroupNonUniformFMul        : I32EnumAttrCase<"OpGroupNonUniformFMul", 352>;
-def SPIRV_OC_OpGroupNonUniformSMin        : I32EnumAttrCase<"OpGroupNonUniformSMin", 353>;
-def SPIRV_OC_OpGroupNonUniformUMin        : I32EnumAttrCase<"OpGroupNonUniformUMin", 354>;
-def SPIRV_OC_OpGroupNonUniformFMin        : I32EnumAttrCase<"OpGroupNonUniformFMin", 355>;
-def SPIRV_OC_OpGroupNonUniformSMax        : I32EnumAttrCase<"OpGroupNonUniformSMax", 356>;
-def SPIRV_OC_OpGroupNonUniformUMax        : I32EnumAttrCase<"OpGroupNonUniformUMax", 357>;
-def SPIRV_OC_OpGroupNonUniformFMax        : I32EnumAttrCase<"OpGroupNonUniformFMax", 358>;
-def SPIRV_OC_OpSubgroupBallotKHR          : I32EnumAttrCase<"OpSubgroupBallotKHR", 4421>;
-def SPIRV_OC_OpTypeCooperativeMatrixNV    : I32EnumAttrCase<"OpTypeCooperativeMatrixNV", 5358>;
-def SPIRV_OC_OpCooperativeMatrixLoadNV    : I32EnumAttrCase<"OpCooperativeMatrixLoadNV", 5359>;
-def SPIRV_OC_OpCooperativeMatrixStoreNV   : I32EnumAttrCase<"OpCooperativeMatrixStoreNV", 5360>;
-def SPIRV_OC_OpCooperativeMatrixMulAddNV  : I32EnumAttrCase<"OpCooperativeMatrixMulAddNV", 5361>;
-def SPIRV_OC_OpCooperativeMatrixLengthNV  : I32EnumAttrCase<"OpCooperativeMatrixLengthNV", 5362>;
-def SPIRV_OC_OpSubgroupBlockReadINTEL     : I32EnumAttrCase<"OpSubgroupBlockReadINTEL", 5575>;
-def SPIRV_OC_OpSubgroupBlockWriteINTEL    : I32EnumAttrCase<"OpSubgroupBlockWriteINTEL", 5576>;
-def SPIRV_OC_OpAssumeTrueKHR              : I32EnumAttrCase<"OpAssumeTrueKHR", 5630>;
-def SPIRV_OC_OpAtomicFAddEXT              : I32EnumAttrCase<"OpAtomicFAddEXT", 6035>;
-
-def SPIRV_OC_OpTypeJointMatrixINTEL       : I32EnumAttrCase<"OpTypeJointMatrixINTEL", 6119>;
-def SPIRV_OC_OpJointMatrixLoadINTEL       : I32EnumAttrCase<"OpJointMatrixLoadINTEL", 6120>;
-def SPIRV_OC_OpJointMatrixStoreINTEL      : I32EnumAttrCase<"OpJointMatrixStoreINTEL", 6121>;
-def SPIRV_OC_OpJointMatrixMadINTEL        : I32EnumAttrCase<"OpJointMatrixMadINTEL", 6122>;
-def SPIRV_OC_OpTypejointMatrixWorkItemLengthINTEL : I32EnumAttrCase<"OpJointMatrixWorkItemLengthINTEL", 6410>;
+def SPIRV_OC_OpNop                          : I32EnumAttrCase<"OpNop", 0>;
+def SPIRV_OC_OpUndef                        : I32EnumAttrCase<"OpUndef", 1>;
+def SPIRV_OC_OpSourceContinued              : I32EnumAttrCase<"OpSourceContinued", 2>;
+def SPIRV_OC_OpSource                       : I32EnumAttrCase<"OpSource", 3>;
+def SPIRV_OC_OpSourceExtension              : I32EnumAttrCase<"OpSourceExtension", 4>;
+def SPIRV_OC_OpName                         : I32EnumAttrCase<"OpName", 5>;
+def SPIRV_OC_OpMemberName                   : I32EnumAttrCase<"OpMemberName", 6>;
+def SPIRV_OC_OpString                       : I32EnumAttrCase<"OpString", 7>;
+def SPIRV_OC_OpLine                         : I32EnumAttrCase<"OpLine", 8>;
+def SPIRV_OC_OpExtension                    : I32EnumAttrCase<"OpExtension", 10>;
+def SPIRV_OC_OpExtInstImport                : I32EnumAttrCase<"OpExtInstImport", 11>;
+def SPIRV_OC_OpExtInst                      : I32EnumAttrCase<"OpExtInst", 12>;
+def SPIRV_OC_OpMemoryModel                  : I32EnumAttrCase<"OpMemoryModel", 14>;
+def SPIRV_OC_OpEntryPoint                   : I32EnumAttrCase<"OpEntryPoint", 15>;
+def SPIRV_OC_OpExecutionMode                : I32EnumAttrCase<"OpExecutionMode", 16>;
+def SPIRV_OC_OpCapability                   : I32EnumAttrCase<"OpCapability", 17>;
+def SPIRV_OC_OpTypeVoid                     : I32EnumAttrCase<"OpTypeVoid", 19>;
+def SPIRV_OC_OpTypeBool                     : I32EnumAttrCase<"OpTypeBool", 20>;
+def SPIRV_OC_OpTypeInt                      : I32EnumAttrCase<"OpTypeInt", 21>;
+def SPIRV_OC_OpTypeFloat                    : I32EnumAttrCase<"OpTypeFloat", 22>;
+def SPIRV_OC_OpTypeVector                   : I32EnumAttrCase<"OpTypeVector", 23>;
+def SPIRV_OC_OpTypeMatrix                   : I32EnumAttrCase<"OpTypeMatrix", 24>;
+def SPIRV_OC_OpTypeImage                    : I32EnumAttrCase<"OpTypeImage", 25>;
+def SPIRV_OC_OpTypeSampledImage             : I32EnumAttrCase<"OpTypeSampledImage", 27>;
+def SPIRV_OC_OpTypeArray                    : I32EnumAttrCase<"OpTypeArray", 28>;
+def SPIRV_OC_OpTypeRuntimeArray             : I32EnumAttrCase<"OpTypeRuntimeArray", 29>;
+def SPIRV_OC_OpTypeStruct                   : I32EnumAttrCase<"OpTypeStruct", 30>;
+def SPIRV_OC_OpTypePointer                  : I32EnumAttrCase<"OpTypePointer", 32>;
+def SPIRV_OC_OpTypeFunction                 : I32EnumAttrCase<"OpTypeFunction", 33>;
+def SPIRV_OC_OpTypeForwardPointer           : I32EnumAttrCase<"OpTypeForwardPointer", 39>;
+def SPIRV_OC_OpConstantTrue                 : I32EnumAttrCase<"OpConstantTrue", 41>;
+def SPIRV_OC_OpConstantFalse                : I32EnumAttrCase<"OpConstantFalse", 42>;
+def SPIRV_OC_OpConstant                     : I32EnumAttrCase<"OpConstant", 43>;
+def SPIRV_OC_OpConstantComposite            : I32EnumAttrCase<"OpConstantComposite", 44>;
+def SPIRV_OC_OpConstantNull                 : I32EnumAttrCase<"OpConstantNull", 46>;
+def SPIRV_OC_OpSpecConstantTrue             : I32EnumAttrCase<"OpSpecConstantTrue", 48>;
+def SPIRV_OC_OpSpecConstantFalse            : I32EnumAttrCase<"OpSpecConstantFalse", 49>;
+def SPIRV_OC_OpSpecConstant                 : I32EnumAttrCase<"OpSpecConstant", 50>;
+def SPIRV_OC_OpSpecConstantComposite        : I32EnumAttrCase<"OpSpecConstantComposite", 51>;
+def SPIRV_OC_OpSpecConstantOp               : I32EnumAttrCase<"OpSpecConstantOp", 52>;
+def SPIRV_OC_OpFunction                     : I32EnumAttrCase<"OpFunction", 54>;
+def SPIRV_OC_OpFunctionParameter            : I32EnumAttrCase<"OpFunctionParameter", 55>;
+def SPIRV_OC_OpFunctionEnd                  : I32EnumAttrCase<"OpFunctionEnd", 56>;
+def SPIRV_OC_OpFunctionCall                 : I32EnumAttrCase<"OpFunctionCall", 57>;
+def SPIRV_OC_OpVariable                     : I32EnumAttrCase<"OpVariable", 59>;
+def SPIRV_OC_OpLoad                         : I32EnumAttrCase<"OpLoad", 61>;
+def SPIRV_OC_OpStore                        : I32EnumAttrCase<"OpStore", 62>;
+def SPIRV_OC_OpCopyMemory                   : I32EnumAttrCase<"OpCopyMemory", 63>;
+def SPIRV_OC_OpAccessChain                  : I32EnumAttrCase<"OpAccessChain", 65>;
+def SPIRV_OC_OpPtrAccessChain               : I32EnumAttrCase<"OpPtrAccessChain", 67>;
+def SPIRV_OC_OpInBoundsPtrAccessChain       : I32EnumAttrCase<"OpInBoundsPtrAccessChain", 70>;
+def SPIRV_OC_OpDecorate                     : I32EnumAttrCase<"OpDecorate", 71>;
+def SPIRV_OC_OpMemberDecorate               : I32EnumAttrCase<"OpMemberDecorate", 72>;
+def SPIRV_OC_OpVectorExtractDynamic         : I32EnumAttrCase<"OpVectorExtractDynamic", 77>;
+def SPIRV_OC_OpVectorInsertDynamic          : I32EnumAttrCase<"OpVectorInsertDynamic", 78>;
+def SPIRV_OC_OpVectorShuffle                : I32EnumAttrCase<"OpVectorShuffle", 79>;
+def SPIRV_OC_OpCompositeConstruct           : I32EnumAttrCase<"OpCompositeConstruct", 80>;
+def SPIRV_OC_OpCompositeExtract             : I32EnumAttrCase<"OpCompositeExtract", 81>;
+def SPIRV_OC_OpCompositeInsert              : I32EnumAttrCase<"OpCompositeInsert", 82>;
+def SPIRV_OC_OpTranspose                    : I32EnumAttrCase<"OpTranspose", 84>;
+def SPIRV_OC_OpImageDrefGather              : I32EnumAttrCase<"OpImageDrefGather", 97>;
+def SPIRV_OC_OpImage                        : I32EnumAttrCase<"OpImage", 100>;
+def SPIRV_OC_OpImageQuerySize               : I32EnumAttrCase<"OpImageQuerySize", 104>;
+def SPIRV_OC_OpConvertFToU                  : I32EnumAttrCase<"OpConvertFToU", 109>;
+def SPIRV_OC_OpConvertFToS                  : I32EnumAttrCase<"OpConvertFToS", 110>;
+def SPIRV_OC_OpConvertSToF                  : I32EnumAttrCase<"OpConvertSToF", 111>;
+def SPIRV_OC_OpConvertUToF                  : I32EnumAttrCase<"OpConvertUToF", 112>;
+def SPIRV_OC_OpUConvert                     : I32EnumAttrCase<"OpUConvert", 113>;
+def SPIRV_OC_OpSConvert                     : I32EnumAttrCase<"OpSConvert", 114>;
+def SPIRV_OC_OpFConvert                     : I32EnumAttrCase<"OpFConvert", 115>;
+def SPIRV_OC_OpConvertPtrToU                : I32EnumAttrCase<"OpConvertPtrToU", 117>;
+def SPIRV_OC_OpConvertUToPtr                : I32EnumAttrCase<"OpConvertUToPtr", 120>;
+def SPIRV_OC_OpPtrCastToGeneric             : I32EnumAttrCase<"OpPtrCastToGeneric", 121>;
+def SPIRV_OC_OpGenericCastToPtr             : I32EnumAttrCase<"OpGenericCastToPtr", 122>;
+def SPIRV_OC_OpGenericCastToPtrExplicit     : I32EnumAttrCase<"OpGenericCastToPtrExplicit", 123>;
+def SPIRV_OC_OpBitcast                      : I32EnumAttrCase<"OpBitcast", 124>;
+def SPIRV_OC_OpSNegate                      : I32EnumAttrCase<"OpSNegate", 126>;
+def SPIRV_OC_OpFNegate                      : I32EnumAttrCase<"OpFNegate", 127>;
+def SPIRV_OC_OpIAdd                         : I32EnumAttrCase<"OpIAdd", 128>;
+def SPIRV_OC_OpFAdd                         : I32EnumAttrCase<"OpFAdd", 129>;
+def SPIRV_OC_OpISub                         : I32EnumAttrCase<"OpISub", 130>;
+def SPIRV_OC_OpFSub                         : I32EnumAttrCase<"OpFSub", 131>;
+def SPIRV_OC_OpIMul                         : I32EnumAttrCase<"OpIMul", 132>;
+def SPIRV_OC_OpFMul                         : I32EnumAttrCase<"OpFMul", 133>;
+def SPIRV_OC_OpUDiv                         : I32EnumAttrCase<"OpUDiv", 134>;
+def SPIRV_OC_OpSDiv                         : I32EnumAttrCase<"OpSDiv", 135>;
+def SPIRV_OC_OpFDiv                         : I32EnumAttrCase<"OpFDiv", 136>;
+def SPIRV_OC_OpUMod                         : I32EnumAttrCase<"OpUMod", 137>;
+def SPIRV_OC_OpSRem                         : I32EnumAttrCase<"OpSRem", 138>;
+def SPIRV_OC_OpSMod                         : I32EnumAttrCase<"OpSMod", 139>;
+def SPIRV_OC_OpFRem                         : I32EnumAttrCase<"OpFRem", 140>;
+def SPIRV_OC_OpFMod                         : I32EnumAttrCase<"OpFMod", 141>;
+def SPIRV_OC_OpVectorTimesScalar            : I32EnumAttrCase<"OpVectorTimesScalar", 142>;
+def SPIRV_OC_OpMatrixTimesScalar            : I32EnumAttrCase<"OpMatrixTimesScalar", 143>;
+def SPIRV_OC_OpMatrixTimesMatrix            : I32EnumAttrCase<"OpMatrixTimesMatrix", 146>;
+def SPIRV_OC_OpDot                          : I32EnumAttrCase<"OpDot", 148>;
+def SPIRV_OC_OpIAddCarry                    : I32EnumAttrCase<"OpIAddCarry", 149>;
+def SPIRV_OC_OpISubBorrow                   : I32EnumAttrCase<"OpISubBorrow", 150>;
+def SPIRV_OC_OpUMulExtended                 : I32EnumAttrCase<"OpUMulExtended", 151>;
+def SPIRV_OC_OpSMulExtended                 : I32EnumAttrCase<"OpSMulExtended", 152>;
+def SPIRV_OC_OpIsNan                        : I32EnumAttrCase<"OpIsNan", 156>;
+def SPIRV_OC_OpIsInf                        : I32EnumAttrCase<"OpIsInf", 157>;
+def SPIRV_OC_OpOrdered                      : I32EnumAttrCase<"OpOrdered", 162>;
+def SPIRV_OC_OpUnordered                    : I32EnumAttrCase<"OpUnordered", 163>;
+def SPIRV_OC_OpLogicalEqual                 : I32EnumAttrCase<"OpLogicalEqual", 164>;
+def SPIRV_OC_OpLogicalNotEqual              : I32EnumAttrCase<"OpLogicalNotEqual", 165>;
+def SPIRV_OC_OpLogicalOr                    : I32EnumAttrCase<"OpLogicalOr", 166>;
+def SPIRV_OC_OpLogicalAnd                   : I32EnumAttrCase<"OpLogicalAnd", 167>;
+def SPIRV_OC_OpLogicalNot                   : I32EnumAttrCase<"OpLogicalNot", 168>;
+def SPIRV_OC_OpSelect                       : I32EnumAttrCase<"OpSelect", 169>;
+def SPIRV_OC_OpIEqual                       : I32EnumAttrCase<"OpIEqual", 170>;
+def SPIRV_OC_OpINotEqual                    : I32EnumAttrCase<"OpINotEqual", 171>;
+def SPIRV_OC_OpUGreaterThan                 : I32EnumAttrCase<"OpUGreaterThan", 172>;
+def SPIRV_OC_OpSGreaterThan                 : I32EnumAttrCase<"OpSGreaterThan", 173>;
+def SPIRV_OC_OpUGreaterThanEqual            : I32EnumAttrCase<"OpUGreaterThanEqual", 174>;
+def SPIRV_OC_OpSGreaterThanEqual            : I32EnumAttrCase<"OpSGreaterThanEqual", 175>;
+def SPIRV_OC_OpULessThan                    : I32EnumAttrCase<"OpULessThan", 176>;
+def SPIRV_OC_OpSLessThan                    : I32EnumAttrCase<"OpSLessThan", 177>;
+def SPIRV_OC_OpULessThanEqual               : I32EnumAttrCase<"OpULessThanEqual", 178>;
+def SPIRV_OC_OpSLessThanEqual               : I32EnumAttrCase<"OpSLessThanEqual", 179>;
+def SPIRV_OC_OpFOrdEqual                    : I32EnumAttrCase<"OpFOrdEqual", 180>;
+def SPIRV_OC_OpFUnordEqual                  : I32EnumAttrCase<"OpFUnordEqual", 181>;
+def SPIRV_OC_OpFOrdNotEqual                 : I32EnumAttrCase<"OpFOrdNotEqual", 182>;
+def SPIRV_OC_OpFUnordNotEqual               : I32EnumAttrCase<"OpFUnordNotEqual", 183>;
+def SPIRV_OC_OpFOrdLessThan                 : I32EnumAttrCase<"OpFOrdLessThan", 184>;
+def SPIRV_OC_OpFUnordLessThan               : I32EnumAttrCase<"OpFUnordLessThan", 185>;
+def SPIRV_OC_OpFOrdGreaterThan              : I32EnumAttrCase<"OpFOrdGreaterThan", 186>;
+def SPIRV_OC_OpFUnordGreaterThan            : I32EnumAttrCase<"OpFUnordGreaterThan", 187>;
+def SPIRV_OC_OpFOrdLessThanEqual            : I32EnumAttrCase<"OpFOrdLessThanEqual", 188>;
+def SPIRV_OC_OpFUnordLessThanEqual          : I32EnumAttrCase<"OpFUnordLessThanEqual", 189>;
+def SPIRV_OC_OpFOrdGreaterThanEqual         : I32EnumAttrCase<"OpFOrdGreaterThanEqual", 190>;
+def SPIRV_OC_OpFUnordGreaterThanEqual       : I32EnumAttrCase<"OpFUnordGreaterThanEqual", 191>;
+def SPIRV_OC_OpShiftRightLogical            : I32EnumAttrCase<"OpShiftRightLogical", 194>;
+def SPIRV_OC_OpShiftRightArithmetic         : I32EnumAttrCase<"OpShiftRightArithmetic", 195>;
+def SPIRV_OC_OpShiftLeftLogical             : I32EnumAttrCase<"OpShiftLeftLogical", 196>;
+def SPIRV_OC_OpBitwiseOr                    : I32EnumAttrCase<"OpBitwiseOr", 197>;
+def SPIRV_OC_OpBitwiseXor                   : I32EnumAttrCase<"OpBitwiseXor", 198>;
+def SPIRV_OC_OpBitwiseAnd                   : I32EnumAttrCase<"OpBitwiseAnd", 199>;
+def SPIRV_OC_OpNot                          : I32EnumAttrCase<"OpNot", 200>;
+def SPIRV_OC_OpBitFieldInsert               : I32EnumAttrCase<"OpBitFieldInsert", 201>;
+def SPIRV_OC_OpBitFieldSExtract             : I32EnumAttrCase<"OpBitFieldSExtract", 202>;
+def SPIRV_OC_OpBitFieldUExtract             : I32EnumAttrCase<"OpBitFieldUExtract", 203>;
+def SPIRV_OC_OpBitReverse                   : I32EnumAttrCase<"OpBitReverse", 204>;
+def SPIRV_OC_OpBitCount                     : I32EnumAttrCase<"OpBitCount", 205>;
+def SPIRV_OC_OpControlBarrier               : I32EnumAttrCase<"OpControlBarrier", 224>;
+def SPIRV_OC_OpMemoryBarrier                : I32EnumAttrCase<"OpMemoryBarrier", 225>;
+def SPIRV_OC_OpAtomicExchange               : I32EnumAttrCase<"OpAtomicExchange", 229>;
+def SPIRV_OC_OpAtomicCompareExchange        : I32EnumAttrCase<"OpAtomicCompareExchange", 230>;
+def SPIRV_OC_OpAtomicCompareExchangeWeak    : I32EnumAttrCase<"OpAtomicCompareExchangeWeak", 231>;
+def SPIRV_OC_OpAtomicIIncrement             : I32EnumAttrCase<"OpAtomicIIncrement", 232>;
+def SPIRV_OC_OpAtomicIDecrement             : I32EnumAttrCase<"OpAtomicIDecrement", 233>;
+def SPIRV_OC_OpAtomicIAdd                   : I32EnumAttrCase<"OpAtomicIAdd", 234>;
+def SPIRV_OC_OpAtomicISub                   : I32EnumAttrCase<"OpAtomicISub", 235>;
+def SPIRV_OC_OpAtomicSMin                   : I32EnumAttrCase<"OpAtomicSMin", 236>;
+def SPIRV_OC_OpAtomicUMin                   : I32EnumAttrCase<"OpAtomicUMin", 237>;
+def SPIRV_OC_OpAtomicSMax                   : I32EnumAttrCase<"OpAtomicSMax", 238>;
+def SPIRV_OC_OpAtomicUMax                   : I32EnumAttrCase<"OpAtomicUMax", 239>;
+def SPIRV_OC_OpAtomicAnd                    : I32EnumAttrCase<"OpAtomicAnd", 240>;
+def SPIRV_OC_OpAtomicOr                     : I32EnumAttrCase<"OpAtomicOr", 241>;
+def SPIRV_OC_OpAtomicXor                    : I32EnumAttrCase<"OpAtomicXor", 242>;
+def SPIRV_OC_OpPhi                          : I32EnumAttrCase<"OpPhi", 245>;
+def SPIRV_OC_OpLoopMerge                    : I32EnumAttrCase<"OpLoopMerge", 246>;
+def SPIRV_OC_OpSelectionMerge               : I32EnumAttrCase<"OpSelectionMerge", 247>;
+def SPIRV_OC_OpLabel                        : I32EnumAttrCase<"OpLabel", 248>;
+def SPIRV_OC_OpBranch                       : I32EnumAttrCase<"OpBranch", 249>;
+def SPIRV_OC_OpBranchConditional            : I32EnumAttrCase<"OpBranchConditional", 250>;
+def SPIRV_OC_OpReturn                       : I32EnumAttrCase<"OpReturn", 253>;
+def SPIRV_OC_OpReturnValue                  : I32EnumAttrCase<"OpReturnValue", 254>;
+def SPIRV_OC_OpUnreachable                  : I32EnumAttrCase<"OpUnreachable", 255>;
+def SPIRV_OC_OpGroupBroadcast               : I32EnumAttrCase<"OpGroupBroadcast", 263>;
+def SPIRV_OC_OpGroupIAdd                    : I32EnumAttrCase<"OpGroupIAdd", 264>;
+def SPIRV_OC_OpGroupFAdd                    : I32EnumAttrCase<"OpGroupFAdd", 265>;
+def SPIRV_OC_OpGroupFMin                    : I32EnumAttrCase<"OpGroupFMin", 266>;
+def SPIRV_OC_OpGroupUMin                    : I32EnumAttrCase<"OpGroupUMin", 267>;
+def SPIRV_OC_OpGroupSMin                    : I32EnumAttrCase<"OpGroupSMin", 268>;
+def SPIRV_OC_OpGroupFMax                    : I32EnumAttrCase<"OpGroupFMax", 269>;
+def SPIRV_OC_OpGroupUMax                    : I32EnumAttrCase<"OpGroupUMax", 270>;
+def SPIRV_OC_OpGroupSMax                    : I32EnumAttrCase<"OpGroupSMax", 271>;
+def SPIRV_OC_OpNoLine                       : I32EnumAttrCase<"OpNoLine", 317>;
+def SPIRV_OC_OpModuleProcessed              : I32EnumAttrCase<"OpModuleProcessed", 330>;
+def SPIRV_OC_OpGroupNonUniformElect         : I32EnumAttrCase<"OpGroupNonUniformElect", 333>;
+def SPIRV_OC_OpGroupNonUniformBroadcast     : I32EnumAttrCase<"OpGroupNonUniformBroadcast", 337>;
+def SPIRV_OC_OpGroupNonUniformBallot        : I32EnumAttrCase<"OpGroupNonUniformBallot", 339>;
+def SPIRV_OC_OpGroupNonUniformBallotFindLSB : I32EnumAttrCase<"OpGroupNonUniformBallotFindLSB", 343>;
+def SPIRV_OC_OpGroupNonUniformBallotFindMSB : I32EnumAttrCase<"OpGroupNonUniformBallotFindMSB", 344>;
+def SPIRV_OC_OpGroupNonUniformShuffle       : I32EnumAttrCase<"OpGroupNonUniformShuffle", 345>;
+def SPIRV_OC_OpGroupNonUniformShuffleXor    : I32EnumAttrCase<"OpGroupNonUniformShuffleXor", 346>;
+def SPIRV_OC_OpGroupNonUniformShuffleUp     : I32EnumAttrCase<"OpGroupNonUniformShuffleUp", 347>;
+def SPIRV_OC_OpGroupNonUniformShuffleDown   : I32EnumAttrCase<"OpGroupNonUniformShuffleDown", 348>;
+def SPIRV_OC_OpGroupNonUniformIAdd          : I32EnumAttrCase<"OpGroupNonUniformIAdd", 349>;
+def SPIRV_OC_OpGroupNonUniformFAdd          : I32EnumAttrCase<"OpGroupNonUniformFAdd", 350>;
+def SPIRV_OC_OpGroupNonUniformIMul          : I32EnumAttrCase<"OpGroupNonUniformIMul", 351>;
+def SPIRV_OC_OpGroupNonUniformFMul          : I32EnumAttrCase<"OpGroupNonUniformFMul", 352>;
+def SPIRV_OC_OpGroupNonUniformSMin          : I32EnumAttrCase<"OpGroupNonUniformSMin", 353>;
+def SPIRV_OC_OpGroupNonUniformUMin          : I32EnumAttrCase<"OpGroupNonUniformUMin", 354>;
+def SPIRV_OC_OpGroupNonUniformFMin          : I32EnumAttrCase<"OpGroupNonUniformFMin", 355>;
+def SPIRV_OC_OpGroupNonUniformSMax          : I32EnumAttrCase<"OpGroupNonUniformSMax", 356>;
+def SPIRV_OC_OpGroupNonUniformUMax          : I32EnumAttrCase<"OpGroupNonUniformUMax", 357>;
+def SPIRV_OC_OpGroupNonUniformFMax          : I32EnumAttrCase<"OpGroupNonUniformFMax", 358>;
+def SPIRV_OC_OpGroupNonUniformBitwiseAnd    : I32EnumAttrCase<"OpGroupNonUniformBitwiseAnd", 359>;
+def SPIRV_OC_OpGroupNonUniformBitwiseOr     : I32EnumAttrCase<"OpGroupNonUniformBitwiseOr", 360>;
+def SPIRV_OC_OpGroupNonUniformBitwiseXor    : I32EnumAttrCase<"OpGroupNonUniformBitwiseXor", 361>;
+def SPIRV_OC_OpGroupNonUniformLogicalAnd    : I32EnumAttrCase<"OpGroupNonUniformLogicalAnd", 362>;
+def SPIRV_OC_OpGroupNonUniformLogicalOr     : I32EnumAttrCase<"OpGroupNonUniformLogicalOr", 363>;
+def SPIRV_OC_OpGroupNonUniformLogicalXor    : I32EnumAttrCase<"OpGroupNonUniformLogicalXor", 364>;
+def SPIRV_OC_OpSubgroupBallotKHR            : I32EnumAttrCase<"OpSubgroupBallotKHR", 4421>;
+def SPIRV_OC_OpSDot                         : I32EnumAttrCase<"OpSDot", 4450>;
+def SPIRV_OC_OpUDot                         : I32EnumAttrCase<"OpUDot", 4451>;
+def SPIRV_OC_OpSUDot                        : I32EnumAttrCase<"OpSUDot", 4452>;
+def SPIRV_OC_OpSDotAccSat                   : I32EnumAttrCase<"OpSDotAccSat", 4453>;
+def SPIRV_OC_OpUDotAccSat                   : I32EnumAttrCase<"OpUDotAccSat", 4454>;
+def SPIRV_OC_OpSUDotAccSat                  : I32EnumAttrCase<"OpSUDotAccSat", 4455>;
+def SPIRV_OC_OpTypeCooperativeMatrixKHR     : I32EnumAttrCase<"OpTypeCooperativeMatrixKHR", 4456>;
+def SPIRV_OC_OpCooperativeMatrixLoadKHR     : I32EnumAttrCase<"OpCooperativeMatrixLoadKHR", 4457>;
+def SPIRV_OC_OpCooperativeMatrixStoreKHR    : I32EnumAttrCase<"OpCooperativeMatrixStoreKHR", 4458>;
+def SPIRV_OC_OpCooperativeMatrixMulAddKHR   : I32EnumAttrCase<"OpCooperativeMatrixMulAddKHR", 4459>;
+def SPIRV_OC_OpCooperativeMatrixLengthKHR   : I32EnumAttrCase<"OpCooperativeMatrixLengthKHR", 4460>;
+def SPIRV_OC_OpSubgroupBlockReadINTEL       : I32EnumAttrCase<"OpSubgroupBlockReadINTEL", 5575>;
+def SPIRV_OC_OpSubgroupBlockWriteINTEL      : I32EnumAttrCase<"OpSubgroupBlockWriteINTEL", 5576>;
+def SPIRV_OC_OpAssumeTrueKHR                : I32EnumAttrCase<"OpAssumeTrueKHR", 5630>;
+def SPIRV_OC_OpAtomicFAddEXT                : I32EnumAttrCase<"OpAtomicFAddEXT", 6035>;
+def SPIRV_OC_OpConvertFToBF16INTEL          : I32EnumAttrCase<"OpConvertFToBF16INTEL", 6116>;
+def SPIRV_OC_OpConvertBF16ToFINTEL          : I32EnumAttrCase<"OpConvertBF16ToFINTEL", 6117>;
+def SPIRV_OC_OpGroupIMulKHR                 : I32EnumAttrCase<"OpGroupIMulKHR", 6401>;
+def SPIRV_OC_OpGroupFMulKHR                 : I32EnumAttrCase<"OpGroupFMulKHR", 6402>;
 
 def SPIRV_OpcodeAttr :
     SPIRV_I32EnumAttr<"Opcode", "valid SPIR-V instructions", "opcode", [
-      SPIRV_OC_OpNop, SPIRV_OC_OpUndef, SPIRV_OC_OpSourceContinued, SPIRV_OC_OpSource,
-      SPIRV_OC_OpSourceExtension, SPIRV_OC_OpName, SPIRV_OC_OpMemberName, SPIRV_OC_OpString,
-      SPIRV_OC_OpLine, SPIRV_OC_OpExtension, SPIRV_OC_OpExtInstImport, SPIRV_OC_OpExtInst,
+      SPIRV_OC_OpNop, SPIRV_OC_OpUndef, SPIRV_OC_OpSourceContinued,
+      SPIRV_OC_OpSource, SPIRV_OC_OpSourceExtension, SPIRV_OC_OpName,
+      SPIRV_OC_OpMemberName, SPIRV_OC_OpString, SPIRV_OC_OpLine,
+      SPIRV_OC_OpExtension, SPIRV_OC_OpExtInstImport, SPIRV_OC_OpExtInst,
       SPIRV_OC_OpMemoryModel, SPIRV_OC_OpEntryPoint, SPIRV_OC_OpExecutionMode,
-      SPIRV_OC_OpCapability, SPIRV_OC_OpTypeVoid, SPIRV_OC_OpTypeBool, SPIRV_OC_OpTypeInt,
-      SPIRV_OC_OpTypeFloat, SPIRV_OC_OpTypeVector, SPIRV_OC_OpTypeMatrix,
-      SPIRV_OC_OpTypeImage, SPIRV_OC_OpTypeSampledImage, SPIRV_OC_OpTypeArray,
-      SPIRV_OC_OpTypeRuntimeArray, SPIRV_OC_OpTypeStruct, SPIRV_OC_OpTypePointer,
-      SPIRV_OC_OpTypeFunction, SPIRV_OC_OpTypeForwardPointer, SPIRV_OC_OpConstantTrue,
-      SPIRV_OC_OpConstantFalse, SPIRV_OC_OpConstant, SPIRV_OC_OpConstantComposite,
-      SPIRV_OC_OpConstantNull, SPIRV_OC_OpSpecConstantTrue, SPIRV_OC_OpSpecConstantFalse,
-      SPIRV_OC_OpSpecConstant, SPIRV_OC_OpSpecConstantComposite, SPIRV_OC_OpSpecConstantOp,
-      SPIRV_OC_OpFunction, SPIRV_OC_OpFunctionParameter, SPIRV_OC_OpFunctionEnd,
-      SPIRV_OC_OpFunctionCall, SPIRV_OC_OpVariable, SPIRV_OC_OpLoad, SPIRV_OC_OpStore,
-      SPIRV_OC_OpCopyMemory, SPIRV_OC_OpAccessChain, SPIRV_OC_OpPtrAccessChain,
-      SPIRV_OC_OpInBoundsPtrAccessChain, SPIRV_OC_OpDecorate, SPIRV_OC_OpMemberDecorate,
-      SPIRV_OC_OpVectorExtractDynamic, SPIRV_OC_OpVectorInsertDynamic,
-      SPIRV_OC_OpVectorShuffle, SPIRV_OC_OpCompositeConstruct, SPIRV_OC_OpCompositeExtract,
+      SPIRV_OC_OpCapability, SPIRV_OC_OpTypeVoid, SPIRV_OC_OpTypeBool,
+      SPIRV_OC_OpTypeInt, SPIRV_OC_OpTypeFloat, SPIRV_OC_OpTypeVector,
+      SPIRV_OC_OpTypeMatrix, SPIRV_OC_OpTypeImage, SPIRV_OC_OpTypeSampledImage,
+      SPIRV_OC_OpTypeArray, SPIRV_OC_OpTypeRuntimeArray, SPIRV_OC_OpTypeStruct,
+      SPIRV_OC_OpTypePointer, SPIRV_OC_OpTypeFunction, SPIRV_OC_OpTypeForwardPointer,
+      SPIRV_OC_OpConstantTrue, SPIRV_OC_OpConstantFalse, SPIRV_OC_OpConstant,
+      SPIRV_OC_OpConstantComposite, SPIRV_OC_OpConstantNull,
+      SPIRV_OC_OpSpecConstantTrue, SPIRV_OC_OpSpecConstantFalse,
+      SPIRV_OC_OpSpecConstant, SPIRV_OC_OpSpecConstantComposite,
+      SPIRV_OC_OpSpecConstantOp, SPIRV_OC_OpFunction, SPIRV_OC_OpFunctionParameter,
+      SPIRV_OC_OpFunctionEnd, SPIRV_OC_OpFunctionCall, SPIRV_OC_OpVariable,
+      SPIRV_OC_OpLoad, SPIRV_OC_OpStore, SPIRV_OC_OpCopyMemory,
+      SPIRV_OC_OpAccessChain, SPIRV_OC_OpPtrAccessChain,
+      SPIRV_OC_OpInBoundsPtrAccessChain, SPIRV_OC_OpDecorate,
+      SPIRV_OC_OpMemberDecorate, SPIRV_OC_OpVectorExtractDynamic,
+      SPIRV_OC_OpVectorInsertDynamic, SPIRV_OC_OpVectorShuffle,
+      SPIRV_OC_OpCompositeConstruct, SPIRV_OC_OpCompositeExtract,
       SPIRV_OC_OpCompositeInsert, SPIRV_OC_OpTranspose, SPIRV_OC_OpImageDrefGather,
       SPIRV_OC_OpImage, SPIRV_OC_OpImageQuerySize, SPIRV_OC_OpConvertFToU,
       SPIRV_OC_OpConvertFToS, SPIRV_OC_OpConvertSToF, SPIRV_OC_OpConvertUToF,
-      SPIRV_OC_OpUConvert, SPIRV_OC_OpSConvert, SPIRV_OC_OpFConvert, SPIRV_OC_OpPtrCastToGeneric, 
-      SPIRV_OC_OpGenericCastToPtr, SPIRV_OC_OpGenericCastToPtrExplicit, SPIRV_OC_OpBitcast,
-      SPIRV_OC_OpSNegate, SPIRV_OC_OpFNegate, SPIRV_OC_OpIAdd, SPIRV_OC_OpFAdd,
-      SPIRV_OC_OpISub, SPIRV_OC_OpFSub, SPIRV_OC_OpIMul, SPIRV_OC_OpFMul, SPIRV_OC_OpUDiv,
-      SPIRV_OC_OpSDiv, SPIRV_OC_OpFDiv, SPIRV_OC_OpUMod, SPIRV_OC_OpSRem, SPIRV_OC_OpSMod,
-      SPIRV_OC_OpFRem, SPIRV_OC_OpFMod, SPIRV_OC_OpVectorTimesScalar,
-      SPIRV_OC_OpMatrixTimesScalar, SPIRV_OC_OpMatrixTimesMatrix, SPIRV_OC_OpIAddCarry,
-      SPIRV_OC_OpISubBorrow, SPIRV_OC_OpIsNan, SPIRV_OC_OpIsInf, SPIRV_OC_OpOrdered,
-      SPIRV_OC_OpUnordered, SPIRV_OC_OpLogicalEqual, SPIRV_OC_OpLogicalNotEqual,
-      SPIRV_OC_OpLogicalOr, SPIRV_OC_OpLogicalAnd, SPIRV_OC_OpLogicalNot, SPIRV_OC_OpSelect,
+      SPIRV_OC_OpUConvert, SPIRV_OC_OpSConvert, SPIRV_OC_OpFConvert,
+      SPIRV_OC_OpConvertPtrToU, SPIRV_OC_OpConvertUToPtr,
+      SPIRV_OC_OpPtrCastToGeneric, SPIRV_OC_OpGenericCastToPtr,
+      SPIRV_OC_OpGenericCastToPtrExplicit, SPIRV_OC_OpBitcast, SPIRV_OC_OpSNegate,
+      SPIRV_OC_OpFNegate, SPIRV_OC_OpIAdd, SPIRV_OC_OpFAdd, SPIRV_OC_OpISub,
+      SPIRV_OC_OpFSub, SPIRV_OC_OpIMul, SPIRV_OC_OpFMul, SPIRV_OC_OpUDiv,
+      SPIRV_OC_OpSDiv, SPIRV_OC_OpFDiv, SPIRV_OC_OpUMod, SPIRV_OC_OpSRem,
+      SPIRV_OC_OpSMod, SPIRV_OC_OpFRem, SPIRV_OC_OpFMod,
+      SPIRV_OC_OpVectorTimesScalar, SPIRV_OC_OpMatrixTimesScalar,
+      SPIRV_OC_OpMatrixTimesMatrix, SPIRV_OC_OpDot, SPIRV_OC_OpIAddCarry,
+      SPIRV_OC_OpISubBorrow, SPIRV_OC_OpUMulExtended, SPIRV_OC_OpSMulExtended,
+      SPIRV_OC_OpIsNan, SPIRV_OC_OpIsInf, SPIRV_OC_OpOrdered, SPIRV_OC_OpUnordered,
+      SPIRV_OC_OpLogicalEqual, SPIRV_OC_OpLogicalNotEqual, SPIRV_OC_OpLogicalOr,
+      SPIRV_OC_OpLogicalAnd, SPIRV_OC_OpLogicalNot, SPIRV_OC_OpSelect,
       SPIRV_OC_OpIEqual, SPIRV_OC_OpINotEqual, SPIRV_OC_OpUGreaterThan,
-      SPIRV_OC_OpSGreaterThan, SPIRV_OC_OpUGreaterThanEqual, SPIRV_OC_OpSGreaterThanEqual,
-      SPIRV_OC_OpULessThan, SPIRV_OC_OpSLessThan, SPIRV_OC_OpULessThanEqual,
-      SPIRV_OC_OpSLessThanEqual, SPIRV_OC_OpFOrdEqual, SPIRV_OC_OpFUnordEqual,
-      SPIRV_OC_OpFOrdNotEqual, SPIRV_OC_OpFUnordNotEqual, SPIRV_OC_OpFOrdLessThan,
-      SPIRV_OC_OpFUnordLessThan, SPIRV_OC_OpFOrdGreaterThan, SPIRV_OC_OpFUnordGreaterThan,
-      SPIRV_OC_OpFOrdLessThanEqual, SPIRV_OC_OpFUnordLessThanEqual,
-      SPIRV_OC_OpFOrdGreaterThanEqual, SPIRV_OC_OpFUnordGreaterThanEqual,
-      SPIRV_OC_OpShiftRightLogical, SPIRV_OC_OpShiftRightArithmetic,
-      SPIRV_OC_OpShiftLeftLogical, SPIRV_OC_OpBitwiseOr, SPIRV_OC_OpBitwiseXor,
-      SPIRV_OC_OpBitwiseAnd, SPIRV_OC_OpNot, SPIRV_OC_OpBitFieldInsert,
-      SPIRV_OC_OpBitFieldSExtract, SPIRV_OC_OpBitFieldUExtract, SPIRV_OC_OpBitReverse,
-      SPIRV_OC_OpBitCount, SPIRV_OC_OpControlBarrier, SPIRV_OC_OpMemoryBarrier,
-      SPIRV_OC_OpAtomicExchange, SPIRV_OC_OpAtomicCompareExchange,
-      SPIRV_OC_OpAtomicCompareExchangeWeak, SPIRV_OC_OpAtomicIIncrement,
-      SPIRV_OC_OpAtomicIDecrement, SPIRV_OC_OpAtomicIAdd, SPIRV_OC_OpAtomicISub,
-      SPIRV_OC_OpAtomicSMin, SPIRV_OC_OpAtomicUMin, SPIRV_OC_OpAtomicSMax,
-      SPIRV_OC_OpAtomicUMax, SPIRV_OC_OpAtomicAnd, SPIRV_OC_OpAtomicOr, SPIRV_OC_OpAtomicXor,
-      SPIRV_OC_OpPhi, SPIRV_OC_OpLoopMerge, SPIRV_OC_OpSelectionMerge, SPIRV_OC_OpLabel,
-      SPIRV_OC_OpBranch, SPIRV_OC_OpBranchConditional, SPIRV_OC_OpReturn,
-      SPIRV_OC_OpReturnValue, SPIRV_OC_OpUnreachable, SPIRV_OC_OpGroupBroadcast,
+      SPIRV_OC_OpSGreaterThan, SPIRV_OC_OpUGreaterThanEqual,
+      SPIRV_OC_OpSGreaterThanEqual, SPIRV_OC_OpULessThan, SPIRV_OC_OpSLessThan,
+      SPIRV_OC_OpULessThanEqual, SPIRV_OC_OpSLessThanEqual, SPIRV_OC_OpFOrdEqual,
+      SPIRV_OC_OpFUnordEqual, SPIRV_OC_OpFOrdNotEqual, SPIRV_OC_OpFUnordNotEqual,
+      SPIRV_OC_OpFOrdLessThan, SPIRV_OC_OpFUnordLessThan, SPIRV_OC_OpFOrdGreaterThan,
+      SPIRV_OC_OpFUnordGreaterThan, SPIRV_OC_OpFOrdLessThanEqual,
+      SPIRV_OC_OpFUnordLessThanEqual, SPIRV_OC_OpFOrdGreaterThanEqual,
+      SPIRV_OC_OpFUnordGreaterThanEqual, SPIRV_OC_OpShiftRightLogical,
+      SPIRV_OC_OpShiftRightArithmetic, SPIRV_OC_OpShiftLeftLogical,
+      SPIRV_OC_OpBitwiseOr, SPIRV_OC_OpBitwiseXor, SPIRV_OC_OpBitwiseAnd,
+      SPIRV_OC_OpNot, SPIRV_OC_OpBitFieldInsert, SPIRV_OC_OpBitFieldSExtract,
+      SPIRV_OC_OpBitFieldUExtract, SPIRV_OC_OpBitReverse, SPIRV_OC_OpBitCount,
+      SPIRV_OC_OpControlBarrier, SPIRV_OC_OpMemoryBarrier, SPIRV_OC_OpAtomicExchange,
+      SPIRV_OC_OpAtomicCompareExchange, SPIRV_OC_OpAtomicCompareExchangeWeak,
+      SPIRV_OC_OpAtomicIIncrement, SPIRV_OC_OpAtomicIDecrement,
+      SPIRV_OC_OpAtomicIAdd, SPIRV_OC_OpAtomicISub, SPIRV_OC_OpAtomicSMin,
+      SPIRV_OC_OpAtomicUMin, SPIRV_OC_OpAtomicSMax, SPIRV_OC_OpAtomicUMax,
+      SPIRV_OC_OpAtomicAnd, SPIRV_OC_OpAtomicOr, SPIRV_OC_OpAtomicXor,
+      SPIRV_OC_OpPhi, SPIRV_OC_OpLoopMerge, SPIRV_OC_OpSelectionMerge,
+      SPIRV_OC_OpLabel, SPIRV_OC_OpBranch, SPIRV_OC_OpBranchConditional,
+      SPIRV_OC_OpReturn, SPIRV_OC_OpReturnValue, SPIRV_OC_OpUnreachable,
+      SPIRV_OC_OpGroupBroadcast, SPIRV_OC_OpGroupIAdd, SPIRV_OC_OpGroupFAdd,
+      SPIRV_OC_OpGroupFMin, SPIRV_OC_OpGroupUMin, SPIRV_OC_OpGroupSMin,
+      SPIRV_OC_OpGroupFMax, SPIRV_OC_OpGroupUMax, SPIRV_OC_OpGroupSMax,
       SPIRV_OC_OpNoLine, SPIRV_OC_OpModuleProcessed, SPIRV_OC_OpGroupNonUniformElect,
       SPIRV_OC_OpGroupNonUniformBroadcast, SPIRV_OC_OpGroupNonUniformBallot,
-      SPIRV_OC_OpGroupNonUniformShuffle, SPIRV_OC_OpGroupNonUniformShuffleXor,
-      SPIRV_OC_OpGroupNonUniformShuffleUp, SPIRV_OC_OpGroupNonUniformShuffleDown,
-      SPIRV_OC_OpGroupNonUniformIAdd, SPIRV_OC_OpGroupNonUniformFAdd,
-      SPIRV_OC_OpGroupNonUniformIMul, SPIRV_OC_OpGroupNonUniformFMul,
-      SPIRV_OC_OpGroupNonUniformSMin, SPIRV_OC_OpGroupNonUniformUMin,
-      SPIRV_OC_OpGroupNonUniformFMin, SPIRV_OC_OpGroupNonUniformSMax,
-      SPIRV_OC_OpGroupNonUniformUMax, SPIRV_OC_OpGroupNonUniformFMax,
-      SPIRV_OC_OpSubgroupBallotKHR, SPIRV_OC_OpTypeCooperativeMatrixNV,
-      SPIRV_OC_OpCooperativeMatrixLoadNV, SPIRV_OC_OpCooperativeMatrixStoreNV,
-      SPIRV_OC_OpCooperativeMatrixMulAddNV, SPIRV_OC_OpCooperativeMatrixLengthNV,
-      SPIRV_OC_OpSubgroupBlockReadINTEL, SPIRV_OC_OpSubgroupBlockWriteINTEL,
-      SPIRV_OC_OpAssumeTrueKHR, SPIRV_OC_OpAtomicFAddEXT,
-
-      SPIRV_OC_OpTypeJointMatrixINTEL, SPIRV_OC_OpJointMatrixLoadINTEL,
-      SPIRV_OC_OpJointMatrixStoreINTEL, SPIRV_OC_OpJointMatrixMadINTEL,
-      SPIRV_OC_OpTypejointMatrixWorkItemLengthINTEL
+      SPIRV_OC_OpGroupNonUniformBallotFindLSB,
+      SPIRV_OC_OpGroupNonUniformBallotFindMSB, SPIRV_OC_OpGroupNonUniformShuffle,
+      SPIRV_OC_OpGroupNonUniformShuffleXor, SPIRV_OC_OpGroupNonUniformShuffleUp,
+      SPIRV_OC_OpGroupNonUniformShuffleDown, SPIRV_OC_OpGroupNonUniformIAdd,
+      SPIRV_OC_OpGroupNonUniformFAdd, SPIRV_OC_OpGroupNonUniformIMul,
+      SPIRV_OC_OpGroupNonUniformFMul, SPIRV_OC_OpGroupNonUniformSMin,
+      SPIRV_OC_OpGroupNonUniformUMin, SPIRV_OC_OpGroupNonUniformFMin,
+      SPIRV_OC_OpGroupNonUniformSMax, SPIRV_OC_OpGroupNonUniformUMax,
+      SPIRV_OC_OpGroupNonUniformFMax, SPIRV_OC_OpGroupNonUniformBitwiseAnd,
+      SPIRV_OC_OpGroupNonUniformBitwiseOr, SPIRV_OC_OpGroupNonUniformBitwiseXor,
+      SPIRV_OC_OpGroupNonUniformLogicalAnd, SPIRV_OC_OpGroupNonUniformLogicalOr,
+      SPIRV_OC_OpGroupNonUniformLogicalXor, SPIRV_OC_OpSubgroupBallotKHR,
+      SPIRV_OC_OpSDot, SPIRV_OC_OpUDot, SPIRV_OC_OpSUDot, SPIRV_OC_OpSDotAccSat,
+      SPIRV_OC_OpUDotAccSat, SPIRV_OC_OpSUDotAccSat,
+      SPIRV_OC_OpTypeCooperativeMatrixKHR, SPIRV_OC_OpCooperativeMatrixLoadKHR,
+      SPIRV_OC_OpCooperativeMatrixStoreKHR, SPIRV_OC_OpCooperativeMatrixMulAddKHR,
+      SPIRV_OC_OpCooperativeMatrixLengthKHR, SPIRV_OC_OpSubgroupBlockReadINTEL,
+      SPIRV_OC_OpSubgroupBlockWriteINTEL, SPIRV_OC_OpAssumeTrueKHR,
+      SPIRV_OC_OpAtomicFAddEXT, SPIRV_OC_OpConvertFToBF16INTEL,
+      SPIRV_OC_OpConvertBF16ToFINTEL, SPIRV_OC_OpGroupIMulKHR,
+      SPIRV_OC_OpGroupFMulKHR
     ]>;
 
 // End opcode section. Generated from SPIR-V spec; DO NOT MODIFY!
@@ -4447,6 +4584,19 @@ class SPIRV_Op<string mnemonic, list<Trait> traits = []> :
     Extension<[]>,
     Capability<[]>
   ];
+
+  // Controls whether to auto-generate this op's availability specification.
+  // If set, generates the following methods:
+  //
+  // ```c++
+  // SmallVector<ArrayRef<Capability>, 1> OpTy::getCapabilities();
+  // SmallVector<ArrayRef<Extension>, 1>  OpTy::getExtensions();
+  // Optional<Version>                    OpTy::getMinVersion();
+  // Optional<Version>                    OpTy::getMaxVersion();
+  // ```
+  //
+  // When not set, manual implementation of these methods is required.
+  bit autogenAvailability = 1;
 
   // For each SPIR-V op, the following static functions need to be defined
   // in SPIRVOps.cpp:
@@ -4565,5 +4715,29 @@ class SPIRV_IntelVendorOp<string mnemonic, list<Trait> traits = []> :
 class SPIRV_NvVendorOp<string mnemonic, list<Trait> traits = []> :
   SPIRV_VendorOp<mnemonic, "NV", traits> {
 }
+
+def SPIRV_FPFMM_None         : I32BitEnumAttrCaseNone<"None">;
+def SPIRV_FPFMM_NotNaN       : I32BitEnumAttrCaseBit<"NotNaN", 0>;
+def SPIRV_FPFMM_NotInf       : I32BitEnumAttrCaseBit<"NotInf", 1>;
+def SPIRV_FPFMM_NSZ          : I32BitEnumAttrCaseBit<"NSZ", 2>;
+def SPIRV_FPFMM_AllowRecip   : I32BitEnumAttrCaseBit<"AllowRecip", 3>;
+def SPIRV_FPFMM_Fast         : I32BitEnumAttrCaseBit<"Fast", 4>;
+def SPIRV_FPFMM_AllowContractFastINTEL : I32BitEnumAttrCaseBit<"AllowContractFastINTEL", 16> {
+  list<Availability> availability = [
+    Capability<[SPIRV_C_FPFastMathModeINTEL]>
+  ];
+}
+def SPIRV_FPFMM_AllowReassocINTEL : I32BitEnumAttrCaseBit<"AllowReassocINTEL", 17> {
+  list<Availability> availability = [
+    Capability<[SPIRV_C_FPFastMathModeINTEL]>
+  ];
+}
+
+def SPIRV_FPFastMathModeAttr :
+    SPIRV_BitEnumAttr<"FPFastMathMode", "Indicates a floating-point fast math flag", "fastmath_mode", [
+      SPIRV_FPFMM_None, SPIRV_FPFMM_NotNaN, SPIRV_FPFMM_NotInf, SPIRV_FPFMM_NSZ,
+      SPIRV_FPFMM_AllowRecip, SPIRV_FPFMM_Fast, SPIRV_FPFMM_AllowContractFastINTEL,
+      SPIRV_FPFMM_AllowReassocINTEL
+    ]>;
 
 #endif // MLIR_DIALECT_SPIRV_IR_BASE

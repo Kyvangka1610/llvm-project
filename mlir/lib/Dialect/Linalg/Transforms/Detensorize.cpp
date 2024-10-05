@@ -21,7 +21,7 @@
 #include <utility>
 
 namespace mlir {
-#define GEN_PASS_DEF_LINALGDETENSORIZE
+#define GEN_PASS_DEF_LINALGDETENSORIZEPASS
 #include "mlir/Dialect/Linalg/Passes.h.inc"
 } // namespace mlir
 
@@ -32,7 +32,7 @@ static Value sourceMaterializationCallback(OpBuilder &builder, Type type,
                                            ValueRange inputs, Location loc) {
   assert(inputs.size() == 1);
   auto inputType = inputs[0].getType();
-  if (inputType.isa<TensorType>())
+  if (isa<TensorType>(inputType))
     return nullptr;
 
   // A detensored value is converted back by creating a new tensor from its
@@ -60,7 +60,7 @@ bool shouldBeDetensored(Operation *op, TypeConverter typeConverter) {
          });
 }
 
-/// A conversion patttern for detensoring `linalg.generic` ops.
+/// A conversion pattern for detensoring `linalg.generic` ops.
 class DetensorizeGenericOp : public OpConversionPattern<GenericOp> {
 public:
   using OpConversionPattern::OpConversionPattern;
@@ -69,7 +69,7 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     Block *originalBlock = op->getBlock();
 
-    // Gather some information about the op before inling its region.
+    // Gather some information about the op before inlining its region.
     Block *opEntryBlock = &*op.getRegion().begin();
     YieldOp yieldOp = dyn_cast<YieldOp>(op.getRegion().back().getTerminator());
 
@@ -104,32 +104,28 @@ struct FunctionNonEntryBlockConversion
   LogicalResult
   matchAndRewrite(FunctionOpInterface op, ArrayRef<Value> operands,
                   ConversionPatternRewriter &rewriter) const override {
-    rewriter.startRootUpdate(op);
+    rewriter.startOpModification(op);
     Region &region = op.getFunctionBody();
-    SmallVector<TypeConverter::SignatureConversion, 2> conversions;
 
-    for (Block &block : llvm::drop_begin(region, 1)) {
-      conversions.emplace_back(block.getNumArguments());
-      TypeConverter::SignatureConversion &back = conversions.back();
+    for (Block &block :
+         llvm::make_early_inc_range(llvm::drop_begin(region, 1))) {
+      TypeConverter::SignatureConversion conversion(
+          /*numOrigInputs=*/block.getNumArguments());
 
       for (BlockArgument blockArgument : block.getArguments()) {
         int idx = blockArgument.getArgNumber();
 
         if (blockArgsToDetensor.count(blockArgument))
-          back.addInputs(idx, {getTypeConverter()->convertType(
-                                  block.getArgumentTypes()[idx])});
+          conversion.addInputs(idx, {getTypeConverter()->convertType(
+                                        block.getArgumentTypes()[idx])});
         else
-          back.addInputs(idx, {block.getArgumentTypes()[idx]});
+          conversion.addInputs(idx, {block.getArgumentTypes()[idx]});
       }
+
+      rewriter.applySignatureConversion(&block, conversion, getTypeConverter());
     }
 
-    if (failed(rewriter.convertNonEntryRegionTypes(&region, *typeConverter,
-                                                   conversions))) {
-      rewriter.cancelRootUpdate(op);
-      return failure();
-    }
-
-    rewriter.finalizeRootUpdate(op);
+    rewriter.finalizeOpModification(op);
     return success();
   }
 
@@ -164,7 +160,9 @@ public:
 
 /// @see LinalgDetensorize in Linalg/Passes.td for more details.
 struct LinalgDetensorize
-    : public impl::LinalgDetensorizeBase<LinalgDetensorize> {
+    : public impl::LinalgDetensorizePassBase<LinalgDetensorize> {
+  using impl::LinalgDetensorizePassBase<
+      LinalgDetensorize>::LinalgDetensorizePassBase;
   LinalgDetensorize() = default;
 
   class CostModel {
@@ -320,9 +318,9 @@ struct LinalgDetensorize
         //       * Add the argument to blockArgsToDetensor.
         //       * Walk the use-def chain backwards to add each predecessor's
         //       terminator-operands corresponding to currentItem to workList.
-        if (currentItem.dyn_cast<BlockArgument>()) {
+        if (dyn_cast<BlockArgument>(currentItem)) {
           BlockArgument currentItemBlockArgument =
-              currentItem.cast<BlockArgument>();
+              cast<BlockArgument>(currentItem);
           Block *ownerBlock = currentItemBlockArgument.getOwner();
 
           // Function arguments are not detensored/converted.
@@ -474,7 +472,22 @@ struct LinalgDetensorize
     DenseSet<Operation *> opsToDetensor;
     DenseMap<Operation *, DenseSet<int>> detensorableBranchOps;
     DenseSet<BlockArgument> blockArgsToDetensor;
-    FunctionOpInterface funcOp = cast<FunctionOpInterface>(getOperation());
+    FunctionOpInterface funcOp = getOperation();
+
+    if (funcOp.getFunctionBody().empty())
+      return;
+
+    // Make sure the entry block of the function doesn't contain any Linalg ops.
+    // Otherwise, it may lead to the signature of the block being changed by the
+    // dialect conversion below, which would make the function op invalid
+    // because its type shouldn't change.
+    IRRewriter rewriter(funcOp->getContext());
+    Block *entryBlock = &funcOp.getFunctionBody().front();
+    Block *postEntryBlock =
+        rewriter.splitBlock(entryBlock, entryBlock->begin());
+    rewriter.setInsertionPointToStart(entryBlock);
+    auto branch =
+        rewriter.create<cf::BranchOp>(rewriter.getUnknownLoc(), postEntryBlock);
 
     if (aggressiveMode.getValue()) {
       AggressiveDetensoringModel costModel;
@@ -553,10 +566,11 @@ struct LinalgDetensorize
     if (failed(applyPatternsAndFoldGreedily(getOperation(),
                                             std::move(canonPatterns))))
       signalPassFailure();
+
+    // Get rid of the dummy entry block we created in the beginning to work
+    // around dialect conversion signature rewriting.
+    rewriter.eraseOp(branch);
+    rewriter.mergeBlocks(postEntryBlock, entryBlock);
   }
 };
 } // namespace
-
-std::unique_ptr<Pass> mlir::createLinalgDetensorizePass() {
-  return std::make_unique<LinalgDetensorize>();
-}

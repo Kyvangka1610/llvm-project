@@ -15,7 +15,6 @@
 
 using namespace llvm;
 using namespace llvm::dwarf;
-using object::SectionedAddress;
 
 namespace {
 
@@ -80,9 +79,9 @@ TEST(DWARFDie, getLocations) {
                        HasValue(testing::ElementsAre(DWARFLocationExpression{
                            DWARFAddressRange{1, 3}, {}})));
 
-  EXPECT_THAT_EXPECTED(
-      Die.getLocations(DW_AT_data_member_location),
-      HasValue(testing::ElementsAre(DWARFLocationExpression{None, {0x47}})));
+  EXPECT_THAT_EXPECTED(Die.getLocations(DW_AT_data_member_location),
+                       HasValue(testing::ElementsAre(
+                           DWARFLocationExpression{std::nullopt, {0x47}})));
 
   EXPECT_THAT_EXPECTED(
       Die.getLocations(DW_AT_vtable_elem_location),
@@ -642,6 +641,67 @@ TEST(DWARFDie, getDeclFileSpecificationAcrossCUBoundary) {
   std::string Ref =
       ("/tmp" + llvm::sys::path::get_separator() + "main.cpp").str();
   EXPECT_EQ(DeclFile, Ref);
+}
+
+TEST(DWARFDie, getNameFromTypeUnit) {
+  const char *yamldata = R"(
+  debug_abbrev:
+    - ID:              0
+      Table:
+        - Code:            0x1
+          Tag:             DW_TAG_compile_unit
+          Children:        DW_CHILDREN_yes
+        - Code:            0x2
+          Tag:             DW_TAG_structure_type
+          Children:        DW_CHILDREN_no
+          Attributes:
+            - Attribute:       DW_AT_signature
+              Form:            DW_FORM_ref_sig8
+        - Code:            0x3
+          Tag:             DW_TAG_type_unit
+          Children:        DW_CHILDREN_yes
+        - Code:            0x4
+          Tag:             DW_TAG_structure_type
+          Children:        DW_CHILDREN_no
+          Attributes:
+            - Attribute:       DW_AT_name
+              Form:            DW_FORM_string
+  debug_info:
+    - Version:         5
+      UnitType:        DW_UT_compile
+      AbbrevTableID:   0
+      Entries:
+        - AbbrCode:        0x1
+        - AbbrCode:        0x2
+          Values:
+            - Value:           0xdeadbeefbaadf00d
+        - AbbrCode:        0x0
+    - Version:         5
+      UnitType:        DW_UT_type
+      AbbrevTableID:   0
+      TypeSignature:   0xdeadbeefbaadf00d
+      TypeOffset:      25
+      Entries:
+        - AbbrCode:        0x3
+        - AbbrCode:        0x4
+          Values:
+            - CStr:        "STRUCT"
+        - AbbrCode:        0x0
+  )";
+
+  Expected<StringMap<std::unique_ptr<MemoryBuffer>>> Sections =
+      DWARFYAML::emitDebugSections(StringRef(yamldata),
+                                   /*IsLittleEndian=*/true,
+                                   /*Is64BitAddrSize=*/true);
+  ASSERT_THAT_EXPECTED(Sections, Succeeded());
+  std::unique_ptr<DWARFContext> Ctx =
+      DWARFContext::create(*Sections, 4, /*isLittleEndian=*/true);
+  DWARFCompileUnit *CU = Ctx->getCompileUnitForOffset(0);
+  ASSERT_NE(nullptr, CU);
+  DWARFDie Die = CU->getUnitDIE(/*ExtractUnitDIEOnly=*/false).getFirstChild();
+  ASSERT_TRUE(Die.isValid());
+
+  ASSERT_STREQ(Die.getName(DINameKind::ShortName), "STRUCT");
 }
 
 } // end anonymous namespace

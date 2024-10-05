@@ -36,7 +36,6 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/PointerIntPair.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
@@ -49,17 +48,15 @@
 #include "llvm/Support/raw_ostream.h"
 #include <cassert>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <utility>
 
 namespace llvm {
 
 class Constant;
-class Function;
 template <class GraphType> struct GraphTraits;
 class Module;
-class TargetLibraryInfo;
-class Value;
 
 /// A lazily constructed view of the call graph of a module.
 ///
@@ -111,7 +108,6 @@ class LazyCallGraph {
 public:
   class Node;
   class EdgeSequence;
-  class SCC;
   class RefSCC;
 
   /// A class used to represent edges in the call graph.
@@ -255,7 +251,7 @@ public:
     iterator end() { return iterator(Edges.end(), Edges.end()); }
 
     Edge &operator[](Node &N) {
-      assert(EdgeIndexMap.find(&N) != EdgeIndexMap.end() && "No such edge!");
+      assert(EdgeIndexMap.contains(&N) && "No such edge!");
       auto &E = Edges[EdgeIndexMap.find(&N)->second];
       assert(E && "Dead or null edge!");
       return E;
@@ -311,7 +307,7 @@ public:
   /// The node works much like an optional in order to lazily populate the
   /// edges of each node. Until populated, there are no edges. Once populated,
   /// you can access the edges by dereferencing the node or using the `->`
-  /// operator as if the node was an `Optional<EdgeSequence>`.
+  /// operator as if the node was an `std::optional<EdgeSequence>`.
   class Node {
     friend class LazyCallGraph;
     friend class LazyCallGraph::RefSCC;
@@ -378,7 +374,7 @@ public:
     int DFSNumber = 0;
     int LowLink = 0;
 
-    Optional<EdgeSequence> Edges;
+    std::optional<EdgeSequence> Edges;
 
     /// Basic constructor implements the scanning of F into Edges and
     /// EdgeIndexMap.
@@ -416,7 +412,7 @@ public:
   /// outer structure. SCCs do not support mutation of the call graph, that
   /// must be done through the containing \c RefSCC in order to fully reason
   /// about the ordering and connections of the graph.
-  class LLVM_EXTERNAL_VISIBILITY SCC {
+  class LLVM_ABI SCC {
     friend class LazyCallGraph;
     friend class LazyCallGraph::Node;
 
@@ -832,7 +828,7 @@ public:
     /// self-edges and edge removals which result in a spanning tree with no
     /// more cycles.
     [[nodiscard]] SmallVector<RefSCC *, 1>
-    removeInternalRefEdge(Node &SourceN, ArrayRef<Node *> TargetNs);
+    removeInternalRefEdges(ArrayRef<std::pair<Node *, Node *>> Edges);
 
     /// A convenience wrapper around the above to handle trivial cases of
     /// inserting a new call edge.
@@ -943,6 +939,11 @@ public:
   LazyCallGraph(LazyCallGraph &&G);
   LazyCallGraph &operator=(LazyCallGraph &&RHS);
 
+#if !defined(NDEBUG) || defined(EXPENSIVE_CHECKS)
+  /// Verify that every RefSCC is valid.
+  void verify();
+#endif
+
   bool invalidate(Module &, const PreservedAnalyses &PA,
                   ModuleAnalysisManager::Invalidator &);
 
@@ -1051,18 +1052,18 @@ public:
   /// once SCCs have started to be formed. These routines have strict contracts
   /// but may be called at any point.
 
-  /// Remove a dead function from the call graph (typically to delete it).
+  /// Remove dead functions from the call graph.
   ///
-  /// Note that the function must have an empty use list, and the call graph
-  /// must be up-to-date prior to calling this. That means it is by itself in
-  /// a maximal SCC which is by itself in a maximal RefSCC, etc. No structural
-  /// changes result from calling this routine other than potentially removing
-  /// entry points into the call graph.
+  /// These functions should have already been passed to markDeadFunction().
+  /// This is done as a batch to prevent compile time blowup as a result of
+  /// handling a single function at a time.
+  void removeDeadFunctions(ArrayRef<Function *> DeadFs);
+
+  /// Mark a function as dead to be removed later by removeDeadFunctions().
   ///
-  /// If SCC formation has begun, this function must not be part of the current
-  /// DFS in order to call this safely. Typically, the function will have been
-  /// fully visited by the DFS prior to calling this routine.
-  void removeDeadFunction(Function &F);
+  /// The function body should have no incoming or outgoing call or ref edges.
+  /// For example, a function with a single "unreachable" instruction.
+  void markDeadFunction(Function &F);
 
   /// Add a new function split/outlined from an existing function.
   ///
@@ -1288,6 +1289,8 @@ public:
   explicit LazyCallGraphPrinterPass(raw_ostream &OS);
 
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM);
+
+  static bool isRequired() { return true; }
 };
 
 /// A pass which prints the call graph as a DOT file to a \c raw_ostream.
@@ -1301,6 +1304,8 @@ public:
   explicit LazyCallGraphDOTPrinterPass(raw_ostream &OS);
 
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM);
+
+  static bool isRequired() { return true; }
 };
 
 } // end namespace llvm

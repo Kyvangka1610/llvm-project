@@ -19,8 +19,8 @@ define i1 @cond_eq_and(i8 %X, i8 %Y, i8 noundef %C) {
 define i1 @cond_eq_and_const(i8 %X, i8 %Y) {
 ; CHECK-LABEL: @cond_eq_and_const(
 ; CHECK-NEXT:    [[COND:%.*]] = icmp eq i8 [[X:%.*]], 10
-; CHECK-NEXT:    [[LHS:%.*]] = icmp ugt i8 [[Y:%.*]], 10
-; CHECK-NEXT:    [[RES:%.*]] = select i1 [[COND]], i1 [[LHS]], i1 false
+; CHECK-NEXT:    [[TMP1:%.*]] = icmp ugt i8 [[Y:%.*]], 10
+; CHECK-NEXT:    [[RES:%.*]] = select i1 [[COND]], i1 [[TMP1]], i1 false
 ; CHECK-NEXT:    ret i1 [[RES]]
 ;
   %cond = icmp eq i8 %X, 10
@@ -45,8 +45,8 @@ define i1 @cond_eq_or(i8 %X, i8 %Y, i8 noundef %C) {
 define i1 @cond_eq_or_const(i8 %X, i8 %Y) {
 ; CHECK-LABEL: @cond_eq_or_const(
 ; CHECK-NEXT:    [[COND:%.*]] = icmp ne i8 [[X:%.*]], 10
-; CHECK-NEXT:    [[LHS:%.*]] = icmp ugt i8 [[Y:%.*]], 10
-; CHECK-NEXT:    [[RES:%.*]] = select i1 [[COND]], i1 true, i1 [[LHS]]
+; CHECK-NEXT:    [[TMP1:%.*]] = icmp ugt i8 [[Y:%.*]], 10
+; CHECK-NEXT:    [[RES:%.*]] = select i1 [[COND]], i1 true, i1 [[TMP1]]
 ; CHECK-NEXT:    ret i1 [[RES]]
 ;
   %cond = icmp ne i8 %X, 10
@@ -85,11 +85,11 @@ define <2 x i1> @xor_and2(<2 x i1> %c, <2 x i32> %X, <2 x i32> %Y) {
 define <2 x i1> @xor_and3(<2 x i1> %c, <2 x i32> %X, <2 x i32> %Y) {
 ; CHECK-LABEL: @xor_and3(
 ; CHECK-NEXT:    [[COMP:%.*]] = icmp uge <2 x i32> [[X:%.*]], [[Y:%.*]]
-; CHECK-NEXT:    [[SEL:%.*]] = select <2 x i1> [[C:%.*]], <2 x i1> [[COMP]], <2 x i1> <i1 icmp ne (ptr inttoptr (i64 1234 to ptr), ptr @glb), i1 true>
+; CHECK-NEXT:    [[SEL:%.*]] = select <2 x i1> [[C:%.*]], <2 x i1> [[COMP]], <2 x i1> <i1 xor (i1 ptrtoint (ptr @glb to i1), i1 true), i1 true>
 ; CHECK-NEXT:    ret <2 x i1> [[SEL]]
 ;
   %comp = icmp ult <2 x i32> %X, %Y
-  %sel = select <2 x i1> %c, <2 x i1> %comp, <2 x i1> <i1 icmp eq (ptr @glb, ptr inttoptr (i64 1234 to ptr)), i1 false>
+  %sel = select <2 x i1> %c, <2 x i1> %comp, <2 x i1> <i1 ptrtoint (ptr @glb to i1), i1 false>
   %res = xor <2 x i1> %sel, <i1 true, i1 true>
   ret <2 x i1> %res
 }
@@ -122,11 +122,11 @@ define <2 x i1> @xor_or2(<2 x i1> %c, <2 x i32> %X, <2 x i32> %Y) {
 define <2 x i1> @xor_or3(<2 x i1> %c, <2 x i32> %X, <2 x i32> %Y) {
 ; CHECK-LABEL: @xor_or3(
 ; CHECK-NEXT:    [[COMP:%.*]] = icmp uge <2 x i32> [[X:%.*]], [[Y:%.*]]
-; CHECK-NEXT:    [[SEL:%.*]] = select <2 x i1> [[C:%.*]], <2 x i1> <i1 icmp ne (ptr inttoptr (i64 1234 to ptr), ptr @glb), i1 true>, <2 x i1> [[COMP]]
+; CHECK-NEXT:    [[SEL:%.*]] = select <2 x i1> [[C:%.*]], <2 x i1> <i1 xor (i1 ptrtoint (ptr @glb to i1), i1 true), i1 true>, <2 x i1> [[COMP]]
 ; CHECK-NEXT:    ret <2 x i1> [[SEL]]
 ;
   %comp = icmp ult <2 x i32> %X, %Y
-  %sel = select <2 x i1> %c, <2 x i1> <i1 icmp eq (ptr @glb, ptr inttoptr (i64 1234 to ptr)), i1 false>, <2 x i1> %comp
+  %sel = select <2 x i1> %c, <2 x i1> <i1 ptrtoint (ptr @glb to i1), i1 false>, <2 x i1> %comp
   %res = xor <2 x i1> %sel, <i1 true, i1 true>
   ret <2 x i1> %res
 }
@@ -144,6 +144,40 @@ define i1 @and_orn_cmp_1_logical(i32 %a, i32 %b, i1 %y) {
   ret i1 %and
 }
 
+; TODO: This should fold the same way as the next test.
+
+define i1 @and_orn_cmp_1_partial_logical(i32 %a, i32 %b, i1 %y) {
+; CHECK-LABEL: @and_orn_cmp_1_partial_logical(
+; CHECK-NEXT:    [[X:%.*]] = icmp sgt i32 [[A:%.*]], [[B:%.*]]
+; CHECK-NEXT:    [[X_INV:%.*]] = icmp sle i32 [[A]], [[B]]
+; CHECK-NEXT:    [[OR:%.*]] = or i1 [[X_INV]], [[Y:%.*]]
+; CHECK-NEXT:    [[AND:%.*]] = select i1 [[X]], i1 [[OR]], i1 false
+; CHECK-NEXT:    ret i1 [[AND]]
+;
+  %x = icmp sgt i32 %a, %b
+  %x_inv = icmp sle i32 %a, %b
+  %or = or i1 %x_inv, %y
+  %and = select i1 %x, i1 %or, i1 false
+  ret i1 %and
+}
+
+define i1 @and_orn_cmp_1_partial_logical_commute(i32 %a, i32 %b) {
+; CHECK-LABEL: @and_orn_cmp_1_partial_logical_commute(
+; CHECK-NEXT:    [[Y:%.*]] = call i1 @gen1()
+; CHECK-NEXT:    [[X:%.*]] = icmp sgt i32 [[A:%.*]], [[B:%.*]]
+; CHECK-NEXT:    [[AND:%.*]] = select i1 [[X]], i1 [[Y]], i1 false
+; CHECK-NEXT:    ret i1 [[AND]]
+;
+  %y = call i1 @gen1() ; thwart complexity-based canonicalization
+  %x = icmp sgt i32 %a, %b
+  %x_inv = icmp sle i32 %a, %b
+  %or = or i1 %y, %x_inv
+  %and = select i1 %x, i1 %or, i1 false
+  ret i1 %and
+}
+
+; TODO: This does not require poison-safe (select) logical-and.
+
 define i1 @andn_or_cmp_2_logical(i16 %a, i16 %b, i1 %y) {
 ; CHECK-LABEL: @andn_or_cmp_2_logical(
 ; CHECK-NEXT:    [[X_INV:%.*]] = icmp slt i16 [[A:%.*]], [[B:%.*]]
@@ -155,6 +189,68 @@ define i1 @andn_or_cmp_2_logical(i16 %a, i16 %b, i1 %y) {
   %or = select i1 %y, i1 true, i1 %x
   %and = select i1 %or, i1 %x_inv, i1 false
   ret i1 %and
+}
+
+define i1 @andn_or_cmp_2_partial_logical(i16 %a, i16 %b, i1 %y) {
+; CHECK-LABEL: @andn_or_cmp_2_partial_logical(
+; CHECK-NEXT:    [[X_INV:%.*]] = icmp slt i16 [[A:%.*]], [[B:%.*]]
+; CHECK-NEXT:    [[AND:%.*]] = and i1 [[Y:%.*]], [[X_INV]]
+; CHECK-NEXT:    ret i1 [[AND]]
+;
+  %x = icmp sge i16 %a, %b
+  %x_inv = icmp slt i16 %a, %b
+  %or = or i1 %x, %y
+  %and = select i1 %or, i1 %x_inv, i1 false
+  ret i1 %and
+}
+
+define i1 @andn_or_cmp_2_partial_logical_commute(i16 %a, i16 %b) {
+; CHECK-LABEL: @andn_or_cmp_2_partial_logical_commute(
+; CHECK-NEXT:    [[Y:%.*]] = call i1 @gen1()
+; CHECK-NEXT:    [[X_INV:%.*]] = icmp slt i16 [[A:%.*]], [[B:%.*]]
+; CHECK-NEXT:    [[AND:%.*]] = and i1 [[Y]], [[X_INV]]
+; CHECK-NEXT:    ret i1 [[AND]]
+;
+  %y = call i1 @gen1() ; thwart complexity-based canonicalization
+  %x = icmp sge i16 %a, %b
+  %x_inv = icmp slt i16 %a, %b
+  %or = or i1 %y, %x
+  %and = select i1 %or, i1 %x_inv, i1 false
+  ret i1 %and
+}
+
+; PR58552 - this would crash trying to replace non-matching types
+
+define <2 x i1> @not_logical_or(i1 %b, <2 x i32> %a) {
+; CHECK-LABEL: @not_logical_or(
+; CHECK-NEXT:    [[COND:%.*]] = icmp ult <2 x i32> [[A:%.*]], <i32 3, i32 3>
+; CHECK-NEXT:    [[IMPLIED:%.*]] = icmp slt <2 x i32> [[A]], <i32 -1, i32 -1>
+; CHECK-NEXT:    [[OR:%.*]] = select i1 [[B:%.*]], <2 x i1> <i1 true, i1 true>, <2 x i1> [[IMPLIED]]
+; CHECK-NEXT:    [[AND:%.*]] = select <2 x i1> [[COND]], <2 x i1> [[OR]], <2 x i1> zeroinitializer
+; CHECK-NEXT:    ret <2 x i1> [[AND]]
+;
+  %cond = icmp ult <2 x i32> %a, <i32 3, i32 3>
+  %implied = icmp slt <2 x i32> %a, <i32 -1, i32 -1>
+  %or = select i1 %b, <2 x i1> <i1 true, i1 true>, <2 x i1> %implied
+  %and = select <2 x i1> %cond, <2 x i1> %or, <2 x i1> zeroinitializer
+  ret <2 x i1> %and
+}
+
+; This could reduce, but we do not match select-of-vectors with scalar condition as logical-or.
+
+define <2 x i1> @not_logical_or2(i1 %b, <2 x i32> %a) {
+; CHECK-LABEL: @not_logical_or2(
+; CHECK-NEXT:    [[COND:%.*]] = icmp ult <2 x i32> [[A:%.*]], <i32 3, i32 3>
+; CHECK-NEXT:    [[IMPLIED:%.*]] = icmp slt <2 x i32> [[A]], <i32 -1, i32 -1>
+; CHECK-NEXT:    [[OR:%.*]] = select i1 [[B:%.*]], <2 x i1> <i1 true, i1 true>, <2 x i1> [[IMPLIED]]
+; CHECK-NEXT:    [[AND:%.*]] = select <2 x i1> [[OR]], <2 x i1> [[COND]], <2 x i1> zeroinitializer
+; CHECK-NEXT:    ret <2 x i1> [[AND]]
+;
+  %cond = icmp ult <2 x i32> %a, <i32 3, i32 3>
+  %implied = icmp slt <2 x i32> %a, <i32 -1, i32 -1>
+  %or = select i1 %b, <2 x i1> <i1 true, i1 true>, <2 x i1> %implied
+  %and = select <2 x i1> %or, <2 x i1> %cond, <2 x i1> zeroinitializer
+  ret <2 x i1> %and
 }
 
 define i1 @bools_logical_commute0(i1 %a, i1 %b, i1 %c) {
@@ -207,10 +303,7 @@ define i1 @bools_logical_commute0_and1_and2(i1 %a, i1 %b, i1 %c) {
 
 define i1 @bools_logical_commute1(i1 %a, i1 %b, i1 %c) {
 ; CHECK-LABEL: @bools_logical_commute1(
-; CHECK-NEXT:    [[NOT:%.*]] = xor i1 [[C:%.*]], true
-; CHECK-NEXT:    [[AND1:%.*]] = select i1 [[A:%.*]], i1 [[NOT]], i1 false
-; CHECK-NEXT:    [[AND2:%.*]] = select i1 [[C]], i1 [[B:%.*]], i1 false
-; CHECK-NEXT:    [[OR:%.*]] = select i1 [[AND1]], i1 true, i1 [[AND2]]
+; CHECK-NEXT:    [[OR:%.*]] = select i1 [[C:%.*]], i1 [[B:%.*]], i1 [[A:%.*]]
 ; CHECK-NEXT:    ret i1 [[OR]]
 ;
   %not = xor i1 %c, -1
@@ -223,10 +316,7 @@ define i1 @bools_logical_commute1(i1 %a, i1 %b, i1 %c) {
 define i1 @bools_logical_commute1_and1(i1 %b, i1 %c) {
 ; CHECK-LABEL: @bools_logical_commute1_and1(
 ; CHECK-NEXT:    [[A:%.*]] = call i1 @gen1()
-; CHECK-NEXT:    [[NOT:%.*]] = xor i1 [[C:%.*]], true
-; CHECK-NEXT:    [[AND1:%.*]] = and i1 [[A]], [[NOT]]
-; CHECK-NEXT:    [[AND2:%.*]] = select i1 [[C]], i1 [[B:%.*]], i1 false
-; CHECK-NEXT:    [[OR:%.*]] = select i1 [[AND1]], i1 true, i1 [[AND2]]
+; CHECK-NEXT:    [[OR:%.*]] = select i1 [[C:%.*]], i1 [[B:%.*]], i1 [[A]]
 ; CHECK-NEXT:    ret i1 [[OR]]
 ;
   %a = call i1 @gen1()
@@ -239,10 +329,7 @@ define i1 @bools_logical_commute1_and1(i1 %b, i1 %c) {
 
 define i1 @bools_logical_commute1_and2(i1 %a, i1 %b, i1 %c) {
 ; CHECK-LABEL: @bools_logical_commute1_and2(
-; CHECK-NEXT:    [[NOT:%.*]] = xor i1 [[C:%.*]], true
-; CHECK-NEXT:    [[AND1:%.*]] = select i1 [[A:%.*]], i1 [[NOT]], i1 false
-; CHECK-NEXT:    [[AND2:%.*]] = and i1 [[C]], [[B:%.*]]
-; CHECK-NEXT:    [[OR:%.*]] = select i1 [[AND1]], i1 true, i1 [[AND2]]
+; CHECK-NEXT:    [[OR:%.*]] = select i1 [[C:%.*]], i1 [[B:%.*]], i1 [[A:%.*]]
 ; CHECK-NEXT:    ret i1 [[OR]]
 ;
   %not = xor i1 %c, -1
@@ -255,10 +342,7 @@ define i1 @bools_logical_commute1_and2(i1 %a, i1 %b, i1 %c) {
 define i1 @bools_logical_commute1_and1_and2(i1 %b, i1 %c) {
 ; CHECK-LABEL: @bools_logical_commute1_and1_and2(
 ; CHECK-NEXT:    [[A:%.*]] = call i1 @gen1()
-; CHECK-NEXT:    [[NOT:%.*]] = xor i1 [[C:%.*]], true
-; CHECK-NEXT:    [[AND1:%.*]] = and i1 [[A]], [[NOT]]
-; CHECK-NEXT:    [[AND2:%.*]] = and i1 [[C]], [[B:%.*]]
-; CHECK-NEXT:    [[OR:%.*]] = select i1 [[AND1]], i1 true, i1 [[AND2]]
+; CHECK-NEXT:    [[OR:%.*]] = select i1 [[C:%.*]], i1 [[B:%.*]], i1 [[A]]
 ; CHECK-NEXT:    ret i1 [[OR]]
 ;
   %a = call i1 @gen1()
@@ -319,10 +403,8 @@ define <2 x i1> @bools_logical_commute2_and1_and2(<2 x i1> %a, <2 x i1> %b, <2 x
 
 define i1 @bools_logical_commute3(i1 %a, i1 %b, i1 %c) {
 ; CHECK-LABEL: @bools_logical_commute3(
-; CHECK-NEXT:    [[NOT:%.*]] = xor i1 [[C:%.*]], true
-; CHECK-NEXT:    [[AND1:%.*]] = select i1 [[A:%.*]], i1 [[NOT]], i1 false
-; CHECK-NEXT:    [[AND2:%.*]] = select i1 [[B:%.*]], i1 [[C]], i1 false
-; CHECK-NEXT:    [[OR:%.*]] = select i1 [[AND1]], i1 true, i1 [[AND2]]
+; CHECK-NEXT:    [[TMP1:%.*]] = freeze i1 [[C:%.*]]
+; CHECK-NEXT:    [[OR:%.*]] = select i1 [[TMP1]], i1 [[B:%.*]], i1 [[A:%.*]]
 ; CHECK-NEXT:    ret i1 [[OR]]
 ;
   %not = xor i1 %c, -1
@@ -335,10 +417,7 @@ define i1 @bools_logical_commute3(i1 %a, i1 %b, i1 %c) {
 define i1 @bools_logical_commute3_and1(i1 %b, i1 %c) {
 ; CHECK-LABEL: @bools_logical_commute3_and1(
 ; CHECK-NEXT:    [[A:%.*]] = call i1 @gen1()
-; CHECK-NEXT:    [[NOT:%.*]] = xor i1 [[C:%.*]], true
-; CHECK-NEXT:    [[AND1:%.*]] = and i1 [[A]], [[NOT]]
-; CHECK-NEXT:    [[AND2:%.*]] = select i1 [[B:%.*]], i1 [[C]], i1 false
-; CHECK-NEXT:    [[OR:%.*]] = select i1 [[AND1]], i1 true, i1 [[AND2]]
+; CHECK-NEXT:    [[OR:%.*]] = select i1 [[C:%.*]], i1 [[B:%.*]], i1 [[A]]
 ; CHECK-NEXT:    ret i1 [[OR]]
 ;
   %a = call i1 @gen1()
@@ -351,10 +430,7 @@ define i1 @bools_logical_commute3_and1(i1 %b, i1 %c) {
 
 define i1 @bools_logical_commute3_and2(i1 %a, i1 %b, i1 %c) {
 ; CHECK-LABEL: @bools_logical_commute3_and2(
-; CHECK-NEXT:    [[NOT:%.*]] = xor i1 [[C:%.*]], true
-; CHECK-NEXT:    [[AND1:%.*]] = select i1 [[A:%.*]], i1 [[NOT]], i1 false
-; CHECK-NEXT:    [[AND2:%.*]] = and i1 [[B:%.*]], [[C]]
-; CHECK-NEXT:    [[OR:%.*]] = select i1 [[AND1]], i1 true, i1 [[AND2]]
+; CHECK-NEXT:    [[OR:%.*]] = select i1 [[C:%.*]], i1 [[B:%.*]], i1 [[A:%.*]]
 ; CHECK-NEXT:    ret i1 [[OR]]
 ;
   %not = xor i1 %c, -1
@@ -367,10 +443,7 @@ define i1 @bools_logical_commute3_and2(i1 %a, i1 %b, i1 %c) {
 define i1 @bools_logical_commute3_and1_and2(i1 %b, i1 %c) {
 ; CHECK-LABEL: @bools_logical_commute3_and1_and2(
 ; CHECK-NEXT:    [[A:%.*]] = call i1 @gen1()
-; CHECK-NEXT:    [[NOT:%.*]] = xor i1 [[C:%.*]], true
-; CHECK-NEXT:    [[AND1:%.*]] = and i1 [[A]], [[NOT]]
-; CHECK-NEXT:    [[AND2:%.*]] = and i1 [[B:%.*]], [[C]]
-; CHECK-NEXT:    [[OR:%.*]] = select i1 [[AND1]], i1 true, i1 [[AND2]]
+; CHECK-NEXT:    [[OR:%.*]] = select i1 [[C:%.*]], i1 [[B:%.*]], i1 [[A]]
 ; CHECK-NEXT:    ret i1 [[OR]]
 ;
   %a = call i1 @gen1()
@@ -612,6 +685,40 @@ define i1 @orn_and_cmp_1_logical(i37 %a, i37 %b, i1 %y) {
   ret i1 %or
 }
 
+; TODO: This should fold the same way as the next test.
+
+define i1 @orn_and_cmp_1_partial_logical(i37 %a, i37 %b, i1 %y) {
+; CHECK-LABEL: @orn_and_cmp_1_partial_logical(
+; CHECK-NEXT:    [[X:%.*]] = icmp sgt i37 [[A:%.*]], [[B:%.*]]
+; CHECK-NEXT:    [[X_INV:%.*]] = icmp sle i37 [[A]], [[B]]
+; CHECK-NEXT:    [[AND:%.*]] = and i1 [[X]], [[Y:%.*]]
+; CHECK-NEXT:    [[OR:%.*]] = select i1 [[X_INV]], i1 true, i1 [[AND]]
+; CHECK-NEXT:    ret i1 [[OR]]
+;
+  %x = icmp sgt i37 %a, %b
+  %x_inv = icmp sle i37 %a, %b
+  %and = and i1 %x, %y
+  %or = select i1 %x_inv, i1 true, i1 %and
+  ret i1 %or
+}
+
+define i1 @orn_and_cmp_1_partial_logical_commute(i37 %a, i37 %b) {
+; CHECK-LABEL: @orn_and_cmp_1_partial_logical_commute(
+; CHECK-NEXT:    [[Y:%.*]] = call i1 @gen1()
+; CHECK-NEXT:    [[X_INV:%.*]] = icmp sle i37 [[A:%.*]], [[B:%.*]]
+; CHECK-NEXT:    [[OR:%.*]] = select i1 [[X_INV]], i1 true, i1 [[Y]]
+; CHECK-NEXT:    ret i1 [[OR]]
+;
+  %y = call i1 @gen1() ; thwart complexity-based canonicalization
+  %x = icmp sgt i37 %a, %b
+  %x_inv = icmp sle i37 %a, %b
+  %and = and i1 %y, %x
+  %or = select i1 %x_inv, i1 true, i1 %and
+  ret i1 %or
+}
+
+; TODO: This does not require poison-safe (select) logical-or.
+
 define i1 @orn_and_cmp_2_logical(i16 %a, i16 %b, i1 %y) {
 ; CHECK-LABEL: @orn_and_cmp_2_logical(
 ; CHECK-NEXT:    [[X_INV:%.*]] = icmp slt i16 [[A:%.*]], [[B:%.*]]
@@ -623,4 +730,66 @@ define i1 @orn_and_cmp_2_logical(i16 %a, i16 %b, i1 %y) {
   %and = select i1 %y, i1 %x, i1 false
   %or = select i1 %and, i1 true, i1 %x_inv
   ret i1 %or
+}
+
+define i1 @orn_and_cmp_2_partial_logical(i16 %a, i16 %b, i1 %y) {
+; CHECK-LABEL: @orn_and_cmp_2_partial_logical(
+; CHECK-NEXT:    [[X_INV:%.*]] = icmp slt i16 [[A:%.*]], [[B:%.*]]
+; CHECK-NEXT:    [[OR:%.*]] = or i1 [[Y:%.*]], [[X_INV]]
+; CHECK-NEXT:    ret i1 [[OR]]
+;
+  %x = icmp sge i16 %a, %b
+  %x_inv = icmp slt i16 %a, %b
+  %and = and i1 %x, %y
+  %or = select i1 %and, i1 true, i1 %x_inv
+  ret i1 %or
+}
+
+define i1 @orn_and_cmp_2_partial_logical_commute(i16 %a, i16 %b) {
+; CHECK-LABEL: @orn_and_cmp_2_partial_logical_commute(
+; CHECK-NEXT:    [[Y:%.*]] = call i1 @gen1()
+; CHECK-NEXT:    [[X_INV:%.*]] = icmp slt i16 [[A:%.*]], [[B:%.*]]
+; CHECK-NEXT:    [[OR:%.*]] = or i1 [[Y]], [[X_INV]]
+; CHECK-NEXT:    ret i1 [[OR]]
+;
+  %y = call i1 @gen1() ; thwart complexity-based canonicalization
+  %x = icmp sge i16 %a, %b
+  %x_inv = icmp slt i16 %a, %b
+  %and = and i1 %y, %x
+  %or = select i1 %and, i1 true, i1 %x_inv
+  ret i1 %or
+}
+
+; PR58552 - this would crash trying to replace non-matching types
+
+define <2 x i1> @not_logical_and(i1 %b, <2 x i32> %a) {
+; CHECK-LABEL: @not_logical_and(
+; CHECK-NEXT:    [[COND:%.*]] = icmp ult <2 x i32> [[A:%.*]], <i32 3, i32 3>
+; CHECK-NEXT:    [[IMPLIED:%.*]] = icmp ugt <2 x i32> [[A]], <i32 1, i32 1>
+; CHECK-NEXT:    [[AND:%.*]] = select i1 [[B:%.*]], <2 x i1> [[COND]], <2 x i1> zeroinitializer
+; CHECK-NEXT:    [[OR:%.*]] = select <2 x i1> [[IMPLIED]], <2 x i1> <i1 true, i1 true>, <2 x i1> [[AND]]
+; CHECK-NEXT:    ret <2 x i1> [[OR]]
+;
+  %cond = icmp ult <2 x i32> %a, <i32 3, i32 3>
+  %implied = icmp ugt <2 x i32> %a, <i32 1, i32 1>
+  %and = select i1 %b, <2 x i1> %cond, <2 x i1> zeroinitializer
+  %or = select <2 x i1> %implied, <2 x i1> <i1 true, i1 true>, <2 x i1> %and
+  ret <2 x i1> %or
+}
+
+; This could reduce, but we do not match select-of-vectors with scalar condition as logical-and.
+
+define <2 x i1> @not_logical_and2(i1 %b, <2 x i32> %a) {
+; CHECK-LABEL: @not_logical_and2(
+; CHECK-NEXT:    [[COND:%.*]] = icmp ult <2 x i32> [[A:%.*]], <i32 3, i32 3>
+; CHECK-NEXT:    [[IMPLIED:%.*]] = icmp ugt <2 x i32> [[A]], <i32 1, i32 1>
+; CHECK-NEXT:    [[AND:%.*]] = select i1 [[B:%.*]], <2 x i1> [[COND]], <2 x i1> zeroinitializer
+; CHECK-NEXT:    [[OR:%.*]] = select <2 x i1> [[AND]], <2 x i1> <i1 true, i1 true>, <2 x i1> [[IMPLIED]]
+; CHECK-NEXT:    ret <2 x i1> [[OR]]
+;
+  %cond = icmp ult <2 x i32> %a, <i32 3, i32 3>
+  %implied = icmp ugt <2 x i32> %a, <i32 1, i32 1>
+  %and = select i1 %b, <2 x i1> %cond, <2 x i1> zeroinitializer
+  %or = select <2 x i1> %and, <2 x i1> <i1 true, i1 true>, <2 x i1> %implied
+  ret <2 x i1> %or
 }

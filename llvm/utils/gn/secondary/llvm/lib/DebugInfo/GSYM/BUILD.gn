@@ -3,6 +3,7 @@ static_library("GSYM") {
   deps = [
     "//llvm/lib/MC",
     "//llvm/lib/Support",
+    "//llvm/lib/TargetParser",
   ]
   sources = [
     "DwarfTransformer.cpp",
@@ -15,6 +16,7 @@ static_library("GSYM") {
     "InlineInfo.cpp",
     "LineTable.cpp",
     "LookupResult.cpp",
+    "MergedFunctionsInfo.cpp",
     "ObjectFileTransformer.cpp",
   ]
 }

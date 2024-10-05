@@ -13,6 +13,8 @@
 #define FORTRAN_EVALUATE_TARGET_H_
 
 #include "flang/Common/Fortran.h"
+#include "flang/Common/enum-class.h"
+#include "flang/Common/enum-set.h"
 #include "flang/Evaluate/common.h"
 #include <cstdint>
 
@@ -25,12 +27,17 @@ struct Rounding {
   // (viz., fail to set the Underflow flag when an inexact product of a
   // multiplication is rounded up to a normal number from a subnormal
   // in some rounding modes)
-#if __x86_64__
+#if __x86_64__ || __riscv || __loongarch__
   bool x86CompatibleBehavior{true};
 #else
   bool x86CompatibleBehavior{false};
 #endif
 };
+
+ENUM_CLASS(IeeeFeature, Denormal, Divide, Flags, Halting, Inf, Io, NaN,
+    Rounding, Sqrt, Standard, Subnormal, UnderflowControl)
+
+using IeeeFeatures = common::EnumSet<IeeeFeature, 16>;
 
 class TargetCharacteristics {
 public:
@@ -70,16 +77,46 @@ public:
   bool IsTypeEnabled(common::TypeCategory category, std::int64_t kind) const;
 
   int SelectedIntKind(std::int64_t precision = 0) const;
+  int SelectedLogicalKind(std::int64_t bits = 1) const;
   int SelectedRealKind(std::int64_t precision = 0, std::int64_t range = 0,
       std::int64_t radix = 2) const;
 
   static Rounding defaultRounding;
+
+  const std::string &compilerOptionsString() const {
+    return compilerOptionsString_;
+  };
+  TargetCharacteristics &set_compilerOptionsString(std::string x) {
+    compilerOptionsString_ = x;
+    return *this;
+  }
+
+  const std::string &compilerVersionString() const {
+    return compilerVersionString_;
+  };
+  TargetCharacteristics &set_compilerVersionString(std::string x) {
+    compilerVersionString_ = x;
+    return *this;
+  }
+
+  bool isPPC() const { return isPPC_; }
+  void set_isPPC(bool isPPC = false);
+
+  bool isOSWindows() const { return isOSWindows_; }
+  void set_isOSWindows(bool isOSWindows = false) {
+    isOSWindows_ = isOSWindows;
+  };
+
+  IeeeFeatures &ieeeFeatures() { return ieeeFeatures_; }
+  const IeeeFeatures &ieeeFeatures() const { return ieeeFeatures_; }
 
 private:
   static constexpr int maxKind{32};
   std::uint8_t byteSize_[common::TypeCategory_enumSize][maxKind]{};
   std::uint8_t align_[common::TypeCategory_enumSize][maxKind]{};
   bool isBigEndian_{false};
+  bool isPPC_{false};
+  bool isOSWindows_{false};
   bool areSubnormalsFlushedToZero_{false};
   Rounding roundingMode_{defaultRounding};
   std::size_t procedurePointerByteSize_{8};
@@ -87,6 +124,13 @@ private:
   std::size_t descriptorAlignment_{8};
   std::size_t maxByteSize_{8 /*at least*/};
   std::size_t maxAlignment_{8 /*at least*/};
+  std::string compilerOptionsString_;
+  std::string compilerVersionString_;
+  IeeeFeatures ieeeFeatures_{IeeeFeature::Denormal, IeeeFeature::Divide,
+      IeeeFeature::Flags, IeeeFeature::Halting, IeeeFeature::Inf,
+      IeeeFeature::Io, IeeeFeature::NaN, IeeeFeature::Rounding,
+      IeeeFeature::Sqrt, IeeeFeature::Standard, IeeeFeature::Subnormal,
+      IeeeFeature::UnderflowControl};
 };
 
 } // namespace Fortran::evaluate

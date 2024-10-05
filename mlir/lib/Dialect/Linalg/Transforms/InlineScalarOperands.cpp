@@ -23,7 +23,7 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 namespace mlir {
-#define GEN_PASS_DEF_LINALGINLINESCALAROPERANDS
+#define GEN_PASS_DEF_LINALGINLINESCALAROPERANDSPASS
 #include "mlir/Dialect/Linalg/Passes.h.inc"
 } // namespace mlir
 
@@ -35,15 +35,15 @@ struct InlineScalarOperands : public OpRewritePattern<GenericOp> {
   using OpRewritePattern<GenericOp>::OpRewritePattern;
   LogicalResult matchAndRewrite(GenericOp genericOp,
                                 PatternRewriter &rewriter) const override {
-    if (!genericOp.hasTensorSemantics())
+    if (!genericOp.hasPureTensorSemantics())
       return failure();
 
     SmallVector<size_t> scalarOperands;
     SmallVector<AffineMap> newIndexingMaps;
     SmallVector<Value> newOperands;
-    for (OpOperand *opOperand : genericOp.getInputOperands()) {
+    for (OpOperand *opOperand : genericOp.getDpsInputOperands()) {
       AffineMap map = genericOp.getMatchingIndexingMap(opOperand);
-      if (genericOp.isInput(opOperand) && map.isConstant()) {
+      if (genericOp.isDpsInput(opOperand) && map.isConstant()) {
         scalarOperands.emplace_back(opOperand->getOperandNumber());
       } else {
         newIndexingMaps.emplace_back(map);
@@ -54,8 +54,9 @@ struct InlineScalarOperands : public OpRewritePattern<GenericOp> {
     if (scalarOperands.empty())
       return failure();
 
-    for (OpOperand *opOperand : genericOp.getOutputOperands())
-      newIndexingMaps.emplace_back(genericOp.getMatchingIndexingMap(opOperand));
+    for (OpOperand &opOperand : genericOp.getDpsInitsMutable())
+      newIndexingMaps.emplace_back(
+          genericOp.getMatchingIndexingMap(&opOperand));
 
     Location loc = genericOp->getLoc();
     SmallVector<Value> outputOperands = genericOp.getOutputs();
@@ -70,7 +71,7 @@ struct InlineScalarOperands : public OpRewritePattern<GenericOp> {
     rewriter.setInsertionPointToStart(body);
 
     for (auto idx : llvm::reverse(scalarOperands)) {
-      OpOperand *opOperand = genericOp.getInputOperand(idx);
+      OpOperand *opOperand = genericOp.getDpsInputOperand(idx);
       AffineMap map = genericOp.getMatchingIndexingMap(opOperand);
       SmallVector<int64_t> indices = map.getConstantResults();
       SmallVector<Value> indicesValues;
@@ -100,20 +101,16 @@ void mlir::linalg::populateInlineConstantOperandsPatterns(
 namespace {
 /// Pass that removes unit-extent dims within generic ops.
 struct LinalgInlineScalarOperandsPass
-    : public impl::LinalgInlineScalarOperandsBase<
+    : public impl::LinalgInlineScalarOperandsPassBase<
           LinalgInlineScalarOperandsPass> {
+  using impl::LinalgInlineScalarOperandsPassBase<
+      LinalgInlineScalarOperandsPass>::LinalgInlineScalarOperandsPassBase;
   void runOnOperation() override {
-    func::FuncOp funcOp = getOperation();
-    MLIRContext *context = funcOp.getContext();
-    RewritePatternSet patterns(context);
-
+    Operation *op = getOperation();
+    MLIRContext &ctx = getContext();
+    RewritePatternSet patterns(&ctx);
     populateInlineConstantOperandsPatterns(patterns);
-    (void)applyPatternsAndFoldGreedily(funcOp.getBody(), std::move(patterns));
+    (void)applyPatternsAndFoldGreedily(op, std::move(patterns));
   }
 };
 } // namespace
-
-std::unique_ptr<OperationPass<func::FuncOp>>
-mlir::createLinalgInlineScalarOperandsPass() {
-  return std::make_unique<LinalgInlineScalarOperandsPass>();
-}

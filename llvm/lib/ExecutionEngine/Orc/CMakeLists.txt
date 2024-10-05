@@ -1,3 +1,7 @@
+if (NOT HAVE_CXX_ATOMICS64_WITHOUT_LIB)
+  set (atomic_lib atomic)
+endif()
+
 if( CMAKE_HOST_UNIX AND HAVE_LIBRT )
   set(rt_lib rt)
 endif()
@@ -9,7 +13,6 @@ add_llvm_component_library(LLVMOrcJIT
   CompileUtils.cpp
   Core.cpp
   DebugObjectManagerPlugin.cpp
-  DebuggerSupportPlugin.cpp
   DebugUtils.cpp
   EPCDynamicLibrarySearchGenerator.cpp
   EPCDebugObjectRegistrar.cpp
@@ -26,8 +29,10 @@ add_llvm_component_library(LLVMOrcJIT
   JITTargetMachineBuilder.cpp
   LazyReexports.cpp
   Layer.cpp
+  LoadLinkableFile.cpp
   LookupAndRecordAddrs.cpp
   LLJIT.cpp
+  MachO.cpp
   MachOPlatform.cpp
   MapperJITLinkMemoryManager.cpp
   MemoryMapper.cpp
@@ -38,6 +43,7 @@ add_llvm_component_library(LLVMOrcJIT
   OrcABISupport.cpp
   OrcV2CBindings.cpp
   RTDyldObjectLinkingLayer.cpp
+  SectCreate.cpp
   SimpleRemoteEPC.cpp
   Speculation.cpp
   SpeculateAnalyses.cpp
@@ -53,8 +59,10 @@ add_llvm_component_library(LLVMOrcJIT
   LINK_LIBS
   ${LLVM_PTHREAD_LIB}
   ${rt_lib}
+  ${atomic_lib}
 
   LINK_COMPONENTS
+  BinaryFormat
   Core
   ExecutionEngine
   JITLink
@@ -63,14 +71,15 @@ add_llvm_component_library(LLVMOrcJIT
   OrcTargetProcess
   WindowsDriver
   MC
-  MCDisassembler
   Passes
   RuntimeDyld
   Support
   Target
+  TargetParser
   TransformUtils
   )
 
+add_subdirectory(Debugging)
 add_subdirectory(Shared)
 add_subdirectory(TargetProcess)
 

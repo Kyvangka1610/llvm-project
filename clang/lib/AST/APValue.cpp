@@ -90,7 +90,7 @@ QualType APValue::LValueBase::getType() const {
   // For a materialized temporary, the type of the temporary we materialized
   // may not be the type of the expression.
   if (const MaterializeTemporaryExpr *MTE =
-          clang::dyn_cast<MaterializeTemporaryExpr>(Base)) {
+          llvm::dyn_cast<MaterializeTemporaryExpr>(Base)) {
     SmallVector<const Expr *, 2> CommaLHSs;
     SmallVector<SubobjectAdjustment, 2> Adjustments;
     const Expr *Temp = MTE->getSubExpr();
@@ -156,10 +156,10 @@ void APValue::LValuePathEntry::Profile(llvm::FoldingSetNodeID &ID) const {
 
 APValue::LValuePathSerializationHelper::LValuePathSerializationHelper(
     ArrayRef<LValuePathEntry> Path, QualType ElemTy)
-    : ElemTy((const void *)ElemTy.getTypePtrOrNull()), Path(Path) {}
+    : Ty((const void *)ElemTy.getTypePtrOrNull()), Path(Path) {}
 
 QualType APValue::LValuePathSerializationHelper::getType() {
-  return QualType::getFromOpaquePtr(ElemTy);
+  return QualType::getFromOpaquePtr(Ty);
 }
 
 namespace {
@@ -390,11 +390,13 @@ APValue &APValue::operator=(const APValue &RHS) {
 }
 
 APValue &APValue::operator=(APValue &&RHS) {
-  if (Kind != None && Kind != Indeterminate)
-    DestroyDataAndMakeUninit();
-  Kind = RHS.Kind;
-  Data = RHS.Data;
-  RHS.Kind = None;
+  if (this != &RHS) {
+    if (Kind != None && Kind != Indeterminate)
+      DestroyDataAndMakeUninit();
+    Kind = RHS.Kind;
+    Data = RHS.Data;
+    RHS.Kind = None;
+  }
   return *this;
 }
 
@@ -702,6 +704,9 @@ void APValue::printPretty(raw_ostream &Out, const PrintingPolicy &Policy,
     return;
   }
 
+  if (const auto *AT = Ty->getAs<AtomicType>())
+    Ty = AT->getValueType();
+
   switch (getKind()) {
   case APValue::None:
     Out << "<out of lifetime>";
@@ -839,6 +844,10 @@ void APValue::printPretty(raw_ostream &Out, const PrintingPolicy &Policy,
           Out << *VD;
           ElemTy = VD->getType();
         }
+      } else if (ElemTy->isAnyComplexType()) {
+        // The lvalue refers to a complex type
+        Out << (Path[I].getAsArrayIndex() == 0 ? ".real" : ".imag");
+        ElemTy = ElemTy->castAs<ComplexType>()->getElementType();
       } else {
         // The lvalue must refer to an array.
         Out << '[' << Path[I].getAsArrayIndex() << ']';
@@ -899,7 +908,8 @@ void APValue::printPretty(raw_ostream &Out, const PrintingPolicy &Policy,
     for (const auto *FI : RD->fields()) {
       if (!First)
         Out << ", ";
-      if (FI->isUnnamedBitfield()) continue;
+      if (FI->isUnnamedBitField())
+        continue;
       getStructField(FI->getFieldIndex()).
         printPretty(Out, Policy, FI->getType(), Ctx);
       First = false;
@@ -937,7 +947,6 @@ std::string APValue::getAsString(const ASTContext &Ctx, QualType Ty) const {
   std::string Result;
   llvm::raw_string_ostream Out(Result);
   printPretty(Out, Ctx, Ty);
-  Out.flush();
   return Result;
 }
 
@@ -984,7 +993,7 @@ bool APValue::hasLValuePath() const {
 ArrayRef<APValue::LValuePathEntry> APValue::getLValuePath() const {
   assert(isLValue() && hasLValuePath() && "Invalid accessor");
   const LV &LVal = *((const LV *)(const char *)&Data);
-  return llvm::makeArrayRef(LVal.getPath(), LVal.PathLength);
+  return llvm::ArrayRef(LVal.getPath(), LVal.PathLength);
 }
 
 unsigned APValue::getLValueCallIndex() const {
@@ -1062,7 +1071,7 @@ ArrayRef<const CXXRecordDecl*> APValue::getMemberPointerPath() const {
   assert(isMemberPointer() && "Invalid accessor");
   const MemberPointerData &MPD =
       *((const MemberPointerData *)(const char *)&Data);
-  return llvm::makeArrayRef(MPD.getPath(), MPD.PathLength);
+  return llvm::ArrayRef(MPD.getPath(), MPD.PathLength);
 }
 
 void APValue::MakeLValue() {
@@ -1109,7 +1118,7 @@ LinkageInfo LinkageComputer::getLVForValue(const APValue &V,
 
   auto MergeLV = [&](LinkageInfo MergeLV) {
     LV.merge(MergeLV);
-    return LV.getLinkage() == InternalLinkage;
+    return LV.getLinkage() == Linkage::Internal;
   };
   auto Merge = [&](const APValue &V) {
     return MergeLV(getLVForValue(V, computation));

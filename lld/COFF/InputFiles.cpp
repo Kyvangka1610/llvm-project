@@ -17,7 +17,6 @@
 #include "lld/Common/DWARF.h"
 #include "llvm-c/lto.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/Triple.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/BinaryFormat/COFF.h"
 #include "llvm/DebugInfo/CodeView/DebugSubsectionRecord.h"
@@ -26,6 +25,7 @@
 #include "llvm/DebugInfo/CodeView/TypeDeserializer.h"
 #include "llvm/DebugInfo/PDB/Native/NativeSession.h"
 #include "llvm/DebugInfo/PDB/Native/PDBFile.h"
+#include "llvm/IR/Mangler.h"
 #include "llvm/LTO/LTO.h"
 #include "llvm/Object/Binary.h"
 #include "llvm/Object/COFF.h"
@@ -36,7 +36,9 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Target/TargetOptions.h"
+#include "llvm/TargetParser/Triple.h"
 #include <cstring>
+#include <optional>
 #include <system_error>
 #include <utility>
 
@@ -60,7 +62,7 @@ static StringRef getBasename(StringRef path) {
 std::string lld::toString(const coff::InputFile *file) {
   if (!file)
     return "<internal>";
-  if (file->parentName.empty() || file->kind() == coff::InputFile::ImportKind)
+  if (file->parentName.empty())
     return std::string(file->getName());
 
   return (getBasename(file->parentName) + "(" + getBasename(file->getName()) +
@@ -71,7 +73,7 @@ std::string lld::toString(const coff::InputFile *file) {
 /// Checks that Source is compatible with being a weak alias to Target.
 /// If Source is Undefined and has no weak alias set, makes it a weak
 /// alias to Target.
-static void checkAndSetWeakAlias(SymbolTable *symtab, InputFile *f,
+static void checkAndSetWeakAlias(COFFLinkerContext &ctx, InputFile *f,
                                  Symbol *source, Symbol *target) {
   if (auto *u = dyn_cast<Undefined>(source)) {
     if (u->weakAlias && u->weakAlias != target) {
@@ -80,9 +82,9 @@ static void checkAndSetWeakAlias(SymbolTable *symtab, InputFile *f,
       // of another symbol emitted near the weak symbol.
       // Just use the definition from the first object file that defined
       // this weak symbol.
-      if (config->mingw)
+      if (ctx.config.allowDuplicateWeak)
         return;
-      symtab->reportDuplicate(source, f);
+      ctx.symtab.reportDuplicate(source, f);
     }
     u->weakAlias = target;
   }
@@ -99,6 +101,20 @@ void ArchiveFile::parse() {
   // Parse a MemoryBufferRef as an archive file.
   file = CHECK(Archive::create(mb), this);
 
+  // Try to read symbols from ECSYMBOLS section on ARM64EC.
+  if (isArm64EC(ctx.config.machine)) {
+    iterator_range<Archive::symbol_iterator> symbols =
+        CHECK(file->ec_symbols(), this);
+    if (!symbols.empty()) {
+      for (const Archive::Symbol &sym : symbols)
+        ctx.symtab.addLazyArchive(this, sym);
+
+      // Read both EC and native symbols on ARM64X.
+      if (ctx.config.machine != ARM64X)
+        return;
+    }
+  }
+
   // Read the symbol table to construct Lazy objects.
   for (const Archive::Symbol &sym : file->symbols())
     ctx.symtab.addLazyArchive(this, sym);
@@ -108,13 +124,13 @@ void ArchiveFile::parse() {
 void ArchiveFile::addMember(const Archive::Symbol &sym) {
   const Archive::Child &c =
       CHECK(sym.getMember(),
-            "could not get the member for symbol " + toCOFFString(sym));
+            "could not get the member for symbol " + toCOFFString(ctx, sym));
 
   // Return an empty buffer if we have already returned the same buffer.
   if (!seen.insert(c.getChildOffset()).second)
     return;
 
-  driver->enqueueArchiveMember(c, sym, getName());
+  ctx.driver.enqueueArchiveMember(c, sym, getName());
 }
 
 std::vector<MemoryBufferRef> lld::coff::getArchiveMembers(Archive *file) {
@@ -151,6 +167,40 @@ void ObjFile::parseLazy() {
   }
 }
 
+struct ECMapEntry {
+  ulittle32_t src;
+  ulittle32_t dst;
+  ulittle32_t type;
+};
+
+void ObjFile::initializeECThunks() {
+  for (SectionChunk *chunk : hybmpChunks) {
+    if (chunk->getContents().size() % sizeof(ECMapEntry)) {
+      error("Invalid .hybmp chunk size " + Twine(chunk->getContents().size()));
+      continue;
+    }
+
+    const uint8_t *end =
+        chunk->getContents().data() + chunk->getContents().size();
+    for (const uint8_t *iter = chunk->getContents().data(); iter != end;
+         iter += sizeof(ECMapEntry)) {
+      auto entry = reinterpret_cast<const ECMapEntry *>(iter);
+      switch (entry->type) {
+      case Arm64ECThunkType::Entry:
+        ctx.symtab.addEntryThunk(getSymbol(entry->src), getSymbol(entry->dst));
+        break;
+      case Arm64ECThunkType::Exit:
+        ctx.symtab.addExitThunk(getSymbol(entry->src), getSymbol(entry->dst));
+        break;
+      case Arm64ECThunkType::GuestExit:
+        break;
+      default:
+        warn("Ignoring unknown EC thunk type " + Twine(entry->type));
+      }
+    }
+  }
+}
+
 void ObjFile::parse() {
   // Parse a memory buffer as a COFF file.
   std::unique_ptr<Binary> bin = CHECK(createBinary(mb), this);
@@ -167,6 +217,7 @@ void ObjFile::parse() {
   initializeSymbols();
   initializeFlags();
   initializeDependencies();
+  initializeECThunks();
 }
 
 const coff_section *ObjFile::getSection(uint32_t i) {
@@ -235,13 +286,17 @@ SectionChunk *ObjFile::readSection(uint32_t sectionNumber,
   // CodeView needs linker support. We need to interpret debug info,
   // and then write it to a separate .pdb file.
 
-  // Ignore DWARF debug info unless /debug is given.
-  if (!config->debug && name.startswith(".debug_"))
+  // Ignore DWARF debug info unless requested to be included.
+  if (!ctx.config.includeDwarfChunks && name.starts_with(".debug_"))
     return nullptr;
 
   if (sec->Characteristics & llvm::COFF::IMAGE_SCN_LNK_REMOVE)
     return nullptr;
-  auto *c = make<SectionChunk>(this, sec);
+  SectionChunk *c;
+  if (isArm64EC(getMachineType()))
+    c = make<SectionChunkEC>(this, sec);
+  else
+    c = make<SectionChunk>(this, sec);
   if (def)
     c->checksum = def->CheckSum;
 
@@ -259,13 +314,15 @@ SectionChunk *ObjFile::readSection(uint32_t sectionNumber,
     guardEHContChunks.push_back(c);
   else if (name == ".sxdata")
     sxDataChunks.push_back(c);
-  else if (config->tailMerge && sec->NumberOfRelocations == 0 &&
-           name == ".rdata" && leaderName.startswith("??_C@"))
+  else if (isArm64EC(getMachineType()) && name == ".hybmp$x")
+    hybmpChunks.push_back(c);
+  else if (ctx.config.tailMerge && sec->NumberOfRelocations == 0 &&
+           name == ".rdata" && leaderName.starts_with("??_C@"))
     // COFF sections that look like string literal sections (i.e. no
     // relocations, in .rdata, leader symbol name matches the MSVC name mangling
     // for string literals) are subject to string tail merging.
     MergeChunk::addSection(ctx, c);
-  else if (name == ".rsrc" || name.startswith(".rsrc$"))
+  else if (name == ".rsrc" || name.starts_with(".rsrc$"))
     resourceChunks.push_back(c);
   else
     chunks.push_back(c);
@@ -365,7 +422,7 @@ Symbol *ObjFile::createRegular(COFFSymbolRef sym) {
     // everything should be fine. If something actually refers to the symbol
     // (e.g. the undefined weak alias), linking will fail due to undefined
     // references at the end.
-    if (config->mingw && name.startswith(".weak."))
+    if (ctx.config.mingw && name.starts_with(".weak."))
       return nullptr;
     return ctx.symtab.addUndefined(name, this, false);
   }
@@ -396,15 +453,15 @@ void ObjFile::initializeSymbols() {
       symbols[i] = createUndefined(coffSym);
       uint32_t tagIndex = coffSym.getAux<coff_aux_weak_external>()->TagIndex;
       weakAliases.emplace_back(symbols[i], tagIndex);
-    } else if (Optional<Symbol *> optSym =
+    } else if (std::optional<Symbol *> optSym =
                    createDefined(coffSym, comdatDefs, prevailingComdat)) {
       symbols[i] = *optSym;
-      if (config->mingw && prevailingComdat)
+      if (ctx.config.mingw && prevailingComdat)
         recordPrevailingSymbolForMingw(coffSym, prevailingSectionMap);
     } else {
-      // createDefined() returns None if a symbol belongs to a section that
-      // was pending at the point when the symbol was read. This can happen in
-      // two cases:
+      // createDefined() returns std::nullopt if a symbol belongs to a section
+      // that was pending at the point when the symbol was read. This can happen
+      // in two cases:
       // 1) section definition symbol for a comdat leader;
       // 2) symbol belongs to a comdat section associated with another section.
       // In both of these cases, we can expect the section to be resolved by
@@ -420,7 +477,7 @@ void ObjFile::initializeSymbols() {
     if (const coff_aux_section_definition *def = sym.getSectionDefinition()) {
       if (def->Selection == IMAGE_COMDAT_SELECT_ASSOCIATIVE)
         readAssociativeDefinition(sym, def);
-      else if (config->mingw)
+      else if (ctx.config.mingw)
         maybeAssociateSEHForMingw(sym, def, prevailingSectionMap);
     }
     if (sparseChunks[sym.getSectionNumber()] == pendingComdat) {
@@ -435,7 +492,7 @@ void ObjFile::initializeSymbols() {
   for (auto &kv : weakAliases) {
     Symbol *sym = kv.first;
     uint32_t idx = kv.second;
-    checkAndSetWeakAlias(&ctx.symtab, this, sym, symbols[idx]);
+    checkAndSetWeakAlias(ctx, this, sym, symbols[idx]);
   }
 
   // Free the memory used by sparseChunks now that symbol loading is finished.
@@ -495,10 +552,10 @@ void ObjFile::handleComdatSelection(
   // Clang on the other hand picks "any". To be able to link two object files
   // with a __declspec(selectany) declaration, one compiled with gcc and the
   // other with clang, we merge them as proper "same size as"
-  if (config->mingw && ((selection == IMAGE_COMDAT_SELECT_ANY &&
-                         leaderSelection == IMAGE_COMDAT_SELECT_SAME_SIZE) ||
-                        (selection == IMAGE_COMDAT_SELECT_SAME_SIZE &&
-                         leaderSelection == IMAGE_COMDAT_SELECT_ANY))) {
+  if (ctx.config.mingw && ((selection == IMAGE_COMDAT_SELECT_ANY &&
+                            leaderSelection == IMAGE_COMDAT_SELECT_SAME_SIZE) ||
+                           (selection == IMAGE_COMDAT_SELECT_SAME_SIZE &&
+                            leaderSelection == IMAGE_COMDAT_SELECT_ANY))) {
     leaderSelection = selection = IMAGE_COMDAT_SELECT_SAME_SIZE;
   }
 
@@ -510,7 +567,7 @@ void ObjFile::handleComdatSelection(
   // seems better though.
   // (This behavior matches ModuleLinker::getComdatResult().)
   if (selection != leaderSelection) {
-    log(("conflicting comdat type for " + toString(*leader) + ": " +
+    log(("conflicting comdat type for " + toString(ctx, *leader) + ": " +
          Twine((int)leaderSelection) + " in " + toString(leader->getFile()) +
          " and " + Twine((int)selection) + " in " + toString(this))
             .str());
@@ -529,7 +586,7 @@ void ObjFile::handleComdatSelection(
 
   case IMAGE_COMDAT_SELECT_SAME_SIZE:
     if (leaderChunk->getSize() != getSection(sym)->SizeOfRawData) {
-      if (!config->mingw) {
+      if (!ctx.config.mingw) {
         ctx.symtab.reportDuplicate(leader, this);
       } else {
         const coff_aux_section_definition *leaderDef = nullptr;
@@ -581,7 +638,7 @@ void ObjFile::handleComdatSelection(
   }
 }
 
-Optional<Symbol *> ObjFile::createDefined(
+std::optional<Symbol *> ObjFile::createDefined(
     COFFSymbolRef sym,
     std::vector<const coff_aux_section_definition *> &comdatDefs,
     bool &prevailing) {
@@ -606,7 +663,7 @@ Optional<Symbol *> ObjFile::createDefined(
 
     if (sym.isExternal())
       return ctx.symtab.addAbsolute(name, sym);
-    return make<DefinedAbsolute>(name, sym);
+    return make<DefinedAbsolute>(ctx, name, sym);
   }
 
   int32_t sectionNumber = sym.getSectionNumber();
@@ -628,8 +685,8 @@ Optional<Symbol *> ObjFile::createDefined(
   // The second symbol entry has the name of the comdat symbol, called the
   // "comdat leader".
   // When this function is called for the first symbol entry of a comdat,
-  // it sets comdatDefs and returns None, and when it's called for the second
-  // symbol entry it reads comdatDefs and then sets it back to nullptr.
+  // it sets comdatDefs and returns std::nullopt, and when it's called for the
+  // second symbol entry it reads comdatDefs and then sets it back to nullptr.
 
   // Handle comdat leader.
   if (const coff_aux_section_definition *def = comdatDefs[sectionNumber]) {
@@ -660,6 +717,8 @@ Optional<Symbol *> ObjFile::createDefined(
     if (prevailing) {
       SectionChunk *c = readSection(sectionNumber, def, getName());
       sparseChunks[sectionNumber] = c;
+      if (!c)
+        return nullptr;
       c->sym = cast<DefinedRegular>(leader);
       c->selection = selection;
       cast<DefinedRegular>(leader)->data = &c->repl;
@@ -676,13 +735,13 @@ Optional<Symbol *> ObjFile::createDefined(
       if (def->Selection != IMAGE_COMDAT_SELECT_ASSOCIATIVE)
         comdatDefs[sectionNumber] = def;
     }
-    return None;
+    return std::nullopt;
   }
 
   return createRegular(sym);
 }
 
-MachineTypes ObjFile::getMachineType() {
+MachineTypes ObjFile::getMachineType() const {
   if (coffObj)
     return static_cast<MachineTypes>(coffObj->getMachine());
   return IMAGE_FILE_MACHINE_UNKNOWN;
@@ -706,7 +765,7 @@ void ObjFile::initializeFlags() {
 
   DebugSubsectionArray subsections;
 
-  BinaryStreamReader reader(data, support::little);
+  BinaryStreamReader reader(data, llvm::endianness::little);
   ExitOnError exitOnErr;
   exitOnErr(reader.readArray(subsections, data.size()));
 
@@ -734,7 +793,8 @@ void ObjFile::initializeFlags() {
       if (sym->kind() == SymbolKind::S_OBJNAME) {
         auto objName = cantFail(SymbolDeserializer::deserializeAs<ObjNameSym>(
             sym.get()));
-        pchSignature = objName.Signature;
+        if (objName.Signature)
+          pchSignature = objName.Signature;
       }
       offset += sym->length();
     }
@@ -749,7 +809,7 @@ void ObjFile::initializeFlags() {
 // DebugTypes.h). Both cases only happen with cl.exe: clang-cl produces regular
 // output even with /Yc and /Yu and with /Zi.
 void ObjFile::initializeDependencies() {
-  if (!config->debug)
+  if (!ctx.config.debug)
     return;
 
   bool isPCH = false;
@@ -771,7 +831,7 @@ void ObjFile::initializeDependencies() {
   // Get the first type record. It will indicate if this object uses a type
   // server (/Zi) or a PCH file (/Yu).
   CVTypeArray types;
-  BinaryStreamReader reader(data, support::little);
+  BinaryStreamReader reader(data, llvm::endianness::little);
   cantFail(reader.readArray(types, reader.getLength()));
   CVTypeArray::Iterator firstType = types.begin();
   if (firstType == types.end())
@@ -800,6 +860,10 @@ void ObjFile::initializeDependencies() {
   if (firstType->kind() == LF_PRECOMP) {
     PrecompRecord precomp = cantFail(
         TypeDeserializer::deserializeAs<PrecompRecord>(firstType->data()));
+    // We're better off trusting the LF_PRECOMP signature. In some cases the
+    // S_OBJNAME record doesn't contain a valid PCH signature.
+    if (precomp.Signature)
+      pchSignature = precomp.Signature;
     debugTypesObj = makeUsePrecompSource(ctx, this, precomp);
     // Drop the LF_PRECOMP record from the input stream.
     debugTypes = debugTypes.drop_front(firstType->RecordData.size());
@@ -808,19 +872,6 @@ void ObjFile::initializeDependencies() {
 
   // This is a plain old object file.
   debugTypesObj = makeTpiSource(ctx, this);
-}
-
-// Make a PDB path assuming the PDB is in the same folder as the OBJ
-static std::string getPdbBaseName(ObjFile *file, StringRef tSPath) {
-  StringRef localPath =
-      !file->parentName.empty() ? file->parentName : file->getName();
-  SmallString<128> path = sys::path::parent_path(localPath);
-
-  // Currently, type server PDBs are only created by MSVC cl, which only runs
-  // on Windows, so we can assume type server paths are Windows style.
-  sys::path::append(path,
-                    sys::path::filename(tSPath, sys::path::Style::windows));
-  return std::string(path.str());
 }
 
 // The casing of the PDB path stamped in the OBJ can differ from the actual path
@@ -835,18 +886,36 @@ static std::string normalizePdbPath(StringRef path) {
 }
 
 // If existing, return the actual PDB path on disk.
-static Optional<std::string> findPdbPath(StringRef pdbPath,
-                                         ObjFile *dependentFile) {
+static std::optional<std::string>
+findPdbPath(StringRef pdbPath, ObjFile *dependentFile, StringRef outputPath) {
   // Ensure the file exists before anything else. In some cases, if the path
   // points to a removable device, Driver::enqueuePath() would fail with an
   // error (EAGAIN, "resource unavailable try again") which we want to skip
   // silently.
   if (llvm::sys::fs::exists(pdbPath))
     return normalizePdbPath(pdbPath);
-  std::string ret = getPdbBaseName(dependentFile, pdbPath);
-  if (llvm::sys::fs::exists(ret))
-    return normalizePdbPath(ret);
-  return None;
+
+  StringRef objPath = !dependentFile->parentName.empty()
+                          ? dependentFile->parentName
+                          : dependentFile->getName();
+
+  // Currently, type server PDBs are only created by MSVC cl, which only runs
+  // on Windows, so we can assume type server paths are Windows style.
+  StringRef pdbName = sys::path::filename(pdbPath, sys::path::Style::windows);
+
+  // Check if the PDB is in the same folder as the OBJ.
+  SmallString<128> path;
+  sys::path::append(path, sys::path::parent_path(objPath), pdbName);
+  if (llvm::sys::fs::exists(path))
+    return normalizePdbPath(path);
+
+  // Check if the PDB is in the output folder.
+  path.clear();
+  sys::path::append(path, sys::path::parent_path(outputPath), pdbName);
+  if (llvm::sys::fs::exists(path))
+    return normalizePdbPath(path);
+
+  return std::nullopt;
 }
 
 PDBInputFile::PDBInputFile(COFFLinkerContext &ctx, MemoryBufferRef m)
@@ -857,7 +926,7 @@ PDBInputFile::~PDBInputFile() = default;
 PDBInputFile *PDBInputFile::findFromRecordPath(const COFFLinkerContext &ctx,
                                                StringRef path,
                                                ObjFile *fromFile) {
-  auto p = findPdbPath(path.str(), fromFile);
+  auto p = findPdbPath(path.str(), fromFile, ctx.config.outputFile);
   if (!p)
     return nullptr;
   auto it = ctx.pdbInputFileInstances.find(*p);
@@ -870,11 +939,13 @@ void PDBInputFile::parse() {
   ctx.pdbInputFileInstances[mb.getBufferIdentifier().str()] = this;
 
   std::unique_ptr<pdb::IPDBSession> thisSession;
-  loadErr.emplace(pdb::NativeSession::createFromPdb(
-      MemoryBuffer::getMemBuffer(mb, false), thisSession));
-  if (*loadErr)
+  Error E = pdb::NativeSession::createFromPdb(
+      MemoryBuffer::getMemBuffer(mb, false), thisSession);
+  if (E) {
+    loadErrorStr.emplace(toString(std::move(E)));
     return; // fail silently at this point - the error will be handled later,
             // when merging the debug type stream
+  }
 
   session.reset(static_cast<pdb::NativeSession *>(thisSession.release()));
 
@@ -882,7 +953,7 @@ void PDBInputFile::parse() {
   auto expectedInfo = pdbFile.getPDBInfoStream();
   // All PDB Files should have an Info stream.
   if (!expectedInfo) {
-    loadErr.emplace(expectedInfo.takeError());
+    loadErrorStr.emplace(toString(expectedInfo.takeError()));
     return;
   }
   debugTypesObj = makeTypeServerSource(ctx, this);
@@ -891,57 +962,92 @@ void PDBInputFile::parse() {
 // Used only for DWARF debug info, which is not common (except in MinGW
 // environments). This returns an optional pair of file name and line
 // number for where the variable was defined.
-Optional<std::pair<StringRef, uint32_t>>
+std::optional<std::pair<StringRef, uint32_t>>
 ObjFile::getVariableLocation(StringRef var) {
   if (!dwarf) {
     dwarf = make<DWARFCache>(DWARFContext::create(*getCOFFObj()));
     if (!dwarf)
-      return None;
+      return std::nullopt;
   }
-  if (config->machine == I386)
+  if (ctx.config.machine == I386)
     var.consume_front("_");
-  Optional<std::pair<std::string, unsigned>> ret = dwarf->getVariableLoc(var);
+  std::optional<std::pair<std::string, unsigned>> ret =
+      dwarf->getVariableLoc(var);
   if (!ret)
-    return None;
+    return std::nullopt;
   return std::make_pair(saver().save(ret->first), ret->second);
 }
 
 // Used only for DWARF debug info, which is not common (except in MinGW
 // environments).
-Optional<DILineInfo> ObjFile::getDILineInfo(uint32_t offset,
-                                            uint32_t sectionIndex) {
+std::optional<DILineInfo> ObjFile::getDILineInfo(uint32_t offset,
+                                                 uint32_t sectionIndex) {
   if (!dwarf) {
     dwarf = make<DWARFCache>(DWARFContext::create(*getCOFFObj()));
     if (!dwarf)
-      return None;
+      return std::nullopt;
   }
 
   return dwarf->getDILineInfo(offset, sectionIndex);
 }
 
 void ObjFile::enqueuePdbFile(StringRef path, ObjFile *fromFile) {
-  auto p = findPdbPath(path.str(), fromFile);
+  auto p = findPdbPath(path.str(), fromFile, ctx.config.outputFile);
   if (!p)
     return;
   auto it = ctx.pdbInputFileInstances.emplace(*p, nullptr);
   if (!it.second)
     return; // already scheduled for load
-  driver->enqueuePDB(*p);
+  ctx.driver.enqueuePDB(*p);
+}
+
+ImportFile::ImportFile(COFFLinkerContext &ctx, MemoryBufferRef m)
+    : InputFile(ctx, ImportKind, m), live(!ctx.config.doGC) {}
+
+MachineTypes ImportFile::getMachineType() const {
+  uint16_t machine =
+      reinterpret_cast<const coff_import_header *>(mb.getBufferStart())
+          ->Machine;
+  return MachineTypes(machine);
+}
+
+ImportThunkChunk *ImportFile::makeImportThunk() {
+  switch (hdr->Machine) {
+  case AMD64:
+    return make<ImportThunkChunkX64>(ctx, impSym);
+  case I386:
+    return make<ImportThunkChunkX86>(ctx, impSym);
+  case ARM64:
+    return make<ImportThunkChunkARM64>(ctx, impSym, ARM64);
+  case ARMNT:
+    return make<ImportThunkChunkARM>(ctx, impSym);
+  }
+  llvm_unreachable("unknown machine type");
 }
 
 void ImportFile::parse() {
-  const char *buf = mb.getBufferStart();
-  const auto *hdr = reinterpret_cast<const coff_import_header *>(buf);
+  const auto *hdr =
+      reinterpret_cast<const coff_import_header *>(mb.getBufferStart());
 
   // Check if the total size is valid.
-  if (mb.getBufferSize() != sizeof(*hdr) + hdr->SizeOfData)
+  if (mb.getBufferSize() < sizeof(*hdr) ||
+      mb.getBufferSize() != sizeof(*hdr) + hdr->SizeOfData)
     fatal("broken import library");
 
   // Read names and create an __imp_ symbol.
-  StringRef name = saver().save(StringRef(buf + sizeof(*hdr)));
+  StringRef buf = mb.getBuffer().substr(sizeof(*hdr));
+  auto split = buf.split('\0');
+  buf = split.second;
+  StringRef name;
+  if (isArm64EC(hdr->Machine)) {
+    if (std::optional<std::string> demangledName =
+            getArm64ECDemangledFunctionName(split.first))
+      name = saver().save(*demangledName);
+  }
+  if (name.empty())
+    name = saver().save(split.first);
   StringRef impName = saver().save("__imp_" + name);
-  const char *nameStart = buf + sizeof(coff_import_header) + name.size() + 1;
-  dllName = std::string(StringRef(nameStart));
+  dllName = buf.split('\0').first;
   StringRef extName;
   switch (hdr->getNameType()) {
   case IMPORT_ORDINAL:
@@ -957,26 +1063,74 @@ void ImportFile::parse() {
     extName = ltrim1(name, "?@_");
     extName = extName.substr(0, extName.find('@'));
     break;
+  case IMPORT_NAME_EXPORTAS:
+    extName = buf.substr(dllName.size() + 1).split('\0').first;
+    break;
   }
 
   this->hdr = hdr;
   externalName = extName;
 
-  impSym = ctx.symtab.addImportData(impName, this);
+  bool isCode = hdr->getType() == llvm::COFF::IMPORT_CODE;
+
+  if (ctx.config.machine != ARM64EC) {
+    impSym = ctx.symtab.addImportData(impName, this, location);
+  } else {
+    // In addition to the regular IAT, ARM64EC also contains an auxiliary IAT,
+    // which holds addresses that are guaranteed to be callable directly from
+    // ARM64 code. Function symbol naming is swapped: __imp_ symbols refer to
+    // the auxiliary IAT, while __imp_aux_ symbols refer to the regular IAT. For
+    // data imports, the naming is reversed.
+    StringRef auxImpName = saver().save("__imp_aux_" + name);
+    if (isCode) {
+      impSym = ctx.symtab.addImportData(auxImpName, this, location);
+      impECSym = ctx.symtab.addImportData(impName, this, auxLocation);
+    } else {
+      impSym = ctx.symtab.addImportData(impName, this, location);
+      impECSym = ctx.symtab.addImportData(auxImpName, this, auxLocation);
+    }
+    if (!impECSym)
+      return;
+
+    StringRef auxImpCopyName = saver().save("__auximpcopy_" + name);
+    auxImpCopySym =
+        ctx.symtab.addImportData(auxImpCopyName, this, auxCopyLocation);
+    if (!auxImpCopySym)
+      return;
+  }
   // If this was a duplicate, we logged an error but may continue;
   // in this case, impSym is nullptr.
   if (!impSym)
     return;
 
   if (hdr->getType() == llvm::COFF::IMPORT_CONST)
-    static_cast<void>(ctx.symtab.addImportData(name, this));
+    static_cast<void>(ctx.symtab.addImportData(name, this, location));
 
   // If type is function, we need to create a thunk which jump to an
   // address pointed by the __imp_ symbol. (This allows you to call
   // DLL functions just like regular non-DLL functions.)
-  if (hdr->getType() == llvm::COFF::IMPORT_CODE)
-    thunkSym = ctx.symtab.addImportThunk(
-        name, cast_or_null<DefinedImportData>(impSym), hdr->Machine);
+  if (isCode) {
+    if (ctx.config.machine != ARM64EC) {
+      thunkSym = ctx.symtab.addImportThunk(name, impSym, makeImportThunk());
+    } else {
+      thunkSym = ctx.symtab.addImportThunk(
+          name, impSym, make<ImportThunkChunkX64>(ctx, impSym));
+
+      if (std::optional<std::string> mangledName =
+              getArm64ECMangledFunctionName(name)) {
+        StringRef auxThunkName = saver().save(*mangledName);
+        auxThunkSym = ctx.symtab.addImportThunk(
+            auxThunkName, impECSym,
+            make<ImportThunkChunkARM64>(ctx, impECSym, ARM64EC));
+      }
+
+      StringRef impChkName = saver().save("__impchk_" + name);
+      impchkThunk = make<ImportThunkChunkARM64EC>(this);
+      impchkThunk->sym =
+          ctx.symtab.addImportThunk(impChkName, impSym, impchkThunk);
+      ctx.driver.pullArm64ECIcallHelper();
+    }
+  }
 }
 
 BitcodeFile::BitcodeFile(COFFLinkerContext &ctx, MemoryBufferRef mb,
@@ -984,8 +1138,10 @@ BitcodeFile::BitcodeFile(COFFLinkerContext &ctx, MemoryBufferRef mb,
                          bool lazy)
     : InputFile(ctx, BitcodeKind, mb, lazy) {
   std::string path = mb.getBufferIdentifier().str();
-  if (config->thinLTOIndexOnly)
-    path = replaceThinLTOSuffix(mb.getBufferIdentifier());
+  if (ctx.config.thinLTOIndexOnly)
+    path = replaceThinLTOSuffix(mb.getBufferIdentifier(),
+                                ctx.config.thinLTOObjectSuffixReplace.first,
+                                ctx.config.thinLTOObjectSuffixReplace.second);
 
   // ThinLTO assumes that all MemoryBufferRefs given to it have a unique
   // name. If two archives define two members with the same name, this
@@ -1005,36 +1161,9 @@ BitcodeFile::BitcodeFile(COFFLinkerContext &ctx, MemoryBufferRef mb,
 
 BitcodeFile::~BitcodeFile() = default;
 
-namespace {
-// Convenience class for initializing a coff_section with specific flags.
-class FakeSection {
-public:
-  FakeSection(int c) { section.Characteristics = c; }
-
-  coff_section section;
-};
-
-// Convenience class for initializing a SectionChunk with specific flags.
-class FakeSectionChunk {
-public:
-  FakeSectionChunk(const coff_section *section) : chunk(nullptr, section) {
-    // Comdats from LTO files can't be fully treated as regular comdats
-    // at this point; we don't know what size or contents they are going to
-    // have, so we can't do proper checking of such aspects of them.
-    chunk.selection = IMAGE_COMDAT_SELECT_ANY;
-  }
-
-  SectionChunk chunk;
-};
-
-FakeSection ltoTextSection(IMAGE_SCN_MEM_EXECUTE);
-FakeSection ltoDataSection(IMAGE_SCN_CNT_INITIALIZED_DATA);
-FakeSectionChunk ltoTextSectionChunk(&ltoTextSection.section);
-FakeSectionChunk ltoDataSectionChunk(&ltoDataSection.section);
-} // namespace
-
 void BitcodeFile::parse() {
   llvm::StringSaver &saver = lld::saver();
+
   std::vector<std::pair<Symbol *, bool>> comdat(obj->getComdatTable().size());
   for (size_t i = 0; i != obj->getComdatTable().size(); ++i)
     // FIXME: Check nodeduplicate
@@ -1046,11 +1175,26 @@ void BitcodeFile::parse() {
     Symbol *sym;
     SectionChunk *fakeSC = nullptr;
     if (objSym.isExecutable())
-      fakeSC = &ltoTextSectionChunk.chunk;
+      fakeSC = &ctx.ltoTextSectionChunk.chunk;
     else
-      fakeSC = &ltoDataSectionChunk.chunk;
+      fakeSC = &ctx.ltoDataSectionChunk.chunk;
     if (objSym.isUndefined()) {
       sym = ctx.symtab.addUndefined(symName, this, false);
+      if (objSym.isWeak())
+        sym->deferUndefined = true;
+      // If one LTO object file references (i.e. has an undefined reference to)
+      // a symbol with an __imp_ prefix, the LTO compilation itself sees it
+      // as unprefixed but with a dllimport attribute instead, and doesn't
+      // understand the relation to a concrete IR symbol with the __imp_ prefix.
+      //
+      // For such cases, mark the symbol as used in a regular object (i.e. the
+      // symbol must be retained) so that the linker can associate the
+      // references in the end. If the symbol is defined in an import library
+      // or in a regular object file, this has no effect, but if it is defined
+      // in another LTO object file, this makes sure it is kept, to fulfill
+      // the reference when linking the output of the LTO compilation.
+      if (symName.starts_with("__imp_"))
+        sym->isUsedInRegularObj = true;
     } else if (objSym.isCommon()) {
       sym = ctx.symtab.addCommon(this, symName, objSym.getCommonSize());
     } else if (objSym.isWeak() && objSym.isIndirect()) {
@@ -1058,7 +1202,7 @@ void BitcodeFile::parse() {
       sym = ctx.symtab.addUndefined(symName, this, true);
       std::string fallback = std::string(objSym.getCOFFWeakExternalFallback());
       Symbol *alias = ctx.symtab.addUndefined(saver.save(fallback));
-      checkAndSetWeakAlias(&ctx.symtab, this, sym, alias);
+      checkAndSetWeakAlias(ctx, this, sym, alias);
     } else if (comdatIndex != -1) {
       if (symName == obj->getComdatTable()[comdatIndex].first) {
         sym = comdat[comdatIndex].first;
@@ -1075,9 +1219,9 @@ void BitcodeFile::parse() {
     }
     symbols.push_back(sym);
     if (objSym.isUsed())
-      config->gcroot.push_back(sym);
+      ctx.config.gcroot.push_back(sym);
   }
-  directives = obj->getCOFFLinkerOpts();
+  directives = saver.save(obj->getCOFFLinkerOpts());
 }
 
 void BitcodeFile::parseLazy() {
@@ -1086,13 +1230,14 @@ void BitcodeFile::parseLazy() {
       ctx.symtab.addLazyObject(this, sym.getName());
 }
 
-MachineTypes BitcodeFile::getMachineType() {
+MachineTypes BitcodeFile::getMachineType() const {
   switch (Triple(obj->getTargetTriple()).getArch()) {
   case Triple::x86_64:
     return AMD64;
   case Triple::x86:
     return I386;
   case Triple::arm:
+  case Triple::thumb:
     return ARMNT;
   case Triple::aarch64:
     return ARM64;
@@ -1101,10 +1246,8 @@ MachineTypes BitcodeFile::getMachineType() {
   }
 }
 
-std::string lld::coff::replaceThinLTOSuffix(StringRef path) {
-  StringRef suffix = config->thinLTOObjectSuffixReplace.first;
-  StringRef repl = config->thinLTOObjectSuffixReplace.second;
-
+std::string lld::coff::replaceThinLTOSuffix(StringRef path, StringRef suffix,
+                                            StringRef repl) {
   if (path.consume_back(suffix))
     return (path + repl).str();
   return std::string(path);
@@ -1168,7 +1311,7 @@ void DLLFile::parse() {
   }
 }
 
-MachineTypes DLLFile::getMachineType() {
+MachineTypes DLLFile::getMachineType() const {
   if (coffObj)
     return static_cast<MachineTypes>(coffObj->getMachine());
   return IMAGE_FILE_MACHINE_UNKNOWN;

@@ -60,6 +60,7 @@ set(PROFILE_SOURCES
   InstrProfilingNameVar.c
   InstrProfilingVersionVar.c
   InstrProfilingWriter.c
+  InstrProfilingPlatformAIX.c
   InstrProfilingPlatformDarwin.c
   InstrProfilingPlatformFuchsia.c
   InstrProfilingPlatformLinux.c
@@ -108,6 +109,12 @@ if(COMPILER_RT_TARGET_HAS_UNAME)
  set(EXTRA_FLAGS
      ${EXTRA_FLAGS}
      -DCOMPILER_RT_HAS_UNAME=1)
+endif()
+
+if(MSVC)
+  # profile historically has only been supported with the static runtime
+  # on windows
+  set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreaded)
 endif()
 
 # We don't use the C++ Standard Library here, so avoid including it by mistake.

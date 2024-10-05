@@ -40,12 +40,13 @@
 #include "llvm/CodeGen/MachineMemOperand.h"
 #include "llvm/CodeGen/MachineOperand.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
-#include "llvm/CodeGen/RuntimeLibcalls.h"
+#include "llvm/CodeGen/RuntimeLibcallUtil.h"
 #include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/CodeGen/TargetLowering.h"
 #include "llvm/CodeGen/TargetOpcodes.h"
 #include "llvm/CodeGen/TargetRegisterInfo.h"
 #include "llvm/CodeGen/ValueTypes.h"
+#include "llvm/CodeGenTypes/MachineValueType.h"
 #include "llvm/IR/Argument.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/CallingConv.h"
@@ -72,7 +73,6 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/ErrorHandling.h"
-#include "llvm/Support/MachineValueType.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
@@ -188,15 +188,15 @@ class ARMFastISel final : public FastISel {
     bool ARMEmitCmp(const Value *Src1Value, const Value *Src2Value,
                     bool isZExt);
     bool ARMEmitLoad(MVT VT, Register &ResultReg, Address &Addr,
-                     MaybeAlign Alignment = None, bool isZExt = true,
+                     MaybeAlign Alignment = std::nullopt, bool isZExt = true,
                      bool allocReg = true);
     bool ARMEmitStore(MVT VT, unsigned SrcReg, Address &Addr,
-                      MaybeAlign Alignment = None);
+                      MaybeAlign Alignment = std::nullopt);
     bool ARMComputeAddress(const Value *Obj, Address &Addr);
     void ARMSimplifyAddress(Address &Addr, MVT VT, bool useAM3);
     bool ARMIsMemCpySmall(uint64_t Len);
     bool ARMTryEmitSmallMemCpy(Address Dest, Address Src, uint64_t Len,
-                               unsigned Alignment);
+                               MaybeAlign Alignment);
     unsigned ARMEmitIntExt(MVT SrcVT, unsigned SrcReg, MVT DestVT, bool isZExt);
     unsigned ARMMaterializeFP(const ConstantFP *CFP, MVT VT);
     unsigned ARMMaterializeInt(const Constant *C, MVT VT);
@@ -309,8 +309,8 @@ unsigned ARMFastISel::fastEmitInst_r(unsigned MachineInstOpcode,
     AddOptionalDefs(BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, MIMD, II)
                    .addReg(Op0));
     AddOptionalDefs(BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, MIMD,
-                   TII.get(TargetOpcode::COPY), ResultReg)
-                   .addReg(II.ImplicitDefs[0]));
+                            TII.get(TargetOpcode::COPY), ResultReg)
+                        .addReg(II.implicit_defs()[0]));
   }
   return ResultReg;
 }
@@ -336,8 +336,8 @@ unsigned ARMFastISel::fastEmitInst_rr(unsigned MachineInstOpcode,
                    .addReg(Op0)
                    .addReg(Op1));
     AddOptionalDefs(BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, MIMD,
-                           TII.get(TargetOpcode::COPY), ResultReg)
-                   .addReg(II.ImplicitDefs[0]));
+                            TII.get(TargetOpcode::COPY), ResultReg)
+                        .addReg(II.implicit_defs()[0]));
   }
   return ResultReg;
 }
@@ -361,8 +361,8 @@ unsigned ARMFastISel::fastEmitInst_ri(unsigned MachineInstOpcode,
                    .addReg(Op0)
                    .addImm(Imm));
     AddOptionalDefs(BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, MIMD,
-                           TII.get(TargetOpcode::COPY), ResultReg)
-                   .addReg(II.ImplicitDefs[0]));
+                            TII.get(TargetOpcode::COPY), ResultReg)
+                        .addReg(II.implicit_defs()[0]));
   }
   return ResultReg;
 }
@@ -380,8 +380,8 @@ unsigned ARMFastISel::fastEmitInst_i(unsigned MachineInstOpcode,
     AddOptionalDefs(BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, MIMD, II)
                    .addImm(Imm));
     AddOptionalDefs(BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, MIMD,
-                           TII.get(TargetOpcode::COPY), ResultReg)
-                   .addReg(II.ImplicitDefs[0]));
+                            TII.get(TargetOpcode::COPY), ResultReg)
+                        .addReg(II.implicit_defs()[0]));
   }
   return ResultReg;
 }
@@ -700,7 +700,7 @@ bool ARMFastISel::ARMComputeAddress(const Value *Obj, Address &Addr) {
     // Don't walk into other basic blocks unless the object is an alloca from
     // another block, otherwise it may not have a virtual register assigned.
     if (FuncInfo.StaticAllocaMap.count(static_cast<const AllocaInst *>(Obj)) ||
-        FuncInfo.MBBMap[I->getParent()] == FuncInfo.MBB) {
+        FuncInfo.getMBB(I->getParent()) == FuncInfo.MBB) {
       Opcode = I->getOpcode();
       U = I;
     }
@@ -747,7 +747,7 @@ bool ARMFastISel::ARMComputeAddress(const Value *Obj, Address &Addr) {
           unsigned Idx = cast<ConstantInt>(Op)->getZExtValue();
           TmpOffset += SL->getElementOffset(Idx);
         } else {
-          uint64_t S = DL.getTypeAllocSize(GTI.getIndexedType());
+          uint64_t S = GTI.getSequentialElementStride(DL);
           while (true) {
             if (const ConstantInt *CI = dyn_cast<ConstantInt>(Op)) {
               // Constant-offset addressing.
@@ -1223,8 +1223,8 @@ static ARMCC::CondCodes getComparePred(CmpInst::Predicate Pred) {
 
 bool ARMFastISel::SelectBranch(const Instruction *I) {
   const BranchInst *BI = cast<BranchInst>(I);
-  MachineBasicBlock *TBB = FuncInfo.MBBMap[BI->getSuccessor(0)];
-  MachineBasicBlock *FBB = FuncInfo.MBBMap[BI->getSuccessor(1)];
+  MachineBasicBlock *TBB = FuncInfo.getMBB(BI->getSuccessor(0));
+  MachineBasicBlock *FBB = FuncInfo.getMBB(BI->getSuccessor(1));
 
   // Simple branch support.
 
@@ -1329,7 +1329,7 @@ bool ARMFastISel::SelectIndirectBr(const Instruction *I) {
 
   const IndirectBrInst *IB = cast<IndirectBrInst>(I);
   for (const BasicBlock *SuccBB : IB->successors())
-    FuncInfo.MBB->addSuccessor(FuncInfo.MBBMap[SuccBB]);
+    FuncInfo.MBB->addSuccessor(FuncInfo.getMBB(SuccBB));
 
   return true;
 }
@@ -1842,7 +1842,7 @@ CCAssignFn *ARMFastISel::CCAssignFnForCall(CallingConv::ID CC,
   case CallingConv::CXX_FAST_TLS:
     // Use target triple & subtarget features to do actual dispatch.
     if (Subtarget->isAAPCS_ABI()) {
-      if (Subtarget->hasVFP2Base() &&
+      if (Subtarget->hasFPRegs() &&
           TM.Options.FloatABIType == FloatABI::Hard && !isVarArg)
         return (Return ? RetCC_ARM_AAPCS_VFP: CC_ARM_AAPCS_VFP);
       else
@@ -1928,7 +1928,7 @@ bool ARMFastISel::ProcessCallArgs(SmallVectorImpl<Value*> &Args,
   // At the point, we are able to handle the call's arguments in fast isel.
 
   // Get a count of how many bytes are to be pushed on the stack.
-  NumBytes = CCInfo.getNextStackOffset();
+  NumBytes = CCInfo.getStackSize();
 
   // Issue CALLSEQ_START
   unsigned AdjStackDown = TII.getCallFrameSetupOpcode();
@@ -2180,7 +2180,7 @@ unsigned ARMFastISel::ARMSelectCallOp(bool UseReg) {
 
 unsigned ARMFastISel::getLibcallReg(const Twine &Name) {
   // Manually compute the global's type to avoid building it when unnecessary.
-  Type *GVTy = Type::getInt32PtrTy(*Context, /*AS=*/0);
+  Type *GVTy = PointerType::get(*Context, /*AS=*/0);
   EVT LCREVT = TLI.getValueType(DL, GVTy);
   if (!LCREVT.isSimple()) return 0;
 
@@ -2439,15 +2439,15 @@ bool ARMFastISel::ARMIsMemCpySmall(uint64_t Len) {
   return Len <= 16;
 }
 
-bool ARMFastISel::ARMTryEmitSmallMemCpy(Address Dest, Address Src,
-                                        uint64_t Len, unsigned Alignment) {
+bool ARMFastISel::ARMTryEmitSmallMemCpy(Address Dest, Address Src, uint64_t Len,
+                                        MaybeAlign Alignment) {
   // Make sure we don't bloat code by inlining very large memcpy's.
   if (!ARMIsMemCpySmall(Len))
     return false;
 
   while (Len) {
     MVT VT;
-    if (!Alignment || Alignment >= 4) {
+    if (!Alignment || *Alignment >= 4) {
       if (Len >= 4)
         VT = MVT::i32;
       else if (Len >= 2)
@@ -2457,8 +2457,9 @@ bool ARMFastISel::ARMTryEmitSmallMemCpy(Address Dest, Address Src,
         VT = MVT::i8;
       }
     } else {
+      assert(Alignment && "Alignment is set in this branch");
       // Bound based on alignment.
-      if (Len >= 2 && Alignment == 2)
+      if (Len >= 2 && *Alignment == 2)
         VT = MVT::i16;
       else {
         VT = MVT::i8;
@@ -2535,8 +2536,10 @@ bool ARMFastISel::SelectIntrinsicCall(const IntrinsicInst &I) {
         if (!ARMComputeAddress(MTI.getRawDest(), Dest) ||
             !ARMComputeAddress(MTI.getRawSource(), Src))
           return false;
-        unsigned Alignment = MinAlign(MTI.getDestAlignment(),
-                                      MTI.getSourceAlignment());
+        MaybeAlign Alignment;
+        if (MTI.getDestAlign() || MTI.getSourceAlign())
+          Alignment = std::min(MTI.getDestAlign().valueOrOne(),
+                               MTI.getSourceAlign().valueOrOne());
         if (ARMTryEmitSmallMemCpy(Dest, Src, Len, Alignment))
           return true;
       }
@@ -2950,8 +2953,7 @@ bool ARMFastISel::tryToFoldLoadIntoMI(MachineInstr *MI, unsigned OpNo,
 }
 
 unsigned ARMFastISel::ARMLowerPICELF(const GlobalValue *GV, MVT VT) {
-  bool UseGOT_PREL = !TM.shouldAssumeDSOLocal(*GV->getParent(), GV);
-
+  bool UseGOT_PREL = !GV->isDSOLocal();
   LLVMContext *Context = &MF->getFunction().getContext();
   unsigned ARMPCLabelIndex = AFI->createPICLabelUId();
   unsigned PCAdj = Subtarget->isThumb() ? 4 : 8;
@@ -2961,7 +2963,7 @@ unsigned ARMFastISel::ARMLowerPICELF(const GlobalValue *GV, MVT VT) {
       /*AddCurrentAddress=*/UseGOT_PREL);
 
   Align ConstAlign =
-      MF->getDataLayout().getPrefTypeAlign(Type::getInt32PtrTy(*Context));
+      MF->getDataLayout().getPrefTypeAlign(PointerType::get(*Context, 0));
   unsigned Idx = MF->getConstantPool()->getConstantPoolIndex(CPV, ConstAlign);
   MachineMemOperand *CPMMO =
       MF->getMachineMemOperand(MachinePointerInfo::getConstantPool(*MF),

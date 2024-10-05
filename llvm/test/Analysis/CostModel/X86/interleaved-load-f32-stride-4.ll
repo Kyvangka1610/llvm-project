@@ -23,9 +23,9 @@ define void @test() {
 ; AVX1:  LV: Found an estimated cost of 1 for VF 1 For instruction: %v0 = load float, ptr %in0, align 4
 ; AVX1:  LV: Found an estimated cost of 12 for VF 2 For instruction: %v0 = load float, ptr %in0, align 4
 ; AVX1:  LV: Found an estimated cost of 28 for VF 4 For instruction: %v0 = load float, ptr %in0, align 4
-; AVX1:  LV: Found an estimated cost of 64 for VF 8 For instruction: %v0 = load float, ptr %in0, align 4
-; AVX1:  LV: Found an estimated cost of 128 for VF 16 For instruction: %v0 = load float, ptr %in0, align 4
-; AVX1:  LV: Found an estimated cost of 256 for VF 32 For instruction: %v0 = load float, ptr %in0, align 4
+; AVX1:  LV: Found an estimated cost of 60 for VF 8 For instruction: %v0 = load float, ptr %in0, align 4
+; AVX1:  LV: Found an estimated cost of 120 for VF 16 For instruction: %v0 = load float, ptr %in0, align 4
+; AVX1:  LV: Found an estimated cost of 240 for VF 32 For instruction: %v0 = load float, ptr %in0, align 4
 ;
 ; AVX2-LABEL: 'test'
 ; AVX2:  LV: Found an estimated cost of 1 for VF 1 For instruction: %v0 = load float, ptr %in0, align 4
@@ -71,7 +71,7 @@ for.body:
   %reduce.add.2.narrow = fptoui float %reduce.add.2 to i8
 
   %out = getelementptr inbounds [1024 x i8], ptr @B, i64 0, i64 %iv.0
-  store i8 %reduce.add.2.narrow, i8* %out
+  store i8 %reduce.add.2.narrow, ptr %out
 
   %iv.next = add nuw nsw i64 %iv.0, 4
   %cmp = icmp ult i64 %iv.next, 1024

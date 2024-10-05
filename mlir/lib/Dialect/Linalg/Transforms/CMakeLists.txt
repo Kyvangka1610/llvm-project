@@ -1,31 +1,45 @@
 add_mlir_dialect_library(MLIRLinalgTransforms
+  AllInterfaces.cpp
   BubbleUpExtractSlice.cpp
   BufferizableOpInterfaceImpl.cpp
-  Bufferize.cpp
   ConstantFold.cpp
+  ConvertToDestinationStyle.cpp
+  ConvertConv2DToImg2Col.cpp
+  DataLayoutPropagation.cpp
   DecomposeLinalgOps.cpp
   Detensorize.cpp
   DropUnitDims.cpp
   ElementwiseOpFusion.cpp
   ElementwiseToLinalg.cpp
+  EliminateEmptyTensors.cpp
+  EraseUnusedOperandsAndResults.cpp
+  FoldAddIntoDest.cpp
   FusePadOpWithLinalgProducer.cpp
   Fusion.cpp
-  FusionOnTensors.cpp
   Generalization.cpp
   Hoisting.cpp
   HoistPadding.cpp
   InlineScalarOperands.cpp
   Interchange.cpp
   Loops.cpp
+  TransposeMatmul.cpp
+  MeshShardingInterfaceImpl.cpp
   NamedOpConversions.cpp
+  BlockPackMatmul.cpp
+  Padding.cpp
   Promotion.cpp
+  RuntimeOpVerification.cpp
+  Specialize.cpp
   Split.cpp
   SplitReduction.cpp
+  SubsetInsertionOpInterfaceImpl.cpp
   SwapExtractSliceWithFillPatterns.cpp
   Tiling.cpp
   TilingInterfaceImpl.cpp
   Transforms.cpp
+  TransposeConv2D.cpp
   Vectorization.cpp
+  WinogradConv2D.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/mlir/Dialect/Linalg
@@ -35,6 +49,7 @@ add_mlir_dialect_library(MLIRLinalgTransforms
 
   LINK_LIBS PUBLIC
   MLIRAffineDialect
+  MLIRAffineTransforms
   MLIRAffineUtils
   MLIRAnalysis
   MLIRArithDialect
@@ -46,27 +61,31 @@ add_mlir_dialect_library(MLIRLinalgTransforms
   MLIRDestinationStyleOpInterface
   MLIRDialectUtils
   MLIRFuncDialect
-  MLIRFuncToLLVM
   MLIRFuncTransforms
+  MLIRIndexDialect
   MLIRInferTypeOpInterface
   MLIRIR
   MLIRMemRefDialect
+  MLIRMemRefTransforms
+  MLIRMeshDialect
+  MLIRMeshTransforms
   MLIRLinalgDialect
-  MLIRLinalgAnalysis
   MLIRLinalgUtils
   MLIRSCFDialect
   MLIRSCFTransforms
   MLIRSCFUtils
   MLIRPass
+  MLIRShardingInterface
+  MLIRSubsetOpInterface
   MLIRSparseTensorDialect
   MLIRTensorDialect
   MLIRTensorTilingInterfaceImpl
   MLIRTensorTransforms
   MLIRTransforms
   MLIRTransformUtils
+  MLIRValueBoundsOpInterface
   MLIRVectorDialect
   MLIRVectorTransforms
   MLIRVectorUtils
-  MLIRX86VectorTransforms
   MLIRVectorToSCF
 )

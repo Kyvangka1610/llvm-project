@@ -15,6 +15,7 @@
 #include "polly/ScopInfo.h"
 #include "polly/Support/GICHelper.h"
 #include "polly/Support/SCEVValidator.h"
+#include "llvm/IR/DataLayout.h"
 #include "isl/aff.h"
 #include "isl/local_space.h"
 #include "isl/set.h"
@@ -82,7 +83,7 @@ static __isl_give isl_pw_aff *getWidthExpValOnDomain(unsigned Width,
 
 SCEVAffinator::SCEVAffinator(Scop *S, LoopInfo &LI)
     : S(S), Ctx(S->getIslCtx().get()), SE(*S->getSE()), LI(LI),
-      TD(S->getFunction().getParent()->getDataLayout()) {}
+      TD(S->getFunction().getDataLayout()) {}
 
 Loop *SCEVAffinator::getScope() { return BB ? LI.getLoopFor(BB) : nullptr; }
 
@@ -264,6 +265,10 @@ PWACtx SCEVAffinator::visitConstant(const SCEVConstant *Expr) {
   isl_local_space *ls = isl_local_space_from_space(Space);
   return getPWACtxFromPWA(
       isl::manage(isl_pw_aff_from_aff(isl_aff_val_on_domain(ls, v))));
+}
+
+PWACtx SCEVAffinator::visitVScale(const SCEVVScale *VScale) {
+  llvm_unreachable("SCEVVScale not yet supported");
 }
 
 PWACtx SCEVAffinator::visitPtrToIntExpr(const SCEVPtrToIntExpr *Expr) {

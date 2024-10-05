@@ -6,7 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "TestDialect.h"
+#include "TestOps.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
@@ -18,13 +18,13 @@ using namespace test;
 //===----------------------------------------------------------------------===//
 
 OpFoldResult TestInvolutionTraitFailingOperationFolderOp::fold(
-    ArrayRef<Attribute> operands) {
+    FoldAdaptor adaptor) {
   // This failure should cause the trait fold to run instead.
   return {};
 }
 
 OpFoldResult TestInvolutionTraitSuccesfulOperationFolderOp::fold(
-    ArrayRef<Attribute> operands) {
+    FoldAdaptor adaptor) {
   auto argumentOp = getOperand();
   // The success case should cause the trait fold to be supressed.
   return argumentOp.getDefiningOp() ? argumentOp : OpFoldResult{};

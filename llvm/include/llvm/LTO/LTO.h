@@ -15,14 +15,17 @@
 #ifndef LLVM_LTO_LTO_H
 #define LLVM_LTO_LTO_H
 
+#include <memory>
+
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
-#include "llvm/ADT/StringMap.h"
 #include "llvm/Bitcode/BitcodeReader.h"
 #include "llvm/IR/ModuleSummaryIndex.h"
 #include "llvm/LTO/Config.h"
 #include "llvm/Object/IRSymtab.h"
 #include "llvm/Support/Caching.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Support/StringSaver.h"
 #include "llvm/Support/thread.h"
 #include "llvm/Transforms/IPO/FunctionAttrs.h"
 #include "llvm/Transforms/IPO/FunctionImport.h"
@@ -62,31 +65,30 @@ void thinLTOInternalizeAndPromoteInIndex(
 
 /// Computes a unique hash for the Module considering the current list of
 /// export/import and other global analysis results.
-/// The hash is produced in \p Key.
-void computeLTOCacheKey(
-    SmallString<40> &Key, const lto::Config &Conf,
-    const ModuleSummaryIndex &Index, StringRef ModuleID,
-    const FunctionImporter::ImportMapTy &ImportList,
+std::string computeLTOCacheKey(
+    const lto::Config &Conf, const ModuleSummaryIndex &Index,
+    StringRef ModuleID, const FunctionImporter::ImportMapTy &ImportList,
     const FunctionImporter::ExportSetTy &ExportList,
     const std::map<GlobalValue::GUID, GlobalValue::LinkageTypes> &ResolvedODR,
     const GVSummaryMapTy &DefinedGlobals,
-    const std::set<GlobalValue::GUID> &CfiFunctionDefs = {},
-    const std::set<GlobalValue::GUID> &CfiFunctionDecls = {});
+    const DenseSet<GlobalValue::GUID> &CfiFunctionDefs = {},
+    const DenseSet<GlobalValue::GUID> &CfiFunctionDecls = {});
 
 namespace lto {
+
+StringLiteral getThinLTODefaultCPU(const Triple &TheTriple);
 
 /// Given the original \p Path to an output file, replace any path
 /// prefix matching \p OldPrefix with \p NewPrefix. Also, create the
 /// resulting directory if it does not yet exist.
-std::string getThinLTOOutputFile(const std::string &Path,
-                                 const std::string &OldPrefix,
-                                 const std::string &NewPrefix);
+std::string getThinLTOOutputFile(StringRef Path, StringRef OldPrefix,
+                                 StringRef NewPrefix);
 
 /// Setup optimization remarks.
 Expected<std::unique_ptr<ToolOutputFile>> setupLLVMOptimizationRemarks(
     LLVMContext &Context, StringRef RemarksFilename, StringRef RemarksPasses,
     StringRef RemarksFormat, bool RemarksWithHotness,
-    Optional<uint64_t> RemarksHotnessThreshold = 0, int Count = -1);
+    std::optional<uint64_t> RemarksHotnessThreshold = 0, int Count = -1);
 
 /// Setups the output file for saving statistics.
 Expected<std::unique_ptr<ToolOutputFile>>
@@ -96,6 +98,11 @@ setupStatsFile(StringRef StatsFilename);
 /// ordered indices to elements in the input array.
 std::vector<int> generateModulesOrdering(ArrayRef<BitcodeModule *> R);
 
+/// Updates MemProf attributes (and metadata) based on whether the index
+/// has recorded that we are linking with allocation libraries containing
+/// the necessary APIs for downstream transformations.
+void updateMemProfAttributes(Module &Mod, const ModuleSummaryIndex &Index);
+
 class LTO;
 struct SymbolResolution;
 class ThinBackendProc;
@@ -104,7 +111,7 @@ class ThinBackendProc;
 /// information that an LTO client should need in order to do symbol resolution.
 class InputFile {
 public:
-  class Symbol;
+  struct Symbol;
 
 private:
   // FIXME: Remove LTO class friendship once we have bitcode symbol tables.
@@ -128,9 +135,9 @@ public:
   /// Create an InputFile.
   static Expected<std::unique_ptr<InputFile>> create(MemoryBufferRef Object);
 
-  /// The purpose of this class is to only expose the symbol information that an
-  /// LTO client should need in order to do symbol resolution.
-  class Symbol : irsymtab::Symbol {
+  /// The purpose of this struct is to only expose the symbol information that
+  /// an LTO client should need in order to do symbol resolution.
+  struct Symbol : irsymtab::Symbol {
     friend LTO;
 
   public:
@@ -192,7 +199,7 @@ private:
 /// create a ThinBackend using one of the create*ThinBackend() functions below.
 using ThinBackend = std::function<std::unique_ptr<ThinBackendProc>(
     const Config &C, ModuleSummaryIndex &CombinedIndex,
-    StringMap<GVSummaryMapTy> &ModuleToDefinedGVSummaries,
+    DenseMap<StringRef, GVSummaryMapTy> &ModuleToDefinedGVSummaries,
     AddStreamFn AddStream, FileCache Cache)>;
 
 /// This ThinBackend runs the individual backend jobs in-process.
@@ -219,11 +226,14 @@ ThinBackend createInProcessThinBackend(ThreadPoolStrategy Parallelism,
 /// ShouldEmitImportsFiles is true it also writes a list of imported files to a
 /// similar path with ".imports" appended instead.
 /// LinkedObjectsFile is an output stream to write the list of object files for
-/// the final ThinLTO linking. Can be nullptr.
-/// OnWrite is callback which receives module identifier and notifies LTO user
-/// that index file for the module (and optionally imports file) was created.
+/// the final ThinLTO linking. Can be nullptr.  If LinkedObjectsFile is not
+/// nullptr and NativeObjectPrefix is not empty then it replaces the prefix of
+/// the objects with NativeObjectPrefix instead of NewPrefix. OnWrite is
+/// callback which receives module identifier and notifies LTO user that index
+/// file for the module (and optionally imports file) was created.
 ThinBackend createWriteIndexesThinBackend(std::string OldPrefix,
                                           std::string NewPrefix,
+                                          std::string NativeObjectPrefix,
                                           bool ShouldEmitImportsFiles,
                                           raw_fd_ostream *LinkedObjectsFile,
                                           IndexWriteCallback OnWrite);
@@ -248,13 +258,26 @@ class LTO {
   friend InputFile;
 
 public:
+  /// Unified LTO modes
+  enum LTOKind {
+    /// Any LTO mode without Unified LTO. The default mode.
+    LTOK_Default,
+
+    /// Regular LTO, with Unified LTO enabled.
+    LTOK_UnifiedRegular,
+
+    /// ThinLTO, with Unified LTO enabled.
+    LTOK_UnifiedThin,
+  };
+
   /// Create an LTO object. A default constructed LTO object has a reasonable
   /// production configuration, but you can customize it by passing arguments to
   /// this constructor.
   /// FIXME: We do currently require the DiagHandler field to be set in Conf.
   /// Until that is fixed, a Config argument is required.
   LTO(Config Conf, ThinBackend Backend = nullptr,
-      unsigned ParallelCodeGenParallelismLevel = 1);
+      unsigned ParallelCodeGenParallelismLevel = 1,
+      LTOKind LTOMode = LTOK_Default);
   ~LTO();
 
   /// Add an input file to the LTO link, using the provided symbol resolutions.
@@ -275,11 +298,11 @@ public:
   ///
   /// The client will receive at most one callback (via either AddStream or
   /// Cache) for each task identifier.
-  Error run(AddStreamFn AddStream, FileCache Cache = nullptr);
+  Error run(AddStreamFn AddStream, FileCache Cache = {});
 
   /// Static method that returns a list of libcall symbols that can be generated
   /// by LTO but might not be visible from bitcode symbol table.
-  static ArrayRef<const char*> getRuntimeLibcallSymbols();
+  static SmallVector<const char *> getRuntimeLibcallSymbols(const Triple &TT);
 
 private:
   Config Conf;
@@ -289,7 +312,7 @@ private:
                     const Config &Conf);
     struct CommonResolution {
       uint64_t Size = 0;
-      MaybeAlign Align;
+      Align Alignment;
       /// Record if at least one instance of the common was marked as prevailing
       bool Prevailing = false;
     };
@@ -322,7 +345,7 @@ private:
     // The full set of bitcode modules in input order.
     ModuleMapType ModuleMap;
     // The bitcode modules to compile, if specified by the LTO Config.
-    Optional<ModuleMapType> ModulesToCompile;
+    std::optional<ModuleMapType> ModulesToCompile;
     DenseMap<GlobalValue::GUID, StringRef> PrevailingModuleForGUID;
   } ThinLTO;
 
@@ -383,8 +406,19 @@ private:
     };
   };
 
+  // GlobalResolutionSymbolSaver allocator.
+  std::unique_ptr<llvm::BumpPtrAllocator> Alloc;
+
+  // Symbol saver for global resolution map.
+  std::unique_ptr<llvm::StringSaver> GlobalResolutionSymbolSaver;
+
   // Global mapping from mangled symbol names to resolutions.
-  StringMap<GlobalResolution> GlobalResolutions;
+  // Make this an unique_ptr to guard against accessing after it has been reset
+  // (to reduce memory after we're done with it).
+  std::unique_ptr<llvm::DenseMap<StringRef, GlobalResolution>>
+      GlobalResolutions;
+
+  void releaseGlobalResolutionsMemory();
 
   void addModuleToGlobalRes(ArrayRef<InputFile::Symbol> Syms,
                             ArrayRef<SymbolResolution> Res, unsigned Partition,
@@ -414,8 +448,11 @@ private:
 
   mutable bool CalledGetMaxTasks = false;
 
+  // LTO mode when using Unified LTO.
+  LTOKind LTOMode;
+
   // Use Optional to distinguish false from not yet initialized.
-  Optional<bool> EnableSplitLTOUnit;
+  std::optional<bool> EnableSplitLTOUnit;
 
   // Identify symbols exported dynamically, and that therefore could be
   // referenced by a shared library not visible to the linker.

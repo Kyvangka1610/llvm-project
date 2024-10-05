@@ -14,9 +14,7 @@
 
 using namespace clang::ast_matchers;
 
-namespace clang {
-namespace tidy {
-namespace misc {
+namespace clang::tidy::misc {
 
 namespace {
 // FIXME: This matcher exists in some other code-review as well.
@@ -85,23 +83,22 @@ void ConstCorrectnessCheck::registerMatchers(MatchFinder *Finder) {
   // Match local variables which could be 'const' if not modified later.
   // Example: `int i = 10` would match `int i`.
   const auto LocalValDecl = varDecl(
-      allOf(isLocal(), hasInitializer(anything()),
-            unless(anyOf(ConstType, ConstReference, TemplateType,
-                         hasInitializer(isInstantiationDependent()),
-                         AutoTemplateType, RValueReference, FunctionPointerRef,
-                         hasType(cxxRecordDecl(isLambda())), isImplicit()))));
+      isLocal(), hasInitializer(anything()),
+      unless(anyOf(ConstType, ConstReference, TemplateType,
+                   hasInitializer(isInstantiationDependent()), AutoTemplateType,
+                   RValueReference, FunctionPointerRef,
+                   hasType(cxxRecordDecl(isLambda())), isImplicit())));
 
   // Match the function scope for which the analysis of all local variables
   // shall be run.
   const auto FunctionScope =
       functionDecl(
-          hasBody(
-              compoundStmt(forEachDescendant(
-                               declStmt(containsAnyDeclaration(
-                                            LocalValDecl.bind("local-value")),
-                                        unless(has(decompositionDecl())))
-                                   .bind("decl-stmt")))
-                  .bind("scope")))
+          hasBody(stmt(forEachDescendant(
+                           declStmt(containsAnyDeclaration(
+                                        LocalValDecl.bind("local-value")),
+                                    unless(has(decompositionDecl())))
+                               .bind("decl-stmt")))
+                      .bind("scope")))
           .bind("function-decl");
 
   Finder->addMatcher(FunctionScope, this);
@@ -111,7 +108,7 @@ void ConstCorrectnessCheck::registerMatchers(MatchFinder *Finder) {
 enum class VariableCategory { Value, Reference, Pointer };
 
 void ConstCorrectnessCheck::check(const MatchFinder::MatchResult &Result) {
-  const auto *LocalScope = Result.Nodes.getNodeAs<CompoundStmt>("scope");
+  const auto *LocalScope = Result.Nodes.getNodeAs<Stmt>("scope");
   const auto *Variable = Result.Nodes.getNodeAs<VarDecl>("local-value");
   const auto *Function = Result.Nodes.getNodeAs<FunctionDecl>("function-decl");
 
@@ -200,13 +197,11 @@ void ConstCorrectnessCheck::check(const MatchFinder::MatchResult &Result) {
   }
 }
 
-void ConstCorrectnessCheck::registerScope(const CompoundStmt *LocalScope,
+void ConstCorrectnessCheck::registerScope(const Stmt *LocalScope,
                                           ASTContext *Context) {
   auto &Analyzer = ScopesCache[LocalScope];
   if (!Analyzer)
     Analyzer = std::make_unique<ExprMutationAnalyzer>(*LocalScope, *Context);
 }
 
-} // namespace misc
-} // namespace tidy
-} // namespace clang
+} // namespace clang::tidy::misc

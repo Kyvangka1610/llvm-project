@@ -11,6 +11,8 @@
 
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclObjC.h"
+#include "clang/Basic/Module.h"
+#include <optional>
 
 using namespace lldb_private;
 
@@ -69,7 +71,7 @@ ClangExternalASTSourceCallbacks::RegisterModule(clang::Module *module) {
   return OptionalClangModuleID(id);
 }
 
-llvm::Optional<clang::ASTSourceDescriptor>
+std::optional<clang::ASTSourceDescriptor>
 ClangExternalASTSourceCallbacks::getSourceDescriptor(unsigned id) {
   if (clang::Module *module = getModule(id))
     return {*module};

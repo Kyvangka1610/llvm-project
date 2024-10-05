@@ -1,149 +1,38 @@
 include "config/public_api.td"
 
-include "spec/bsd_ext.td"
-include "spec/gnu_ext.td"
-include "spec/linux.td"
-include "spec/llvm_libc_ext.td"
-include "spec/posix.td"
 include "spec/stdc.td"
-
-def AssertMacro : MacroDef<"assert"> {
-  let Defn = [{
-    #undef assert
-
-    #ifdef NDEBUG
-    #define assert(e) (void)0
-    #else
-
-    #ifdef __cplusplus
-    extern "C"
-    #endif
-    _Noreturn void __assert_fail(const char *, const char *, unsigned, const char *);
-
-    #define assert(e)  \
-      ((e) ? (void)0 : __assert_fail(#e, __FILE__, __LINE__, __PRETTY_FUNCTION__))
-
-    #endif
-  }];
-}
-
-def StaticAssertMacro : MacroDef<"static_assert"> {
-  let Defn = [{
-    #ifndef __cplusplus
-    #undef static_assert
-    #define static_assert _Static_assert
-    #endif
-  }];
-}
-
-def NullMacro : MacroDef<"NULL"> {
-  let Defn = [{
-    #define __need_NULL
-    #include <stddef.h>
-  }];
-}
-
-def ErrnoMacro : MacroDef<"errno"> {
-  let Defn = [{
-    extern _Thread_local int __llvmlibc_errno;
-    #define errno __llvmlibc_errno
-  }];
-}
-
-def AssertAPI : PublicAPI<"assert.h"> {
-  let Macros = [
-    AssertMacro,
-    StaticAssertMacro,
-  ];
-}
+include "spec/posix.td"
+include "spec/linux.td"
+include "spec/gnu_ext.td"
+include "spec/bsd_ext.td"
+include "spec/stdc_ext.td"
+include "spec/llvm_libc_ext.td"
+include "spec/llvm_libc_stdfix_ext.td"
 
 def CTypeAPI : PublicAPI<"ctype.h"> {
 }
 
 def FCntlAPI : PublicAPI<"fcntl.h"> {
-  let Types = ["mode_t"];
+  let Types = [
+    "mode_t",
+    "off_t",
+  ];
 }
 
 def IntTypesAPI : PublicAPI<"inttypes.h"> {
   let Types = ["imaxdiv_t"];
 }
 
-def MathErrHandlingMacro : MacroDef<"math_errhandling"> {
-  let Defn = [{
-    #ifndef math_errhandling
-    #ifdef __FAST_MATH__
-    #define math_errhandling 0
-    #elif defined __NO_MATH_ERRNO__
-    #define math_errhandling (MATH_ERREXCEPT)
-    #else
-    #define math_errhandling (MATH_ERRNO | MATH_ERREXCEPT)
-    #endif
-    #endif // math_errhandling not defined
-  }];
-}
-
-def IsFiniteMacro : MacroDef<"isfinite"> {
-  let Defn = [{
-    #define isfinite(x) __builtin_isfinite(x)
-  }];
-}
-
-def IsInfMacro : MacroDef<"isinf"> {
-  let Defn = [{
-    #define isinf(x) __builtin_isinf(x)
-  }];
-}
-
-def IsNanMacro : MacroDef<"isnan"> {
-  let Defn = [{
-    #define isnan(x) __builtin_isnan(x)
-  }];
-}
-
 def MathAPI : PublicAPI<"math.h"> {
-  let Macros = [
-    SimpleMacroDef<"MATH_ERRNO", "1">,
-    SimpleMacroDef<"MATH_ERREXCEPT", "2">,
-    MathErrHandlingMacro,
-
-    SimpleMacroDef<"INFINITY", "__builtin_inff()">,
-    SimpleMacroDef<"NAN", "__builtin_nanf(\"\")">,
-
-    SimpleMacroDef<"FP_ILOGB0", "(-__INT_MAX__ - 1)">, // INT_MIN
-    SimpleMacroDef<"FP_ILOGBNAN", "__INT_MAX__">,
-
-    IsFiniteMacro,
-    IsInfMacro,
-    IsNanMacro,
-  ];
-  let Types = ["double_t", "float_t"];
+  let Types = ["double_t", "float_t", "float128"];
 }
 
 def FenvAPI: PublicAPI<"fenv.h"> {
-  let Macros = [
-    SimpleMacroDef<"FE_DIVBYZERO", "1">,
-    SimpleMacroDef<"FE_INEXACT", "2">,
-    SimpleMacroDef<"FE_INVALID", "4">,
-    SimpleMacroDef<"FE_OVERFLOW", "8">,
-    SimpleMacroDef<"FE_UNDERFLOW", "16">,
-    SimpleMacroDef<"FE_ALL_EXCEPT", "(FE_DIVBYZERO|FE_INEXACT|FE_INVALID|FE_OVERFLOW|FE_UNDERFLOW)">,
-
-    SimpleMacroDef<"FE_DOWNWARD", "1">,
-    SimpleMacroDef<"FE_TONEAREST", "2">,
-    SimpleMacroDef<"FE_TOWARDZERO", "4">,
-    SimpleMacroDef<"FE_UPWARD", "8">,
-
-    SimpleMacroDef<"FE_DFL_ENV", "((fenv_t *)-1)">,
-  ];
   let Types = ["fenv_t", "fexcept_t"];
 }
 
 def StringAPI : PublicAPI<"string.h"> {
   let Types = ["size_t"];
-
-  let Macros = [
-    NullMacro,
-  ];
 }
 
 def StdIOAPI : PublicAPI<"stdio.h"> {
@@ -151,12 +40,13 @@ def StdIOAPI : PublicAPI<"stdio.h"> {
     SimpleMacroDef<"stderr", "stderr">,
     SimpleMacroDef<"stdin", "stdin">,
     SimpleMacroDef<"stdout", "stdout">,
-    SimpleMacroDef<"_IOFBF", "0">,
-    SimpleMacroDef<"_IOLBF", "1">,
-    SimpleMacroDef<"_IONBF", "2">,
-    SimpleMacroDef<"EOF", "-1">,
   ];
-  let Types = ["size_t", "FILE", "cookie_io_functions_t"];
+  let Types = [
+    "FILE",
+    "cookie_io_functions_t",
+    "off_t",
+    "size_t",
+  ];
 }
 
 def StdlibAPI : PublicAPI<"stdlib.h"> {
@@ -167,46 +57,41 @@ def StdlibAPI : PublicAPI<"stdlib.h"> {
     "size_t",
     "__bsearchcompare_t",
     "__qsortcompare_t",
+    "__qsortrcompare_t",
     "__atexithandler_t",
   ];
 }
 
 def TimeAPI : PublicAPI<"time.h"> {
-  let Types = ["time_t", "struct tm", "struct timespec", "clockid_t",];
-}
-
-def ErrnoAPI : PublicAPI<"errno.h"> {
-  let Macros = [
-    ErrnoMacro,
-    // We largely depend on linux/errno.h to give us the
-    // various error macro definitions. However, some libc
-    // implementations have chosen to provide definitions
-    // for some of the error macros to account for the ones
-    // missing in linux/errno.h. There is no harm in doing
-    // the same here if we define the macros only when they
-    // are not already defined.
-    MacroDefineIfNot<"ENOTSUP", "EOPNOTSUPP">,
-    MacroDefineIfNot<"ECANCELED", "125">,
-    MacroDefineIfNot<"EOWNERDEAD", "130">,
-    MacroDefineIfNot<"ENOTRECOVERABLE", "131">,
-    MacroDefineIfNot<"ERFKILL", "132">,
-    MacroDefineIfNot<"EHWPOISON", "133">,
+  let Types = [
+    "clock_t",
+    "time_t",
+    "struct tm",
+    "struct timespec",
+    "struct timeval",
+    "clockid_t",
   ];
 }
 
 def SchedAPI : PublicAPI<"sched.h"> {
-  let Types = ["pid_t", "size_t", "cpu_set_t"];
+  let Types = [
+    "pid_t",
+    "size_t",
+    "cpu_set_t",
+    "struct sched_param",
+    // Needed according to posix standard
+    "time_t",
+    "struct timespec",
+  ];
 }
 
 def SysMManAPI : PublicAPI<"sys/mman.h"> {
-  let Types = ["off_t", "size_t"];
-  let Macros = [
-  ];
-
+  let Types = ["off_t", "size_t", "mode_t"];
 }
 
 def SignalAPI : PublicAPI<"signal.h"> {
   let Types = [
+    "sig_atomic_t",
     "sigset_t",
     "struct sigaction",
     "union sigval",
@@ -251,11 +136,15 @@ def PThreadAPI : PublicAPI<"pthread.h"> {
       "__pthread_start_t",
       "__pthread_tss_dtor_t",
       "pthread_attr_t",
+      "pthread_condattr_t",
+      "pthread_key_t",
       "pthread_mutex_t",
       "pthread_mutexattr_t",
-      "pthread_t",
-      "pthread_key_t",
       "pthread_once_t",
+      "pthread_rwlockattr_t",
+      "pthread_rwlock_t",
+      "pthread_spinlock_t",
+      "pthread_t",
   ];
 }
 
@@ -268,7 +157,25 @@ def DirentAPI : PublicAPI<"dirent.h"> {
 }
 
 def UniStdAPI : PublicAPI<"unistd.h"> {
-  let Types = ["__exec_argv_t", "__exec_envp_t", "off_t", "pid_t", "size_t", "ssize_t", "uid_t"];
+  let Types = ["__exec_argv_t", "__exec_envp_t", "off_t", "pid_t", "size_t",
+               "ssize_t", "uid_t", "__getoptargv_t"];
+}
+
+def WCharAPI : PublicAPI<"wchar.h"> {
+  let Types = [
+    "wchar_t",
+    "wint_t",
+    "size_t",
+  ];
+}
+
+def UCharAPI : PublicAPI<"uchar.h"> {
+  let Types = [
+    "mbstate_t",
+    "char8_t",
+    "char16_t",
+    "char32_t",
+  ];
 }
 
 def SysRandomAPI : PublicAPI<"sys/random.h"> {
@@ -276,7 +183,21 @@ def SysRandomAPI : PublicAPI<"sys/random.h"> {
 }
 
 def SysSelectAPI : PublicAPI<"sys/select.h"> {
-  let Types = ["fd_set", "sigset_t", "suseconds_t", "time_t", "struct timespec", "struct timeval"];
+  let Types = ["fd_set", "sigset_t", "suseconds_t", "time_t", "struct timespec",
+               "struct timeval"];
+}
+
+def SysSocketAPI : PublicAPI<"sys/socket.h"> {
+  let Types = [
+    "sa_family_t",
+    "socklen_t",
+    "struct sockaddr",
+    "struct sockaddr_un",
+    "struct msghdr",
+    "struct iovec",
+    "size_t",
+    "ssize_t",
+  ];
 }
 
 def SysResourceAPI : PublicAPI<"sys/resource.h"> {
@@ -285,19 +206,53 @@ def SysResourceAPI : PublicAPI<"sys/resource.h"> {
 
 def SysStatAPI : PublicAPI<"sys/stat.h"> {
   let Types = ["mode_t", "dev_t", "ino_t", "nlink_t", "uid_t", "gid_t", "off_t",
-               "struct timespec", "blksize_t", "blkcnt_t", "struct stat"];
+               "struct timespec", "struct timeval", "blksize_t", "blkcnt_t",
+               "struct stat"];
 }
 
 def SysWaitAPI : PublicAPI<"sys/wait.h"> {
-  let Types = ["pid_t", "struct rusage"];
+  let Types = ["pid_t", "struct rusage", "siginfo_t"];
 }
 
 def SysSendfileAPI : PublicAPI<"sys/sendfile.h"> {
   let Types = ["off_t", "size_t", "ssize_t"];
 }
 
+def SysTypesAPI : PublicAPI<"sys/types.h"> {
+  let Types = [
+    "blkcnt_t",
+    "blksize_t",
+    "clockid_t",
+    "dev_t",
+    "gid_t",
+    "ino_t",
+    "mode_t",
+    "nlink_t",
+    "off_t",
+    "pid_t",
+    "pthread_attr_t",
+    "pthread_condattr_t",
+    "pthread_key_t",
+    "pthread_mutex_t",
+    "pthread_mutexattr_t",
+    "pthread_once_t",
+    "pthread_rwlockattr_t",
+    "pthread_rwlock_t",
+    "pthread_t",
+    "size_t",
+    "ssize_t",
+    "suseconds_t",
+    "time_t",
+    "uid_t"
+  ];
+}
+
 def SysUtsNameAPI : PublicAPI<"sys/utsname.h"> {
   let Types = ["struct utsname"];
+}
+
+def SysEpollAPI : PublicAPI<"sys/epoll.h"> {
+  let Types = ["struct epoll_event", "struct epoll_data", "sigset_t", "struct timespec"];
 }
 
 def SpawnAPI : PublicAPI<"spawn.h"> {
@@ -306,4 +261,16 @@ def SpawnAPI : PublicAPI<"spawn.h"> {
 
 def TermiosAPI : PublicAPI<"termios.h"> {
   let Types = ["cc_t", "pid_t", "speed_t", "struct termios", "tcflag_t"];
+}
+
+def SetJmpAPI : PublicAPI<"setjmp.h"> {
+  let Types = ["jmp_buf"];
+}
+
+def SearchAPI : PublicAPI<"search.h"> {
+  let Types = ["ACTION", "ENTRY", "struct hsearch_data"];
+}
+
+def SysStatvfsAPI : PublicAPI<"sys/statvfs.h"> {
+  let Types = ["struct statvfs"];
 }

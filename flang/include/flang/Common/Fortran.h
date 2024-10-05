@@ -12,14 +12,18 @@
 // Fortran language concepts that are used in many phases are defined
 // once here to avoid redundancy and needless translation.
 
+#include "enum-set.h"
 #include "idioms.h"
 #include <cinttypes>
-#include <vector>
+#include <optional>
+#include <string>
 
 namespace Fortran::common {
+class LanguageFeatureControl;
 
 // Fortran has five kinds of intrinsic data types, plus the derived types.
 ENUM_CLASS(TypeCategory, Integer, Real, Complex, Character, Logical, Derived)
+ENUM_CLASS(VectorElementCategory, Integer, Unsigned, Real)
 
 constexpr bool IsNumericTypeCategory(TypeCategory category) {
   return category == TypeCategory::Integer || category == TypeCategory::Real ||
@@ -57,13 +61,20 @@ ENUM_CLASS(IoSpecKind, Access, Action, Advance, Asynchronous, Blank, Decimal,
     Dispose, // nonstandard
 )
 
+// Defined I/O variants
+ENUM_CLASS(
+    DefinedIo, ReadFormatted, ReadUnformatted, WriteFormatted, WriteUnformatted)
+const char *AsFortran(DefinedIo);
+
 // Floating-point rounding modes; these are packed into a byte to save
-// room in the runtime's format processing context structure.
+// room in the runtime's format processing context structure.  These
+// enumerators are defined with the corresponding values returned from
+// llvm.get.rounding.
 enum class RoundingMode : std::uint8_t {
-  TiesToEven, // ROUND=NEAREST, RN - default IEEE rounding
   ToZero, // ROUND=ZERO, RZ - truncation
-  Down, // ROUND=DOWN, RD
+  TiesToEven, // ROUND=NEAREST, RN - default IEEE rounding
   Up, // ROUND=UP, RU
+  Down, // ROUND=DOWN, RD
   TiesAwayFromZero, // ROUND=COMPATIBLE, RC - ties round away from zero
 };
 
@@ -73,7 +84,51 @@ using Label = std::uint64_t;
 // Fortran arrays may have up to 15 dimensions (See Fortran 2018 section 5.4.6).
 static constexpr int maxRank{15};
 
+// CUDA subprogram attribute combinations
+ENUM_CLASS(CUDASubprogramAttrs, Host, Device, HostDevice, Global, Grid_Global)
+
+// CUDA data attributes; mutually exclusive
+ENUM_CLASS(
+    CUDADataAttr, Constant, Device, Managed, Pinned, Shared, Texture, Unified)
+
+// OpenACC device types
+ENUM_CLASS(
+    OpenACCDeviceType, Star, Default, Nvidia, Radeon, Host, Multicore, None)
+
+// OpenMP atomic_default_mem_order clause allowed values
+ENUM_CLASS(OmpAtomicDefaultMemOrderType, SeqCst, AcqRel, Relaxed)
+
 // Fortran names may have up to 63 characters (See Fortran 2018 C601).
 static constexpr int maxNameLen{63};
+
+// !DIR$ IGNORE_TKR [[(letters) name] ... letters
+// "A" expands to all of TKRDM
+ENUM_CLASS(IgnoreTKR,
+    Type, // T - don't check type category
+    Kind, // K - don't check kind
+    Rank, // R - don't check ranks
+    Device, // D - don't check host/device residence
+    Managed, // M - don't check managed storage
+    Contiguous) // C - don't check for storage sequence association with a
+                // potentially non-contiguous object
+using IgnoreTKRSet = EnumSet<IgnoreTKR, 8>;
+// IGNORE_TKR(A) = IGNORE_TKR(TKRDM)
+static constexpr IgnoreTKRSet ignoreTKRAll{IgnoreTKR::Type, IgnoreTKR::Kind,
+    IgnoreTKR::Rank, IgnoreTKR::Device, IgnoreTKR::Managed};
+std::string AsFortran(IgnoreTKRSet);
+
+bool AreCompatibleCUDADataAttrs(std::optional<CUDADataAttr>,
+    std::optional<CUDADataAttr>, IgnoreTKRSet, bool allowUnifiedMatchingRule,
+    const LanguageFeatureControl *features = nullptr);
+
+static constexpr char blankCommonObjectName[] = "__BLNK__";
+
+// Get the assembly name for a non BIND(C) external symbol other than the blank
+// common block.
+inline std::string GetExternalAssemblyName(
+    std::string symbolName, bool underscoring) {
+  return underscoring ? std::move(symbolName) + "_" : std::move(symbolName);
+}
+
 } // namespace Fortran::common
 #endif // FORTRAN_COMMON_FORTRAN_H_

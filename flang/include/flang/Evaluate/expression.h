@@ -342,6 +342,7 @@ template <typename A> struct Extremum : public Operation<Extremum<A>, A, A, A> {
       : Base{x, y}, ordering{ord} {}
   Extremum(Ordering ord, Expr<Operand> &&x, Expr<Operand> &&y)
       : Base{std::move(x), std::move(y)}, ordering{ord} {}
+  bool operator==(const Extremum &) const;
   Ordering ordering{Ordering::Greater};
 };
 
@@ -381,6 +382,7 @@ struct LogicalOperation
       : Base{x, y}, logicalOperator{opr} {}
   LogicalOperation(LogicalOperator opr, Expr<Operand> &&x, Expr<Operand> &&y)
       : Base{std::move(x), std::move(y)}, logicalOperator{opr} {}
+  bool operator==(const LogicalOperation &) const;
   LogicalOperator logicalOperator;
 };
 
@@ -473,20 +475,20 @@ class ArrayConstructor<Type<TypeCategory::Character, KIND>>
 public:
   using Result = Type<TypeCategory::Character, KIND>;
   using Base = ArrayConstructorValues<Result>;
-  CLASS_BOILERPLATE(ArrayConstructor)
-  ArrayConstructor(Expr<SubscriptInteger> &&len, Base &&v)
-      : Base{std::move(v)}, length_{std::move(len)} {}
-  template <typename A>
-  explicit ArrayConstructor(const A &prototype)
-      : length_{prototype.LEN().value()} {}
+  DEFAULT_CONSTRUCTORS_AND_ASSIGNMENTS(ArrayConstructor)
+  explicit ArrayConstructor(Base &&values) : Base{std::move(values)} {}
+  template <typename T> explicit ArrayConstructor(const Expr<T> &) {}
+  ArrayConstructor &set_LEN(Expr<SubscriptInteger> &&);
   bool operator==(const ArrayConstructor &) const;
   static constexpr Result result() { return Result{}; }
   static constexpr DynamicType GetType() { return Result::GetType(); }
   llvm::raw_ostream &AsFortran(llvm::raw_ostream &) const;
-  const Expr<SubscriptInteger> &LEN() const { return length_.value(); }
+  const Expr<SubscriptInteger> *LEN() const {
+    return length_ ? &length_->value() : nullptr;
+  }
 
 private:
-  common::CopyableIndirection<Expr<SubscriptInteger>> length_;
+  std::optional<common::CopyableIndirection<Expr<SubscriptInteger>>> length_;
 };
 
 template <>
@@ -634,6 +636,7 @@ public:
       : Base{a, b}, opr{r} {}
   Relational(RelationalOperator r, Expr<Operand> &&a, Expr<Operand> &&b)
       : Base{std::move(a), std::move(b)}, opr{r} {}
+  bool operator==(const Relational &) const;
   RelationalOperator opr;
 };
 
@@ -660,7 +663,7 @@ extern template class Relational<SomeType>;
 // Logical expressions of a kind bigger than LogicalResult
 // do not include Relational<> operations as possibilities,
 // since the results of Relationals are always LogicalResult
-// (kind=1).
+// (kind=4).
 template <int KIND>
 class Expr<Type<TypeCategory::Logical, KIND>>
     : public ExpressionBase<Type<TypeCategory::Logical, KIND>> {

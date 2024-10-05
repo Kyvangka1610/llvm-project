@@ -23,7 +23,6 @@
 #define LLVM_ANALYSIS_OBJCARCALIASANALYSIS_H
 
 #include "llvm/Analysis/AliasAnalysis.h"
-#include "llvm/Pass.h"
 
 namespace llvm {
 namespace objcarc {
@@ -51,9 +50,9 @@ public:
   }
 
   AliasResult alias(const MemoryLocation &LocA, const MemoryLocation &LocB,
-                    AAQueryInfo &AAQI);
-  bool pointsToConstantMemory(const MemoryLocation &Loc, AAQueryInfo &AAQI,
-                              bool OrLocal);
+                    AAQueryInfo &AAQI, const Instruction *CtxI);
+  ModRefInfo getModRefInfoMask(const MemoryLocation &Loc, AAQueryInfo &AAQI,
+                               bool IgnoreLocals);
 
   using AAResultBase::getMemoryEffects;
   MemoryEffects getMemoryEffects(const Function *F);

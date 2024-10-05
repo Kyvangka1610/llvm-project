@@ -1,7 +1,7 @@
 // This testcase checks emission of debug info for variables inside
 // private/firstprivate/lastprivate.
 
-// REQUIRES: x86_64-linux
+// REQUIRES: x86-registered-target
 
 // RUN: %clang_cc1 -debug-info-kind=constructor -x c -verify -triple x86_64-pc-linux-gnu -fopenmp -emit-llvm %s -o - | FileCheck %s
 // RUN: %clang_cc1 -debug-info-kind=line-directives-only -x c -verify -triple x86_64-pc-linux-gnu -fopenmp -emit-llvm %s -o - | FileCheck %s --check-prefix=NEG
@@ -11,10 +11,10 @@
 
 // CHECK: define internal i32 @.omp_task_entry.
 
-// CHECK:  call void @llvm.dbg.declare(metadata ptr %.priv.ptr.addr.i, metadata [[PRIV1:![0-9]+]], metadata !DIExpression(DW_OP_deref))
-// CHECK:  call void @llvm.dbg.declare(metadata ptr %.priv.ptr.addr1.i, metadata [[PRIV2:![0-9]+]], metadata !DIExpression(DW_OP_deref))
-// CHECK:  call void @llvm.dbg.declare(metadata ptr %.firstpriv.ptr.addr.i, metadata [[FPRIV:![0-9]+]], metadata !DIExpression(DW_OP_deref))
-// NEG-NOT: call void @llvm.dbg.declare
+// CHECK:  #dbg_declare(ptr %.priv.ptr.addr.i, [[PRIV1:![0-9]+]], !DIExpression(DW_OP_deref),
+// CHECK:  #dbg_declare(ptr %.priv.ptr.addr1.i, [[PRIV2:![0-9]+]], !DIExpression(DW_OP_deref),
+// CHECK:  #dbg_declare(ptr %.firstpriv.ptr.addr.i, [[FPRIV:![0-9]+]], !DIExpression(DW_OP_deref),
+// NEG-NOT: #dbg_declare
 
 // CHECK: [[PRIV1]] = !DILocalVariable(name: "priv1"
 // CHECK: [[PRIV2]] = !DILocalVariable(name: "priv2"

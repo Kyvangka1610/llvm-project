@@ -16,16 +16,15 @@
 #define LLVM_CODEGEN_TARGETREGISTERINFO_H
 
 #include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/iterator_range.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
+#include "llvm/CodeGen/RegisterBank.h"
 #include "llvm/IR/CallingConv.h"
 #include "llvm/MC/LaneBitmask.h"
 #include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/Support/ErrorHandling.h"
-#include "llvm/Support/MachineValueType.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/Printable.h"
 #include <cassert>
@@ -82,9 +81,8 @@ public:
   /// Return the number of registers in this class.
   unsigned getNumRegs() const { return MC->getNumRegs(); }
 
-  iterator_range<SmallVectorImpl<MCPhysReg>::const_iterator>
-  getRegisters() const {
-    return make_range(MC->begin(), MC->end());
+  ArrayRef<MCPhysReg> getRegisters() const {
+    return ArrayRef(begin(), getNumRegs());
   }
 
   /// Return the specified register in the class.
@@ -119,6 +117,9 @@ public:
   /// Return true if this register class may be used to create virtual
   /// registers.
   bool isAllocatable() const { return MC->isAllocatable(); }
+
+  /// Return true if this register class has a defined BaseClassOrder.
+  bool isBaseClass() const { return MC->isBaseClass(); }
 
   /// Return true if the specified TargetRegisterClass
   /// is a proper sub-class of this TargetRegisterClass.
@@ -201,7 +202,7 @@ public:
   ///
   /// By default, this method returns all registers in the class.
   ArrayRef<MCPhysReg> getRawAllocationOrder(const MachineFunction &MF) const {
-    return OrderFunc ? OrderFunc(MF) : makeArrayRef(begin(), getNumRegs());
+    return OrderFunc ? OrderFunc(MF) : getRegisters();
   }
 
   /// Returns the combination of all lane masks of register in this class.
@@ -240,31 +241,47 @@ public:
   using vt_iterator = const MVT::SimpleValueType *;
   struct RegClassInfo {
     unsigned RegSize, SpillSize, SpillAlignment;
-    vt_iterator VTList;
+    unsigned VTListOffset;
   };
+
+  /// SubRegCoveredBits - Emitted by tablegen: bit range covered by a subreg
+  /// index, -1 in any being invalid.
+  struct SubRegCoveredBits {
+    uint16_t Offset;
+    uint16_t Size;
+  };
+
 private:
   const TargetRegisterInfoDesc *InfoDesc;     // Extra desc array for codegen
   const char *const *SubRegIndexNames;        // Names of subreg indexes.
+  const SubRegCoveredBits *SubRegIdxRanges;   // Pointer to the subreg covered
+                                              // bit ranges array.
+
   // Pointer to array of lane masks, one per sub-reg index.
   const LaneBitmask *SubRegIndexLaneMasks;
 
   regclass_iterator RegClassBegin, RegClassEnd;   // List of regclasses
   LaneBitmask CoveringLanes;
   const RegClassInfo *const RCInfos;
+  const MVT::SimpleValueType *const RCVTLists;
   unsigned HwMode;
 
 protected:
-  TargetRegisterInfo(const TargetRegisterInfoDesc *ID,
-                     regclass_iterator RCB,
-                     regclass_iterator RCE,
-                     const char *const *SRINames,
-                     const LaneBitmask *SRILaneMasks,
-                     LaneBitmask CoveringLanes,
+  TargetRegisterInfo(const TargetRegisterInfoDesc *ID, regclass_iterator RCB,
+                     regclass_iterator RCE, const char *const *SRINames,
+                     const SubRegCoveredBits *SubIdxRanges,
+                     const LaneBitmask *SRILaneMasks, LaneBitmask CoveringLanes,
                      const RegClassInfo *const RCIs,
+                     const MVT::SimpleValueType *const RCVTLists,
                      unsigned Mode = 0);
   virtual ~TargetRegisterInfo();
 
 public:
+  /// Return the number of registers for the function. (may overestimate)
+  virtual unsigned getNumSupportedRegs(const MachineFunction &) const {
+    return getNumRegs();
+  }
+
   // Register numbers can represent physical registers, virtual registers, and
   // sometimes stack slots. The unsigned values are divided into these ranges:
   //
@@ -277,8 +294,8 @@ public:
   // DenseMapInfo<unsigned> uses -1u and -2u.
 
   /// Return the size in bits of a register from class RC.
-  unsigned getRegSizeInBits(const TargetRegisterClass &RC) const {
-    return getRegClassInfo(RC).RegSize;
+  TypeSize getRegSizeInBits(const TargetRegisterClass &RC) const {
+    return TypeSize::getFixed(getRegClassInfo(RC).RegSize);
   }
 
   /// Return the size in bytes of the stack slot allocated to hold a spilled
@@ -317,7 +334,7 @@ public:
   /// Loop over all of the value types that can be represented by values
   /// in the given register class.
   vt_iterator legalclasstypes_begin(const TargetRegisterClass &RC) const {
-    return getRegClassInfo(RC).VTList;
+    return &RCVTLists[getRegClassInfo(RC).VTListOffset];
   }
 
   vt_iterator legalclasstypes_end(const TargetRegisterClass &RC) const {
@@ -358,7 +375,7 @@ public:
     unsigned NumRegs = getNumRegs();
     assert(Idx < InfoDesc->NumCosts && "CostPerUse index out of bounds");
 
-    return makeArrayRef(&InfoDesc->CostPerUse[Idx * NumRegs], NumRegs);
+    return ArrayRef(&InfoDesc->CostPerUse[Idx * NumRegs], NumRegs);
   }
 
   /// Return true if the register is in the allocation of any register class.
@@ -373,6 +390,16 @@ public:
            "This is not a subregister index");
     return SubRegIndexNames[SubIdx-1];
   }
+
+  /// Get the size of the bit range covered by a sub-register index.
+  /// If the index isn't continuous, return the sum of the sizes of its parts.
+  /// If the index is used to access subregisters of different sizes, return -1.
+  unsigned getSubRegIdxSize(unsigned Idx) const;
+
+  /// Get the offset of the bit range covered by a sub-register index.
+  /// If an Offset doesn't make sense (the index isn't continuous, or is used to
+  /// access sub-registers at different offsets), return -1.
+  unsigned getSubRegIdxOffset(unsigned Idx) const;
 
   /// Return a bitmask representing the parts of a register that are covered by
   /// SubIdx \see LaneBitmask.
@@ -429,8 +456,8 @@ public:
 
   /// Returns true if Reg contains RegUnit.
   bool hasRegUnit(MCRegister Reg, Register RegUnit) const {
-    for (MCRegUnitIterator Units(Reg, this); Units.isValid(); ++Units)
-      if (Register(*Units) == RegUnit)
+    for (MCRegUnit Unit : regunits(Reg))
+      if (Register(Unit) == RegUnit)
         return true;
     return false;
   }
@@ -461,6 +488,16 @@ public:
   ///         getCalleeSavedRegs that is implemented in MachineRegisterInfo.
   virtual const MCPhysReg*
   getCalleeSavedRegs(const MachineFunction *MF) const = 0;
+
+  /// Return a null-terminated list of all of the callee-saved registers on
+  /// this target when IPRA is on. The list should include any non-allocatable
+  /// registers that the backend uses and assumes will be saved by all calling
+  /// conventions. This is typically the ISA-standard frame pointer, but could
+  /// include the thread pointer, TOC pointer, or base pointer for different
+  /// targets.
+  virtual const MCPhysReg *getIPRACSRegs(const MachineFunction *MF) const {
+    return nullptr;
+  }
 
   /// Return a mask of call-preserved registers for the given calling convention
   /// on the current function. The mask should include all call-preserved
@@ -531,7 +568,7 @@ public:
   /// The absence of an explanation does not mean that the register is not
   /// reserved (meaning, you should check that PhysReg is in fact reserved
   /// before calling this).
-  virtual llvm::Optional<std::string>
+  virtual std::optional<std::string>
   explainReservedReg(const MachineFunction &MF, MCRegister PhysReg) const {
     return {};
   }
@@ -555,6 +592,18 @@ public:
 
   /// Returns true if the register class is considered divergent.
   virtual bool isDivergentRegClass(const TargetRegisterClass *RC) const {
+    return false;
+  }
+
+  /// Returns true if the register is considered uniform.
+  virtual bool isUniformReg(const MachineRegisterInfo &MRI,
+                            const RegisterBankInfo &RBI, Register Reg) const {
+    return false;
+  }
+
+  /// Returns true if MachineLoopInfo should analyze the given physreg
+  /// for loop invariance.
+  virtual bool shouldAnalyzePhysregInMachineLoopInfo(MCRegister R) const {
     return false;
   }
 
@@ -588,6 +637,12 @@ public:
   /// Returns true if PhysReg is a general purpose register.
   virtual bool isGeneralPurposeRegister(const MachineFunction &MF,
                                         MCRegister PhysReg) const {
+    return false;
+  }
+
+  /// Returns true if RC is a class/subclass of general purpose register.
+  virtual bool
+  isGeneralPurposeRegisterClass(const TargetRegisterClass *RC) const {
     return false;
   }
 
@@ -693,6 +748,14 @@ public:
   /// Debugging helper: dump register in human readable form to dbgs() stream.
   static void dumpReg(Register Reg, unsigned SubRegIndex = 0,
                       const TargetRegisterInfo *TRI = nullptr);
+
+  /// Return target defined base register class for a physical register.
+  /// This is the register class with the lowest BaseClassOrder containing the
+  /// register.
+  /// Will be nullptr if the register is not in any base register class.
+  virtual const TargetRegisterClass *getPhysRegBaseClass(MCRegister Reg) const {
+    return nullptr;
+  }
 
 protected:
   /// Overridden by TableGen in targets that have sub-registers.
@@ -838,7 +901,7 @@ public:
     const TargetRegisterClass *RC) const = 0;
 
   /// Returns size in bits of a phys/virtual/generic register.
-  unsigned getRegSizeInBits(Register Reg, const MachineRegisterInfo &MRI) const;
+  TypeSize getRegSizeInBits(Register Reg, const MachineRegisterInfo &MRI) const;
 
   /// Get the weight in units of pressure for this register unit.
   virtual unsigned getRegUnitWeight(unsigned RegUnit) const = 0;
@@ -1028,6 +1091,13 @@ public:
     return false;
   }
 
+  /// Process frame indices in reverse block order. This changes the behavior of
+  /// the RegScavenger passed to eliminateFrameIndex. If this is true targets
+  /// should scavengeRegisterBackwards in eliminateFrameIndex. New targets
+  /// should prefer reverse scavenging behavior.
+  /// TODO: Remove this when all targets return true.
+  virtual bool eliminateFrameIndicesBackwards() const { return true; }
+
   /// This method must be overriden to eliminate abstract frame indices from
   /// instructions which may use them. The instruction referenced by the
   /// iterator contains an MO_FrameIndex operand which must be eliminated by
@@ -1035,7 +1105,9 @@ public:
   /// as long as it keeps the iterator pointing at the finished product.
   /// SPAdj is the SP adjustment due to call frame setup instruction.
   /// FIOperandNum is the FI operand number.
-  virtual void eliminateFrameIndex(MachineBasicBlock::iterator MI,
+  /// Returns true if the current instruction was removed and the iterator
+  /// is not longer valid
+  virtual bool eliminateFrameIndex(MachineBasicBlock::iterator MI,
                                    int SPAdj, unsigned FIOperandNum,
                                    RegScavenger *RS = nullptr) const = 0;
 
@@ -1240,7 +1312,7 @@ class BitMaskClassIterator {
     // Otherwise look for the first bit set from the right
     // (representation of the class ID is big endian).
     // See getSubClassMask for more details on the representation.
-    unsigned Offset = countTrailingZeros(CurrentChunk);
+    unsigned Offset = llvm::countr_zero(CurrentChunk);
     // Add the Offset to the adjusted base number of this chunk: Idx.
     // This is the ID of the register class.
     ID = Idx + Offset;

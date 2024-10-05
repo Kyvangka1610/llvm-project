@@ -1,4 +1,4 @@
-; RUN: opt %loadPolly -S -polly-codegen < %s | FileCheck %s
+; RUN: opt %loadNPMPolly -S -passes=polly-codegen < %s | FileCheck %s
 
 ; This test case has two scops in a row. When code generating the first scop,
 ; the second scop is invalidated. This test case verifies that we do not crash
@@ -15,13 +15,13 @@
 
 target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
 
-define void @hoge(i8* %arg) {
+define void @hoge(ptr %arg) {
 bb:
   br label %bb1
 
 bb1:                                              ; preds = %bb
-  %tmp = getelementptr inbounds i8, i8* %arg, i64 5
-  %tmp2 = getelementptr inbounds i8, i8* %arg, i64 6
+  %tmp = getelementptr inbounds i8, ptr %arg, i64 5
+  %tmp2 = getelementptr inbounds i8, ptr %arg, i64 6
   br i1 false, label %bb3, label %bb4
 
 bb3:                                              ; preds = %bb1

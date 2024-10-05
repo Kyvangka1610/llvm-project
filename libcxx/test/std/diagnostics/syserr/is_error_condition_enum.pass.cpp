@@ -12,6 +12,7 @@
 
 // template <class T> constexpr bool is_error_condition_enum_v;
 
+#include <string>
 #include <system_error>
 #include <type_traits>
 #include "test_macros.h"
@@ -33,12 +34,8 @@ class A {
 };
 
 // Specialize the template for my class
-namespace std
-{
-  template <>
-  struct is_error_condition_enum<A> : public std::true_type {};
-}
-
+template <>
+struct std::is_error_condition_enum<A> : public std::true_type {};
 
 int main(int, char**)
 {

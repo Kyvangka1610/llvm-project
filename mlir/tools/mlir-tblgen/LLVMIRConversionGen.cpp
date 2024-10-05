@@ -11,7 +11,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "mlir/Support/LogicalResult.h"
 #include "mlir/TableGen/Argument.h"
 #include "mlir/TableGen/Attribute.h"
 #include "mlir/TableGen/GenInfo.h"
@@ -178,9 +177,8 @@ static LogicalResult emitOneBuilder(const Record &record, raw_ostream &os) {
 
 // Emit all builders.  Returns false on success because of the generator
 // registration requirements.
-static bool emitBuilders(const RecordKeeper &recordKeeper, raw_ostream &os) {
-  for (const Record *def :
-       recordKeeper.getAllDerivedDefinitions("LLVM_OpBase")) {
+static bool emitBuilders(const RecordKeeper &records, raw_ostream &os) {
+  for (const Record *def : records.getAllDerivedDefinitions("LLVM_OpBase")) {
     if (failed(emitOneBuilder(*def, os)))
       return true;
   }
@@ -220,9 +218,12 @@ static LogicalResult emitOneMLIRBuilder(const Record &record, raw_ostream &os,
 
   // Progressively create the builder string by replacing $-variables. Keep only
   // the not-yet-traversed part of the builder pattern to avoid re-traversing
-  // the string multiple times.
-  std::string builder;
-  llvm::raw_string_ostream bs(builder);
+  // the string multiple times. Additionally, emit an argument string
+  // immediately before the builder string. This argument string converts all
+  // operands used by the builder to MLIR values and returns failure if one of
+  // the conversions fails.
+  std::string arguments, builder;
+  llvm::raw_string_ostream as(arguments), bs(builder);
   while (StringLoc loc = findNextVariable(builderStrRef)) {
     auto name = loc.in(builderStrRef).drop_front();
     // First, insert the non-matched part as is.
@@ -237,22 +238,46 @@ static LogicalResult emitOneMLIRBuilder(const Record &record, raw_ostream &os,
         return emitError(
             record, "expected non-negative operand index for argument " + name);
       }
-      bool isVariadicOperand = isVariadicOperandName(op, name);
-      auto result =
-          isVariadicOperand
-              ? formatv("processValues(llvmOperands.drop_front({0}))", idx)
-              : formatv("processValue(llvmOperands[{0}])", idx);
-      bs << result;
+      if (isAttributeName(op, name)) {
+        bs << formatv("llvmOperands[{0}]", idx);
+      } else {
+        if (isVariadicOperandName(op, name)) {
+          as << formatv(
+              "FailureOr<SmallVector<Value>> _llvmir_gen_operand_{0} = "
+              "moduleImport.convertValues(llvmOperands.drop_front({1}));\n",
+              name, idx);
+        } else {
+          as << formatv("FailureOr<Value> _llvmir_gen_operand_{0} = "
+                        "moduleImport.convertValue(llvmOperands[{1}]);\n",
+                        name, idx);
+        }
+        as << formatv("if (failed(_llvmir_gen_operand_{0}))\n"
+                      "  return failure();\n",
+                      name);
+        bs << formatv("*_llvmir_gen_operand_{0}", name);
+      }
     } else if (isResultName(op, name)) {
       if (op.getNumResults() != 1)
         return emitError(record, "expected op to have one result");
-      bs << formatv("mapValue(inst)");
+      bs << "moduleImport.mapValue(inst)";
+    } else if (name == "_op") {
+      bs << "moduleImport.mapNoResultOp(inst)";
     } else if (name == "_int_attr") {
-      bs << "matchIntegerAttr";
+      bs << "moduleImport.matchIntegerAttr";
+    } else if (name == "_float_attr") {
+      bs << "moduleImport.matchFloatAttr";
+    } else if (name == "_var_attr") {
+      bs << "moduleImport.matchLocalVariableAttr";
+    } else if (name == "_label_attr") {
+      bs << "moduleImport.matchLabelAttr";
+    } else if (name == "_fpExceptionBehavior_attr") {
+      bs << "moduleImport.matchFPExceptionBehaviorAttr";
+    } else if (name == "_roundingMode_attr") {
+      bs << "moduleImport.matchRoundingModeAttr";
     } else if (name == "_resultType") {
-      bs << "convertType(inst->getType())";
+      bs << "moduleImport.convertType(inst->getType())";
     } else if (name == "_location") {
-      bs << "translateLoc(inst->getDebugLoc())";
+      bs << "moduleImport.translateLoc(inst->getDebugLoc())";
     } else if (name == "_builder") {
       bs << "odsBuilder";
     } else if (name == "_qualCppClassName") {
@@ -267,8 +292,9 @@ static LogicalResult emitOneMLIRBuilder(const Record &record, raw_ostream &os,
     builderStrRef = builderStrRef.substr(loc.pos + loc.length);
   }
 
-  // Output the check and the builder string.
+  // Output the check, the argument conversion, and the builder string.
   os << "if (" << conditionFn(record) << ") {\n";
+  os << as.str() << "\n";
   os << bs.str() << builderStrRef << "\n";
   os << "  return success();\n";
   os << "}\n";
@@ -278,15 +304,14 @@ static LogicalResult emitOneMLIRBuilder(const Record &record, raw_ostream &os,
 
 // Emit all intrinsic MLIR builders. Returns false on success because of the
 // generator registration requirements.
-static bool emitIntrMLIRBuilders(const RecordKeeper &recordKeeper,
-                                 raw_ostream &os) {
+static bool emitIntrMLIRBuilders(const RecordKeeper &records, raw_ostream &os) {
   // Emit condition to check if "llvmEnumName" matches the intrinsic id.
   auto emitIntrCond = [](const Record &record) {
     return "intrinsicID == llvm::Intrinsic::" +
            record.getValueAsString("llvmEnumName");
   };
   for (const Record *def :
-       recordKeeper.getAllDerivedDefinitions("LLVM_IntrOpBase")) {
+       records.getAllDerivedDefinitions("LLVM_IntrOpBase")) {
     if (failed(emitOneMLIRBuilder(*def, os, emitIntrCond)))
       return true;
   }
@@ -295,15 +320,13 @@ static bool emitIntrMLIRBuilders(const RecordKeeper &recordKeeper,
 
 // Emit all op builders. Returns false on success because of the
 // generator registration requirements.
-static bool emitOpMLIRBuilders(const RecordKeeper &recordKeeper,
-                               raw_ostream &os) {
+static bool emitOpMLIRBuilders(const RecordKeeper &records, raw_ostream &os) {
   // Emit condition to check if "llvmInstName" matches the instruction opcode.
   auto emitOpcodeCond = [](const Record &record) {
     return "inst->getOpcode() == llvm::Instruction::" +
            record.getValueAsString("llvmInstName");
   };
-  for (const Record *def :
-       recordKeeper.getAllDerivedDefinitions("LLVM_OpBase")) {
+  for (const Record *def : records.getAllDerivedDefinitions("LLVM_OpBase")) {
     if (failed(emitOneMLIRBuilder(*def, os, emitOpcodeCond)))
       return true;
   }
@@ -345,6 +368,18 @@ public:
 
     return cases;
   }
+
+  std::vector<LLVMEnumAttrCase> getAllUnsupportedCases() const {
+    const auto *inits = def->getValueAsListInit("unsupported");
+
+    std::vector<LLVMEnumAttrCase> cases;
+    cases.reserve(inits->size());
+
+    for (const llvm::Init *init : *inits)
+      cases.emplace_back(cast<llvm::DefInit>(init));
+
+    return cases;
+  }
 };
 
 // Wraper class around a Tablegen definition of a C-style LLVM enum attribute.
@@ -372,8 +407,7 @@ public:
 // Emits conversion function "LLVMClass convertEnumToLLVM(Enum)" and containing
 // switch-based logic to convert from the MLIR LLVM dialect enum attribute case
 // (Enum) to the corresponding LLVM API enumerant
-static void emitOneEnumToConversion(const llvm::Record *record,
-                                    raw_ostream &os) {
+static void emitOneEnumToConversion(const Record *record, raw_ostream &os) {
   LLVMEnumAttr enumAttr(record);
   StringRef llvmClass = enumAttr.getLLVMClassName();
   StringRef cppClassName = enumAttr.getEnumClassName();
@@ -402,8 +436,7 @@ static void emitOneEnumToConversion(const llvm::Record *record,
 // Emits conversion function "LLVMClass convertEnumToLLVM(Enum)" and containing
 // switch-based logic to convert from the MLIR LLVM dialect enum attribute case
 // (Enum) to the corresponding LLVM API C-style enumerant
-static void emitOneCEnumToConversion(const llvm::Record *record,
-                                     raw_ostream &os) {
+static void emitOneCEnumToConversion(const Record *record, raw_ostream &os) {
   LLVMCEnumAttr enumAttr(record);
   StringRef llvmClass = enumAttr.getLLVMClassName();
   StringRef cppClassName = enumAttr.getEnumClassName();
@@ -433,8 +466,7 @@ static void emitOneCEnumToConversion(const llvm::Record *record,
 // Emits conversion function "Enum convertEnumFromLLVM(LLVMClass)" and
 // containing switch-based logic to convert from the LLVM API enumerant to MLIR
 // LLVM dialect enum attribute (Enum).
-static void emitOneEnumFromConversion(const llvm::Record *record,
-                                      raw_ostream &os) {
+static void emitOneEnumFromConversion(const Record *record, raw_ostream &os) {
   LLVMEnumAttr enumAttr(record);
   StringRef llvmClass = enumAttr.getLLVMClassName();
   StringRef cppClassName = enumAttr.getEnumClassName();
@@ -453,6 +485,12 @@ static void emitOneEnumFromConversion(const llvm::Record *record,
     os << formatv("    return {0}::{1}::{2};\n", cppNamespace, cppClassName,
                   cppEnumerant);
   }
+  for (const auto &enumerant : enumAttr.getAllUnsupportedCases()) {
+    StringRef llvmEnumerant = enumerant.getLLVMEnumerant();
+    os << formatv("  case {0}::{1}:\n", llvmClass, llvmEnumerant);
+    os << formatv("    llvm_unreachable(\"unsupported case {0}::{1}\");\n",
+                  enumAttr.getLLVMClassName(), llvmEnumerant);
+  }
 
   os << "  }\n";
   os << formatv("  llvm_unreachable(\"unknown {0} type\");",
@@ -463,8 +501,7 @@ static void emitOneEnumFromConversion(const llvm::Record *record,
 // Emits conversion function "Enum convertEnumFromLLVM(LLVMEnum)" and
 // containing switch-based logic to convert from the LLVM API C-style enumerant
 // to MLIR LLVM dialect enum attribute (Enum).
-static void emitOneCEnumFromConversion(const llvm::Record *record,
-                                       raw_ostream &os) {
+static void emitOneCEnumFromConversion(const Record *record, raw_ostream &os) {
   LLVMCEnumAttr enumAttr(record);
   StringRef llvmClass = enumAttr.getLLVMClassName();
   StringRef cppClassName = enumAttr.getEnumClassName();
@@ -474,7 +511,7 @@ static void emitOneCEnumFromConversion(const llvm::Record *record,
   os << formatv(
       "inline LLVM_ATTRIBUTE_UNUSED {0}::{1} convert{1}FromLLVM(int64_t "
       "value) {{\n",
-      cppNamespace, cppClassName, llvmClass);
+      cppNamespace, cppClassName);
   os << "  switch (value) {\n";
 
   for (const auto &enumerant : enumAttr.getAllCases()) {
@@ -495,17 +532,15 @@ static void emitOneCEnumFromConversion(const llvm::Record *record,
 // Emits conversion functions between MLIR enum attribute case and corresponding
 // LLVM API enumerants for all registered LLVM dialect enum attributes.
 template <bool ConvertTo>
-static bool emitEnumConversionDefs(const RecordKeeper &recordKeeper,
+static bool emitEnumConversionDefs(const RecordKeeper &records,
                                    raw_ostream &os) {
-  for (const Record *def :
-       recordKeeper.getAllDerivedDefinitions("LLVM_EnumAttr"))
+  for (const Record *def : records.getAllDerivedDefinitions("LLVM_EnumAttr"))
     if (ConvertTo)
       emitOneEnumToConversion(def, os);
     else
       emitOneEnumFromConversion(def, os);
 
-  for (const Record *def :
-       recordKeeper.getAllDerivedDefinitions("LLVM_CEnumAttr"))
+  for (const Record *def : records.getAllDerivedDefinitions("LLVM_CEnumAttr"))
     if (ConvertTo)
       emitOneCEnumToConversion(def, os);
     else
@@ -521,10 +556,9 @@ static void emitOneIntrinsic(const Record &record, raw_ostream &os) {
 
 // Emit the list of LLVM IR intrinsics identifiers that are convertible to a
 // matching MLIR LLVM dialect intrinsic operation.
-static bool emitConvertibleIntrinsics(const RecordKeeper &recordKeeper,
+static bool emitConvertibleIntrinsics(const RecordKeeper &records,
                                       raw_ostream &os) {
-  for (const Record *def :
-       recordKeeper.getAllDerivedDefinitions("LLVM_IntrOpBase"))
+  for (const Record *def : records.getAllDerivedDefinitions("LLVM_IntrOpBase"))
     emitOneIntrinsic(*def, os);
 
   return false;

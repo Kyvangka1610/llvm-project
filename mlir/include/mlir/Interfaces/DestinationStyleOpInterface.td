@@ -13,26 +13,28 @@ include "mlir/IR/OpBase.td"
 
 def DestinationStyleOpInterface : OpInterface<"DestinationStyleOpInterface"> {
   let description = [{
-    Ops that are in destination style have designated output operands, which act
-    as initial tensor values for the results of the operation or the output
+    Ops that are in destination style have designated "init" operands, which act
+    as initial tensor values for the results of the operation or the init
     buffers to which the results of the op will be written.
 
-    Output operands must be tensors or memrefs. Input operands can have any
-    type. All non-output operands are inputs.
+    Init operands must be tensors or memrefs. Input operands can have any type.
+    All non-init operands are DPS inputs.
 
-    It is assumed that the output operands of the op are the operands at
-    position [start, end). The positions are defined by getOutputsPositionRange
-    method. All non-output operands are "inputs" of the DPS op.
+    The init operands of this op are specified by the MutableOperandRange that
+    the `getDpsInitsMutable` interface methods returns. This implies that the
+    init operands must be a consecutive range of operands.
 
-    If the op has "tensor semantics", then the input operands are either scalars
-    or tensors. The output operands are tensors and every tensor output is tied
-    to a corresponding tensor OpResult in a 1-to-1 fashion. The i-th output
-    tensor is tied to the i-th OpResult. The op may not have any additional
-    OpResults. Output operands and their tied OpResults have the same type.
+    Each tensor init operand is tied to a corresponding tensor OpResult in a
+    1-to-1 fashion. The i-th init tensor is tied to the i-th OpResult. The op
+    may not have any additional OpResults. Init operands and their tied
+    OpResults have the same type. Dynamic dimension sizes also match at runtime.
 
-    If the op has "buffer semantics", then the input operands are either memrefs
-    or other non-tensor types, e.g. scalar types. Furthermore, the output
-    operands are memrefs and the op has no results.
+    Note: This implies that a destination style op without any tensor inits must
+    not have any OpResults.
+
+    An op has "pure tensor semantics" if it has at least one tensor operand and
+    no buffer (memref) operands. It has "pure buffer semantics" if it has at
+    least one buffer (memref) operand and no tensor operands.
 
     Destination-passing style abstraction makes certain transformations easier.
     For example, tiling implementation can extract/insert slices from/into the
@@ -42,272 +44,163 @@ def DestinationStyleOpInterface : OpInterface<"DestinationStyleOpInterface"> {
     bufferization) and can directly reuse the existing destination buffer.
 
     Example of a destination style op: `%r = tensor.insert_slice %t into %d`,
-    where `%t` is the single input and `%d` is the single output. `%d` is tied
+    where `%t` is the single input and `%d` is the single init. `%d` is tied
     to `%r`.
 
     Example of an op that is not in destination style: `%r = tensor.pad %t`.
     This op is not in destination style because `%r` and `%t` have different
     shape.
-
-    Each op that wants to implement DestinationStyleOpInterface needs to define
-    the getOutputsPositionRange() method.
   }];
 
   let cppNamespace = "::mlir";
 
   let methods = [
-    // This method has to be defined for every DPS op.
     InterfaceMethod<
-      /*desc=*/"Return start and end indices of the output operands range.",
-      /*retTy=*/"std::pair<int64_t, int64_t>",
-      /*methodName=*/"getOutputsPositionRange",
-      /*args=*/(ins),
-      /*methodBody=*/"",
-      /*defaultImplementation=*/""
+      /*desc=*/"Return start and end indices of the init operands range.",
+      /*retTy=*/"::mlir::MutableOperandRange",
+      /*methodName=*/"getDpsInitsMutable",
+      /*args=*/(ins)
     >,
-    //===------------------------------------------------------------------===//
-    // Operands handling.
-    //===------------------------------------------------------------------===//
-    // The operand list is assumed to start with the input operands and end
-    // with the output operands. Therefore, all methods to access the inputs
-    // and outputs can be expressed if the number of output operands is know.
-    InterfaceMethod<
-      /*desc=*/"Return the number of outputs.",
-      /*retTy=*/"int64_t",
-      /*methodName=*/"getNumOutputs",
-      /*args=*/(ins),
-      /*methodBody=*/"",
-      /*defaultImplementation=*/[{
-        auto [start, end] = $_op.getOutputsPositionRange();
-        return end - start;
-      }]
-    >,
-    InterfaceMethod<
-      /*desc=*/"Return the output operands.",
-      /*retTy=*/"OpOperandVector",
-      /*methodName=*/"getOutputOperands",
-      /*args=*/(ins),
-      /*methodBody=*/"",
-      /*defaultImplementation=*/[{
-        auto [start, end] = $_op.getOutputsPositionRange();
-
-        OpOperandVector result;
-        result.reserve(end - start);
-        for (int i = start; i < end; ++i)
-          result.push_back(&$_op->getOpOperand(i));
-        return result;
-      }]
-    >,
-    InterfaceMethod<
-      /*desc=*/"Return the `i`-th output operand.",
-      /*retTy=*/"OpOperand *",
-      /*methodName=*/"getOutputOperand",
-      /*args=*/(ins "int64_t":$i),
-      /*methodBody=*/"",
-      /*defaultImplementation=*/[{
-        assert(i >= 0 && i < $_op.getNumOutputs());
-        auto [start, end] = $_op.getOutputsPositionRange();
-        return &$_op->getOpOperand(start + i);
-      }]
-    >,
-    InterfaceMethod<
-      /*desc=*/"Set the `i`-th output operand.",
-      /*retTy=*/"void",
-      /*methodName=*/"setOutputOperand",
-      /*args=*/(ins "int64_t":$i, "Value":$value),
-      /*methodBody=*/"",
-      /*defaultImplementation=*/[{
-        assert(i >= 0 && i < $_op.getNumOutputs());
-        auto [start, end] = $_op.getOutputsPositionRange();
-        $_op->setOperand(start + i, value);
-      }]
-    >,
-    InterfaceMethod<
-      /*desc=*/"Return the number of inputs.",
-      /*retTy=*/"int64_t",
-      /*methodName=*/"getNumInputs",
-      /*args=*/(ins),
-      /*methodBody=*/"",
-      /*defaultImplementation=*/[{
-        return $_op.getNumOperands() - $_op.getNumOutputs();
-      }]
-    >,
-    InterfaceMethod<
-      /*desc=*/"Return the input operands.",
-      /*retTy=*/"OpOperandVector",
-      /*methodName=*/"getInputOperands",
-      /*args=*/(ins),
-      /*methodBody=*/"",
-      /*defaultImplementation=*/[{
-        auto [start, end] = $_op.getOutputsPositionRange();
-        int64_t numOutputs = end - start;
-        int64_t numOperands = $_op.getNumOperands();
-
-        OpOperandVector result;
-        result.reserve(numOperands - numOutputs);
-        for (int i = 0; i < start; ++i)
-          result.push_back(&$_op->getOpOperand(i));
-        for (int i = end; i < numOperands; ++i)
-          result.push_back(&$_op->getOpOperand(end + i));
-
-        return result;
-      }]
-    >,
-    InterfaceMethod<
-      /*desc=*/[{ Return the `i`-th input operand.  }],
-      /*retTy=*/"OpOperand *",
-      /*methodName=*/"getInputOperand",
-      /*args=*/(ins "int64_t":$i),
-      /*methodBody=*/"",
-      /*defaultImplementation=*/[{
-        assert(i >= 0 && i < getNumInputs());
-        auto [start, end] = $_op.getOutputsPositionRange();
-        return &$_op->getOpOperand(i < start ? i : i + end - start) ;
-      }]
-    >,
-    //===------------------------------------------------------------------===//
-    // Input and Output arguments handling.
-    //===------------------------------------------------------------------===//
-    InterfaceMethod<
-      /*desc=*/"Return true if `opOperand` is an input.",
-      /*retTy=*/"bool",
-      /*methodName=*/"isInput",
-      /*args=*/(ins "OpOperand *":$opOperand),
-      /*methodBody=*/"",
-      /*defaultImplementation=*/[{
-        auto [start, end] = $_op.getOutputsPositionRange();
-        auto operandNumber = opOperand->getOperandNumber();
-        return operandNumber < start || operandNumber >= end;
-      }]
-    >,
-    InterfaceMethod<
-      /*desc=*/"Return true if `opOperand` is an output.",
-      /*retTy=*/"bool",
-      /*methodName=*/"isOutput",
-      /*args=*/(ins "OpOperand *":$opOperand),
-      /*methodBody=*/"",
-      /*defaultImplementation=*/[{
-        auto [start, end] = $_op.getOutputsPositionRange();
-        auto operandNumber = opOperand->getOperandNumber();
-        return operandNumber >= start && operandNumber < end;
-      }]
-    >,
-    InterfaceMethod<
-      /*desc=*/"Return true if the `opOperand` is a scalar value.",
-      /*retTy=*/"bool",
-      /*methodName=*/"isScalar",
-      /*args=*/(ins "OpOperand *":$opOperand),
-      /*methodBody=*/"",
-      /*defaultImplementation=*/[{
-        assert(opOperand->getOwner() == $_op.getOperation());
-        return !opOperand->get().getType().template isa<ShapedType>();
-      }]
-    >,
-    InterfaceMethod<
-      /*desc=*/"Return the OpResult that is tied to the given OpOperand.",
-      /*retTy=*/"OpResult",
-      /*methodName=*/"getTiedOpResult",
-      /*args=*/(ins "OpOperand *":$opOperand),
-      /*methodBody=*/"",
-      /*defaultImplementation=*/[{
-        assert(opOperand->getOwner() == $_op.getOperation());
-
-        auto [start, end] = $_op.getOutputsPositionRange();
-        int64_t resultIndex = opOperand->getOperandNumber() - start;
-        assert(resultIndex >= 0 &&
-               resultIndex < $_op->getNumResults() );
-        return $_op->getResult(resultIndex);
-      }]
-    >,
-    InterfaceMethod<
-      /*desc=*/"Return the OpOperand that is tied to the given OpResult.",
-      /*retTy=*/"OpOperand *",
-      /*methodName=*/"getTiedOpOperand",
-      /*args=*/(ins "OpResult":$opResult),
-      /*methodBody=*/"",
-      /*defaultImplementation=*/[{
-        assert(opResult.getDefiningOp() == $_op.getOperation());
-        return $_op.getOutputOperand(opResult.getResultNumber());
-      }]
-    >,
-    //===------------------------------------------------------------------===//
-    // Other interface methods.
-    //===------------------------------------------------------------------===//
-    InterfaceMethod<
-      /*desc=*/"Return whether the op has only MemRef input and outputs.",
-      /*retTy=*/"bool",
-      /*methodName=*/"hasBufferSemantics",
-      /*args=*/(ins),
-      /*methodBody=*/"",
-      /*defaultImplementation=*/[{
-        return $_op->getNumResults() == 0 &&
-          llvm::all_of($_op->getOpOperands(),
-            [&](OpOperand &opOperand) {
-              return isScalar(&opOperand) ||
-                     opOperand.get().getType().template isa<MemRefType>();
-            });
-      }]
-    >,
-    InterfaceMethod<
-      /*desc=*/"Return whether the op has only RankedTensor input and outputs.",
-      /*retTy=*/"bool",
-      /*methodName=*/"hasTensorSemantics",
-      /*args=*/(ins),
-      /*methodBody=*/"",
-      /*defaultImplementation=*/[{
-        return llvm::all_of($_op->getOpOperands(),
-          [&](OpOperand &opOperand) {
-            return isScalar(&opOperand) ||
-                   opOperand.get().getType().template isa<RankedTensorType>();
-          });
-      }]
-    >,
-    //===------------------------------------------------------------------===//
-    // Other static interface methods.
-    //===------------------------------------------------------------------===//
-    InterfaceMethod<
-      /*desc=*/[{
-        Clone the current operation with the given location and operands. This
-        is used to abstract away the optional underlying region creation. This
-        does not change the balance between input, output_buffer and
-        init_tensors operands.
-      }],
-      /*retTy=*/"Operation *",
-      /*methodName=*/"clone",
-      (ins "OpBuilder &":$b, "Location":$loc, "TypeRange":$resultTypes,
-           "ValueRange":$operands),
-      [{
-        BlockAndValueMapping bvm;
-        OperationState state(
-          loc, ConcreteOp::getOperationName(), operands, resultTypes,
-          $_op->getAttrs());
-        for (Region &r : $_op->getRegions())
-          r.cloneInto(state.addRegion(), bvm);
-        return b.create(state);
-      }]
-    >,
-    InterfaceMethod<
-      /*desc=*/[{
-        Clone the current operation with the given location, operands
-        and BlockAndValueMapping but leave the regions empty. This is
-        used to abstract away the optional underlying region creation.
-        This does not change the balance between input, output_buffer
-        and init_tensors operands.
-      }],
-      /*retTy=*/"Operation *",
-      /*methodName=*/"cloneWithoutRegions",
-      (ins "OpBuilder &":$b, "Location":$loc, "TypeRange":$resultTypes,
-           "ValueRange":$operands),
-      [{
-        OperationState state(
-          loc, ConcreteOp::getOperationName(), operands, resultTypes,
-          $_op->getAttrs());
-        for (size_t cnt = 0, e = $_op->getNumRegions(); cnt < e; ++cnt)
-          state.addRegion();
-        return b.create(state);
-      }]
-    >
   ];
+
+  let extraSharedClassDeclaration = [{
+    ::mlir::OperandRange getDpsInits() {
+      return $_op.getDpsInitsMutable();
+    }
+
+    /// Return the number of DPS inits.
+    int64_t getNumDpsInits() { return $_op.getDpsInits().size(); }
+
+    /// Return the `i`-th DPS init.
+    ::mlir::OpOperand *getDpsInitOperand(int64_t i) {
+      return &$_op.getDpsInitsMutable()[i];
+    }
+
+    /// Set the `i`-th DPS init.
+    void setDpsInitOperand(int64_t i, Value value) {
+      assert(i >= 0 && i < $_op.getNumDpsInits() && "invalid index");
+      $_op->setOperand($_op.getDpsInits().getBeginOperandIndex() + i, value);
+    }
+
+    /// Return the number of DPS inits.
+    int64_t getNumDpsInputs() {
+      return $_op->getNumOperands() - $_op.getNumDpsInits();
+    }
+
+    /// Return the DPS input operands.
+    ::llvm::SmallVector<::mlir::OpOperand *> getDpsInputOperands() {
+      ::llvm::SmallVector<::mlir::OpOperand *> result;
+      int64_t numOperands = $_op->getNumOperands();
+      ::mlir::OperandRange range = $_op.getDpsInits();
+      if (range.empty()) {
+        result.reserve(numOperands);
+        for (int64_t i = 0; i < numOperands; ++i)
+          result.push_back(&$_op->getOpOperand(i));
+        return result;
+      }
+      int64_t firstInitPos = range.getBeginOperandIndex();
+      int64_t numInits = range.size();
+      result.reserve(numOperands - numInits);
+      for (int64_t i = 0; i < firstInitPos; ++i)
+        result.push_back(&$_op->getOpOperand(i));
+      for (int64_t i = firstInitPos + numInits; i < numOperands; ++i)
+        result.push_back(&$_op->getOpOperand(i));
+      return result;
+    }
+
+    /// Return the DPS input operands.
+    ::llvm::SmallVector<::mlir::Value> getDpsInputs() {
+      return ::llvm::to_vector(::llvm::map_range(
+          $_op.getDpsInputOperands(), [](OpOperand *o) { return o->get(); }));
+    }
+
+    /// Return the `i`-th DPS input operand.
+    ::mlir::OpOperand *getDpsInputOperand(int64_t i) {
+      ::mlir::OperandRange range = $_op.getDpsInits();
+      if (range.empty())
+        return &$_op->getOpOperand(i);
+      int64_t firstInitPos = range.getBeginOperandIndex();
+      int64_t numInits = range.size();
+      assert(i >= 0 && i < $_op->getNumOperands() - numInits
+             && "invalid index");
+      return &$_op->getOpOperand(
+          i < firstInitPos ? i : i + firstInitPos + numInits);
+    }
+
+    /// Return "true" if `opOperand` is an "input".
+    bool isDpsInput(::mlir::OpOperand *opOperand) {
+      assert(opOperand->getOwner() == $_op && "invalid operand");
+      return !$_op.isDpsInit(opOperand);
+    }
+
+    /// Return "true" if `opOperand` is an "init".
+    bool isDpsInit(::mlir::OpOperand *opOperand) {
+      assert(opOperand->getOwner() == $_op && "invalid operand");
+      ::mlir::OperandRange range = $_op.getDpsInits();
+      if (range.empty())
+        return false;
+      auto operandNumber = opOperand->getOperandNumber();
+      return operandNumber >= range.getBeginOperandIndex()
+          && operandNumber < range.getBeginOperandIndex() + range.size();
+    }
+
+    /// Return "true" if `opOperand` is a scalar value. A sclar is defined as
+    /// neither a MemRef nor a tensor value.
+    bool isScalar(::mlir::OpOperand *opOperand) {
+      assert(opOperand->getOwner() == $_op && "invalid operand");
+      return !::llvm::isa<BaseMemRefType, TensorType>(
+          opOperand->get().getType());
+    }
+
+    /// Return the OpResult that is tied to the given OpOperand.
+    ::mlir::OpResult getTiedOpResult(::mlir::OpOperand *opOperand) {
+        assert(opOperand->getOwner() == $_op && "invalid operand");
+        ::mlir::OperandRange range = $_op.getDpsInits();
+        assert(!range.empty() && "op has no inits");
+        int64_t resultIndex =
+            opOperand->getOperandNumber() - range.getBeginOperandIndex();
+        assert(resultIndex >= 0 &&
+               resultIndex < $_op->getNumResults());
+        return $_op->getResult(resultIndex);
+    }
+
+    /// Return the OpOperand that is tied to the given OpResult.
+    ::mlir::OpOperand *getTiedOpOperand(::mlir::OpResult opResult) {
+      assert(opResult.getDefiningOp() == $_op && "invalid opresult");
+      return $_op.getDpsInitOperand(opResult.getResultNumber());
+    }
+
+    /// Return whether the op has pure buffer semantics. That is the case if the
+    /// op has no tensor operands and at least one memref operand.
+    bool hasPureBufferSemantics() {
+      // No tensors.
+      auto isTensor = [](Value v){
+        return ::llvm::isa<::mlir::TensorType>(v.getType());
+      };
+      if (::llvm::any_of($_op->getOperands(), isTensor))
+        return false;
+      // At least one memref.
+      auto isMemref = [](Value v){
+        return ::llvm::isa<::mlir::BaseMemRefType>(v.getType());
+      };
+      return llvm::any_of($_op->getOperands(), isMemref);
+    }
+
+    /// Return whether the op has pure tensor semantics. That is the case if the
+    /// op has no memref operands and at least one tensor operand.
+    bool hasPureTensorSemantics() {
+      // No memrefs.
+      auto isMemref = [](Value v){
+        return ::llvm::isa<::mlir::BaseMemRefType>(v.getType());
+      };
+      if (::llvm::any_of($_op->getOperands(), isMemref))
+        return false;
+      // At least one tensor.
+      auto isTensor = [](Value v){
+        return ::llvm::isa<::mlir::TensorType>(v.getType());
+      };
+      return llvm::any_of($_op->getOperands(), isTensor);    }
+  }];
 
   let verify = [{ return detail::verifyDestinationStyleOpInterface($_op); }];
   let verifyWithRegions = 1;

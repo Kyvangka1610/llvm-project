@@ -32,7 +32,7 @@ MaxClause("amdgpu-max-memory-clause", cl::Hidden, cl::init(15),
 namespace {
 
 class SIFormMemoryClauses : public MachineFunctionPass {
-  typedef DenseMap<unsigned, std::pair<unsigned, LaneBitmask>> RegUse;
+  using RegUse = DenseMap<unsigned, std::pair<unsigned, LaneBitmask>>;
 
 public:
   static char ID;
@@ -49,7 +49,7 @@ public:
   }
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AU.addRequired<LiveIntervals>();
+    AU.addRequired<LiveIntervalsWrapperPass>();
     AU.setPreservesAll();
     MachineFunctionPass::getAnalysisUsage(AU);
   }
@@ -81,7 +81,7 @@ private:
 
 INITIALIZE_PASS_BEGIN(SIFormMemoryClauses, DEBUG_TYPE,
                       "SI Form memory clauses", false, false)
-INITIALIZE_PASS_DEPENDENCY(LiveIntervals)
+INITIALIZE_PASS_DEPENDENCY(LiveIntervalsWrapperPass)
 INITIALIZE_PASS_END(SIFormMemoryClauses, DEBUG_TYPE,
                     "SI Form memory clauses", false, false)
 
@@ -119,9 +119,7 @@ static bool isValidClauseInst(const MachineInstr &MI, bool IsVMEMClause) {
   // If this is a load instruction where the result has been coalesced with an operand, then we cannot clause it.
   for (const MachineOperand &ResMO : MI.defs()) {
     Register ResReg = ResMO.getReg();
-    for (const MachineOperand &MO : MI.uses()) {
-      if (!MO.isReg() || MO.isDef())
-        continue;
+    for (const MachineOperand &MO : MI.all_uses()) {
       if (MO.getReg() == ResReg)
         return false;
     }
@@ -232,7 +230,7 @@ void SIFormMemoryClauses::collectRegUses(const MachineInstr &MI,
     auto Loc = Map.find(Reg);
     unsigned State = getMopState(MO);
     if (Loc == Map.end()) {
-      Map[Reg] = std::make_pair(State, Mask);
+      Map[Reg] = std::pair(State, Mask);
     } else {
       Loc->second.first |= State;
       Loc->second.second |= Mask;
@@ -268,14 +266,14 @@ bool SIFormMemoryClauses::runOnMachineFunction(MachineFunction &MF) {
   TRI = ST->getRegisterInfo();
   MRI = &MF.getRegInfo();
   MFI = MF.getInfo<SIMachineFunctionInfo>();
-  LiveIntervals *LIS = &getAnalysis<LiveIntervals>();
+  LiveIntervals *LIS = &getAnalysis<LiveIntervalsWrapperPass>().getLIS();
   SlotIndexes *Ind = LIS->getSlotIndexes();
   bool Changed = false;
 
   MaxVGPRs = TRI->getAllocatableSet(MF, &AMDGPU::VGPR_32RegClass).count();
   MaxSGPRs = TRI->getAllocatableSet(MF, &AMDGPU::SGPR_32RegClass).count();
-  unsigned FuncMaxClause = AMDGPU::getIntegerAttribute(
-      MF.getFunction(), "amdgpu-max-memory-clause", MaxClause);
+  unsigned FuncMaxClause = MF.getFunction().getFnAttributeAsParsedInteger(
+      "amdgpu-max-memory-clause", MaxClause);
 
   for (MachineBasicBlock &MBB : MF) {
     GCNDownwardRPTracker RPT(*LIS);
@@ -393,13 +391,11 @@ bool SIFormMemoryClauses::runOnMachineFunction(MachineFunction &MF) {
         Ind->insertMachineInstrInMaps(*Kill);
       }
 
-      if (!Kill) {
-        RPT.reset(MI, &LiveRegsCopy);
-        continue;
-      }
-
       // Restore the state after processing the end of the bundle.
-      RPT.reset(*Kill, &LiveRegsCopy);
+      RPT.reset(MI, &LiveRegsCopy);
+
+      if (!Kill)
+        continue;
 
       for (auto &&R : Defs) {
         Register Reg = R.first;

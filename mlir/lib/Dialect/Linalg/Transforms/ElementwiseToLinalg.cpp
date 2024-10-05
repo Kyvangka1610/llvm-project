@@ -15,7 +15,7 @@
 #include "mlir/Transforms/DialectConversion.h"
 
 namespace mlir {
-#define GEN_PASS_DEF_CONVERTELEMENTWISETOLINALG
+#define GEN_PASS_DEF_CONVERTELEMENTWISETOLINALGPASS
 #include "mlir/Dialect/Linalg/Passes.h.inc"
 } // namespace mlir
 
@@ -27,8 +27,7 @@ static bool isElementwiseMappableOpOnRankedTensors(Operation *op) {
 
   // TODO: The conversion pattern can be made to work for `any_of` here, but
   // it's more complex as it requires tracking which operands are scalars.
-  return llvm::all_of(op->getOperandTypes(),
-                      [](Type type) { return type.isa<RankedTensorType>(); });
+  return llvm::all_of(op->getOperandTypes(), llvm::IsaPred<RankedTensorType>);
 }
 
 /// Given `op` assumed `isElementwiseMappableOpOnRankedTensors`, iterate over
@@ -66,13 +65,9 @@ getOrCreateOperandsMatchingResultTypes(OpBuilder &b, Operation *op) {
       continue;
 
     // Extract static / dynamic shape mix from the first operand.
-    Value firstOperand = operands.front();
-    auto rankedTensorType = t.cast<RankedTensorType>();
-    auto staticShape = llvm::to_vector<4>(rankedTensorType.getShape());
-    auto dynamicShape = linalg::getDynOperands(loc, firstOperand, b);
-
     res.push_back(b.create<tensor::EmptyOp>(
-        loc, staticShape, rankedTensorType.getElementType(), dynamicShape));
+        loc, tensor::getMixedSizes(b, loc, operands.front()),
+        cast<RankedTensorType>(t).getElementType()));
   }
   return res;
 }
@@ -87,12 +82,12 @@ struct ConvertAnyElementwiseMappableOpOnRankedTensors : public RewritePattern {
       return rewriter.notifyMatchFailure(
           op, "requires elementwise op on ranked tensors");
 
-    auto rank = op->getResult(0).getType().cast<RankedTensorType>().getRank();
+    auto rank = cast<RankedTensorType>(op->getResult(0).getType()).getRank();
     SmallVector<AffineMap, 3> indexingMaps(
         op->getNumResults() + op->getNumOperands(),
         rewriter.getMultiDimIdentityMap(rank));
-    SmallVector<StringRef, 6> iteratorTypes(rank,
-                                            getParallelIteratorTypeName());
+    SmallVector<utils::IteratorType, 6> iteratorTypes(
+        rank, utils::IteratorType::parallel);
     auto outputs = getOrCreateOperandsMatchingResultTypes(rewriter, op);
     rewriter.replaceOpWithNewOp<linalg::GenericOp>(
         op, /*resultTensorTypes=*/op->getResultTypes(),
@@ -104,7 +99,7 @@ struct ConvertAnyElementwiseMappableOpOnRankedTensors : public RewritePattern {
         [&](OpBuilder &builder, Location loc, ValueRange regionArgs) {
           auto resultTypes = llvm::to_vector<6>(
               llvm::map_range(op->getResultTypes(), [](Type type) {
-                return type.cast<TensorType>().getElementType();
+                return cast<TensorType>(type).getElementType();
               }));
           auto *scalarOp =
               builder.create(loc, op->getName().getIdentifier(),
@@ -125,8 +120,10 @@ void mlir::linalg::populateElementwiseToLinalgConversionPatterns(
 
 namespace {
 class ConvertElementwiseToLinalgPass
-    : public impl::ConvertElementwiseToLinalgBase<
+    : public impl::ConvertElementwiseToLinalgPassBase<
           ConvertElementwiseToLinalgPass> {
+  using impl::ConvertElementwiseToLinalgPassBase<
+      ConvertElementwiseToLinalgPass>::ConvertElementwiseToLinalgPassBase;
 
   void runOnOperation() final {
     auto *func = getOperation();
@@ -144,7 +141,3 @@ class ConvertElementwiseToLinalgPass
   }
 };
 } // namespace
-
-std::unique_ptr<Pass> mlir::createConvertElementwiseToLinalgPass() {
-  return std::make_unique<ConvertElementwiseToLinalgPass>();
-}

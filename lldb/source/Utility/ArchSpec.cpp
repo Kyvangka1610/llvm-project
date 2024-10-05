@@ -16,7 +16,9 @@
 #include "llvm/BinaryFormat/COFF.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/BinaryFormat/MachO.h"
+#include "llvm/BinaryFormat/XCOFF.h"
 #include "llvm/Support/Compiler.h"
+#include "llvm/TargetParser/ARMTargetParser.h"
 
 using namespace lldb;
 using namespace lldb_private;
@@ -58,6 +60,8 @@ static const CoreDefinition g_core_definitions[] = {
      "armv6m"},
     {eByteOrderLittle, 4, 2, 4, llvm::Triple::arm, ArchSpec::eCore_arm_armv7,
      "armv7"},
+    {eByteOrderLittle, 4, 2, 4, llvm::Triple::arm, ArchSpec::eCore_arm_armv7a,
+     "armv7a"},
     {eByteOrderLittle, 4, 2, 4, llvm::Triple::arm, ArchSpec::eCore_arm_armv7l,
      "armv7l"},
     {eByteOrderLittle, 4, 2, 4, llvm::Triple::arm, ArchSpec::eCore_arm_armv7f,
@@ -100,6 +104,8 @@ static const CoreDefinition g_core_definitions[] = {
      ArchSpec::eCore_arm_arm64, "arm64"},
     {eByteOrderLittle, 8, 4, 4, llvm::Triple::aarch64,
      ArchSpec::eCore_arm_armv8, "armv8"},
+    {eByteOrderLittle, 8, 4, 4, llvm::Triple::aarch64,
+     ArchSpec::eCore_arm_armv8a, "armv8a"},
     {eByteOrderLittle, 4, 2, 4, llvm::Triple::arm, ArchSpec::eCore_arm_armv8l,
      "armv8l"},
     {eByteOrderLittle, 8, 4, 4, llvm::Triple::aarch64,
@@ -152,6 +158,10 @@ static const CoreDefinition g_core_definitions[] = {
      ArchSpec::eCore_mips64r5el, "mips64r5el"},
     {eByteOrderLittle, 8, 2, 4, llvm::Triple::mips64el,
      ArchSpec::eCore_mips64r6el, "mips64r6el"},
+
+    // MSP430
+    {eByteOrderLittle, 2, 2, 4, llvm::Triple::msp430, ArchSpec::eCore_msp430,
+     "msp430"},
 
     {eByteOrderBig, 4, 4, 4, llvm::Triple::ppc, ArchSpec::eCore_ppc_generic,
      "powerpc"},
@@ -219,6 +229,11 @@ static const CoreDefinition g_core_definitions[] = {
      "riscv32"},
     {eByteOrderLittle, 8, 2, 4, llvm::Triple::riscv64, ArchSpec::eCore_riscv64,
      "riscv64"},
+
+    {eByteOrderLittle, 4, 4, 4, llvm::Triple::loongarch32,
+     ArchSpec::eCore_loongarch32, "loongarch32"},
+    {eByteOrderLittle, 8, 4, 4, llvm::Triple::loongarch64,
+     ArchSpec::eCore_loongarch64, "loongarch64"},
 
     {eByteOrderLittle, 4, 4, 4, llvm::Triple::UnknownArch,
      ArchSpec::eCore_uknownMach32, "unknown-mach-32"},
@@ -396,6 +411,8 @@ static const ArchDefinitionEntry g_elf_arch_entries[] = {
      ArchSpec::eMIPSSubType_mips64r2el, 0xFFFFFFFFu, 0xFFFFFFFFu}, // mips64r2el
     {ArchSpec::eCore_mips64r6el, llvm::ELF::EM_MIPS,
      ArchSpec::eMIPSSubType_mips64r6el, 0xFFFFFFFFu, 0xFFFFFFFFu}, // mips64r6el
+    {ArchSpec::eCore_msp430, llvm::ELF::EM_MSP430, LLDB_INVALID_CPUTYPE,
+     0xFFFFFFFFu, 0xFFFFFFFFu}, // MSP430
     {ArchSpec::eCore_hexagon_generic, llvm::ELF::EM_HEXAGON,
      LLDB_INVALID_CPUTYPE, 0xFFFFFFFFu, 0xFFFFFFFFu}, // HEXAGON
     {ArchSpec::eCore_arc, llvm::ELF::EM_ARC_COMPACT2, LLDB_INVALID_CPUTYPE,
@@ -406,6 +423,12 @@ static const ArchDefinitionEntry g_elf_arch_entries[] = {
      ArchSpec::eRISCVSubType_riscv32, 0xFFFFFFFFu, 0xFFFFFFFFu}, // riscv32
     {ArchSpec::eCore_riscv64, llvm::ELF::EM_RISCV,
      ArchSpec::eRISCVSubType_riscv64, 0xFFFFFFFFu, 0xFFFFFFFFu}, // riscv64
+    {ArchSpec::eCore_loongarch32, llvm::ELF::EM_LOONGARCH,
+     ArchSpec::eLoongArchSubType_loongarch32, 0xFFFFFFFFu,
+     0xFFFFFFFFu}, // loongarch32
+    {ArchSpec::eCore_loongarch64, llvm::ELF::EM_LOONGARCH,
+     ArchSpec::eLoongArchSubType_loongarch64, 0xFFFFFFFFu,
+     0xFFFFFFFFu}, // loongarch64
 };
 
 static const ArchDefinition g_elf_arch_def = {
@@ -441,10 +464,23 @@ static const ArchDefinition g_coff_arch_def = {
     "pe-coff",
 };
 
+static const ArchDefinitionEntry g_xcoff_arch_entries[] = {
+    {ArchSpec::eCore_ppc_generic, llvm::XCOFF::TCPU_COM, LLDB_INVALID_CPUTYPE,
+     0xFFFFFFFFu, 0xFFFFFFFFu},
+    {ArchSpec::eCore_ppc64_generic, llvm::XCOFF::TCPU_PPC64,
+     LLDB_INVALID_CPUTYPE, 0xFFFFFFFFu, 0xFFFFFFFFu}};
+
+static const ArchDefinition g_xcoff_arch_def = {
+    eArchTypeXCOFF,
+    std::size(g_xcoff_arch_entries),
+    g_xcoff_arch_entries,
+    "xcoff",
+};
+
 //===----------------------------------------------------------------------===//
 // Table of all ArchDefinitions
 static const ArchDefinition *g_arch_definitions[] = {
-    &g_macho_arch_def, &g_elf_arch_def, &g_coff_arch_def};
+    &g_macho_arch_def, &g_elf_arch_def, &g_coff_arch_def, &g_xcoff_arch_def};
 
 //===----------------------------------------------------------------------===//
 // Static helper functions.
@@ -525,7 +561,6 @@ void ArchSpec::Clear() {
   m_triple = llvm::Triple();
   m_core = kCore_invalid;
   m_byte_order = eByteOrderInvalid;
-  m_distribution_id.Clear();
   m_flags = 0;
 }
 
@@ -627,7 +662,7 @@ std::string ArchSpec::GetClangTargetCPU() const {
   }
 
   if (GetTriple().isARM())
-    cpu = GetTriple().getARMCPUForArch("").str();
+    cpu = llvm::ARM::getARMCPUForArch(GetTriple(), "").str();
   return cpu;
 }
 
@@ -669,14 +704,6 @@ llvm::Triple::ArchType ArchSpec::GetMachine() const {
     return core_def->machine;
 
   return llvm::Triple::UnknownArch;
-}
-
-ConstString ArchSpec::GetDistributionId() const {
-  return m_distribution_id;
-}
-
-void ArchSpec::SetDistributionId(const char *distribution_id) {
-  m_distribution_id.SetCString(distribution_id);
 }
 
 uint32_t ArchSpec::GetAddressByteSize() const {
@@ -887,10 +914,16 @@ bool ArchSpec::SetArchitecture(ArchitectureType arch_type, uint32_t cpu,
           case llvm::ELF::ELFOSABI_SOLARIS:
             m_triple.setOS(llvm::Triple::OSType::Solaris);
             break;
+          case llvm::ELF::ELFOSABI_STANDALONE:
+            m_triple.setOS(llvm::Triple::OSType::UnknownOS);
+            break;
           }
         } else if (arch_type == eArchTypeCOFF && os == llvm::Triple::Win32) {
           m_triple.setVendor(llvm::Triple::PC);
           m_triple.setOS(llvm::Triple::Win32);
+        } else if (arch_type == eArchTypeXCOFF && os == llvm::Triple::AIX) {
+          m_triple.setVendor(llvm::Triple::IBM);
+          m_triple.setOS(llvm::Triple::AIX);
         } else {
           m_triple.setVendor(llvm::Triple::UnknownVendor);
           m_triple.setOS(llvm::Triple::UnknownOS);
@@ -958,8 +991,6 @@ static bool IsCompatibleEnvironment(llvm::Triple::EnvironmentType lhs,
 }
 
 bool ArchSpec::IsMatch(const ArchSpec &rhs, MatchType match) const {
-  // explicitly ignoring m_distribution_id in this method.
-
   if (GetByteOrder() != rhs.GetByteOrder() ||
       !cores_match(GetCore(), rhs.GetCore(), true, match == ExactMatch))
     return false;
@@ -1409,23 +1440,6 @@ bool ArchSpec::IsFullySpecifiedTriple() const {
     return false;
 
   return true;
-}
-
-void ArchSpec::PiecewiseTripleCompare(
-    const ArchSpec &other, bool &arch_different, bool &vendor_different,
-    bool &os_different, bool &os_version_different, bool &env_different) const {
-  const llvm::Triple &me(GetTriple());
-  const llvm::Triple &them(other.GetTriple());
-
-  arch_different = (me.getArch() != them.getArch());
-
-  vendor_different = (me.getVendor() != them.getVendor());
-
-  os_different = (me.getOS() != them.getOS());
-
-  os_version_different = (me.getOSMajorVersion() != them.getOSMajorVersion());
-
-  env_different = (me.getEnvironment() != them.getEnvironment());
 }
 
 bool ArchSpec::IsAlwaysThumbInstructions() const {

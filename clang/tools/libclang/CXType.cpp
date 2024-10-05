@@ -10,11 +10,11 @@
 //
 //===--------------------------------------------------------------------===//
 
+#include "CXType.h"
 #include "CIndexer.h"
 #include "CXCursor.h"
 #include "CXString.h"
 #include "CXTranslationUnit.h"
-#include "CXType.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclObjC.h"
 #include "clang/AST/DeclTemplate.h"
@@ -22,6 +22,7 @@
 #include "clang/AST/Type.h"
 #include "clang/Basic/AddressSpaces.h"
 #include "clang/Frontend/ASTUnit.h"
+#include <optional>
 
 using namespace clang;
 
@@ -76,9 +77,11 @@ static CXTypeKind GetBuiltinTypeKind(const BuiltinType *BT) {
     BTCASE(OCLEvent);
     BTCASE(OCLQueue);
     BTCASE(OCLReserveID);
-  default:
-    return CXType_Unexposed;
-  }
+#define HLSL_INTANGIBLE_TYPE(Name, Id, SingletonId) BTCASE(Id);
+#include "clang/Basic/HLSLIntangibleTypes.def"
+    default:
+      return CXType_Unexposed;
+    }
 #undef BTCASE
 }
 
@@ -180,7 +183,7 @@ static inline CXTranslationUnit GetTU(CXType CT) {
   return static_cast<CXTranslationUnit>(CT.data[1]);
 }
 
-static Optional<ArrayRef<TemplateArgument>>
+static std::optional<ArrayRef<TemplateArgument>>
 GetTemplateArguments(QualType Type) {
   assert(!Type.isNull());
   if (const auto *Specialization = Type->getAs<TemplateSpecializationType>())
@@ -193,16 +196,17 @@ GetTemplateArguments(QualType Type) {
       return TemplateDecl->getTemplateArgs().asArray();
   }
 
-  return None;
+  return std::nullopt;
 }
 
-static Optional<QualType> TemplateArgumentToQualType(const TemplateArgument &A) {
+static std::optional<QualType>
+TemplateArgumentToQualType(const TemplateArgument &A) {
   if (A.getKind() == TemplateArgument::Type)
     return A.getAsType();
-  return None;
+  return std::nullopt;
 }
 
-static Optional<QualType>
+static std::optional<QualType>
 FindTemplateArgumentTypeAt(ArrayRef<TemplateArgument> TA, unsigned index) {
   unsigned current = 0;
   for (const auto &A : TA) {
@@ -216,7 +220,7 @@ FindTemplateArgumentTypeAt(ArrayRef<TemplateArgument> TA, unsigned index) {
       return TemplateArgumentToQualType(A);
     current++;
   }
-  return None;
+  return std::nullopt;
 }
 
 CXType clang_getCursorType(CXCursor C) {
@@ -320,8 +324,6 @@ CXType clang_getTypedefDeclUnderlyingType(CXCursor C) {
       QualType T = TD->getUnderlyingType();
       return MakeCXType(T, TU);
     }
-
-    return MakeCXType(QualType(), TU);
   }
 
   return MakeCXType(QualType(), TU);
@@ -338,8 +340,6 @@ CXType clang_getEnumDeclIntegerType(CXCursor C) {
       QualType T = TD->getIntegerType();
       return MakeCXType(T, TU);
     }
-
-    return MakeCXType(QualType(), TU);
   }
 
   return MakeCXType(QualType(), TU);
@@ -354,8 +354,6 @@ long long clang_getEnumConstantDeclValue(CXCursor C) {
     if (const EnumConstantDecl *TD = dyn_cast_or_null<EnumConstantDecl>(D)) {
       return TD->getInitVal().getSExtValue();
     }
-
-    return LLONG_MIN;
   }
 
   return LLONG_MIN;
@@ -370,8 +368,6 @@ unsigned long long clang_getEnumConstantDeclUnsignedValue(CXCursor C) {
     if (const EnumConstantDecl *TD = dyn_cast_or_null<EnumConstantDecl>(D)) {
       return TD->getInitVal().getZExtValue();
     }
-
-    return ULLONG_MAX;
   }
 
   return ULLONG_MAX;
@@ -384,7 +380,7 @@ int clang_getFieldDeclBitWidth(CXCursor C) {
     const Decl *D = getCursorDecl(C);
 
     if (const FieldDecl *FD = dyn_cast_or_null<FieldDecl>(D)) {
-      if (FD->isBitField())
+      if (FD->isBitField() && !FD->getBitWidth()->isValueDependent())
         return FD->getBitWidthValue(getCursorContext(C));
     }
   }
@@ -624,6 +620,7 @@ CXString clang_getTypeKindSpelling(enum CXTypeKind K) {
     TKIND(Pipe);
     TKIND(Attributed);
     TKIND(BTFTagAttributed);
+    TKIND(HLSLAttributedResource);
     TKIND(BFloat16);
 #define IMAGE_TYPE(ImgType, Id, SingletonId, Access, Suffix) TKIND(Id);
 #include "clang/Basic/OpenCLImageTypes.def"
@@ -634,6 +631,8 @@ CXString clang_getTypeKindSpelling(enum CXTypeKind K) {
     TKIND(OCLEvent);
     TKIND(OCLQueue);
     TKIND(OCLReserveID);
+#define HLSL_INTANGIBLE_TYPE(Name, Id, SingletonId) TKIND(Id);
+#include "clang/Basic/HLSLIntangibleTypes.def"
     TKIND(Atomic);
   }
 #undef TKIND
@@ -684,6 +683,9 @@ CXCallingConv clang_getFunctionTypeCallingConv(CXType X) {
       TCALLINGCONV(SwiftAsync);
       TCALLINGCONV(PreserveMost);
       TCALLINGCONV(PreserveAll);
+      TCALLINGCONV(M68kRTD);
+      TCALLINGCONV(PreserveNone);
+      TCALLINGCONV(RISCVVectorCall);
     case CC_SpirFunction: return CXCallingConv_Unexposed;
     case CC_AMDGPUKernelCall: return CXCallingConv_Unexposed;
     case CC_OpenCLKernel: return CXCallingConv_Unexposed;
@@ -1175,7 +1177,7 @@ CXType clang_Type_getTemplateArgumentAsType(CXType CT, unsigned index) {
   if (!TA)
     return MakeCXType(QualType(), GetTU(CT));
 
-  Optional<QualType> QT = FindTemplateArgumentTypeAt(*TA, index);
+  std::optional<QualType> QT = FindTemplateArgumentTypeAt(*TA, index);
   return MakeCXType(QT.value_or(QualType()), GetTU(CT));
 }
 
@@ -1330,8 +1332,7 @@ enum CXTypeNullabilityKind clang_Type_getNullability(CXType CT) {
   if (T.isNull())
     return CXTypeNullability_Invalid;
 
-  ASTContext &Ctx = cxtu::getASTUnit(GetTU(CT))->getASTContext();
-  if (auto nullability = T->getNullability(Ctx)) {
+  if (auto nullability = T->getNullability()) {
     switch (*nullability) {
       case NullabilityKind::NonNull:
         return CXTypeNullability_NonNull;

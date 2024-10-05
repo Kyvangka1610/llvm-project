@@ -3,20 +3,19 @@ set(LLVM_OPTIONAL_SOURCES
   TensorInferTypeOpInterfaceImpl.cpp
   TensorOps.cpp
   TensorTilingInterfaceImpl.cpp
+  ValueBoundsOpInterfaceImpl.cpp
 )
 
 add_mlir_dialect_library(MLIRTensorDialect
   TensorDialect.cpp
   TensorOps.cpp
+  ValueBoundsOpInterfaceImpl.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/mlir/Dialect/Tensor
 
   DEPENDS
   MLIRTensorOpsIncGen
-
-  LINK_COMPONENTS
-  Core
 
   LINK_LIBS PUBLIC
   MLIRAffineDialect
@@ -32,6 +31,7 @@ add_mlir_dialect_library(MLIRTensorDialect
   MLIRShapedOpInterfaces
   MLIRSideEffectInterfaces
   MLIRSupport
+  MLIRValueBoundsOpInterface
   MLIRViewLikeInterface
   )
 
@@ -57,10 +57,16 @@ add_mlir_dialect_library(MLIRTensorTilingInterfaceImpl
 
   LINK_LIBS PUBLIC
   MLIRAffineDialect
+  MLIRAffineUtils
+  MLIRArithUtils
+  MLIRDialectUtils
   MLIRIR
   MLIRLinalgDialect
+  MLIRLinalgUtils
   MLIRSCFDialect
   MLIRSupport
   MLIRTensorDialect
+  MLIRTensorUtils
   MLIRTilingInterface
+  MLIRValueBoundsOpInterface
   )

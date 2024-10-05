@@ -13,8 +13,8 @@
 #include "lldb/lldb-private-types.h"
 #include "lldb/lldb-types.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
-#include "llvm/Support/YAMLTraits.h"
 #include <string>
 #include <utility>
 #include <vector>
@@ -167,7 +167,7 @@ public:
   /// have a nullptr const char * at the end, as the size of the list is
   /// embedded in the ArrayRef object.
   llvm::ArrayRef<const char *> GetArgumentArrayRef() const {
-    return llvm::makeArrayRef(m_argv).drop_back();
+    return llvm::ArrayRef(m_argv).drop_back();
   }
 
   /// Appends a new argument to the end of the list argument list.

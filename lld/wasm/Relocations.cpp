@@ -16,11 +16,12 @@
 using namespace llvm;
 using namespace llvm::wasm;
 
-namespace lld {
-namespace wasm {
+namespace lld::wasm {
 
 static bool requiresGOTAccess(const Symbol *sym) {
-  if (!config->isPic &&
+  if (sym->isShared())
+    return true;
+  if (!ctx.isPic &&
       config->unresolvedSymbols != UnresolvedPolicy::ImportDynamic)
     return false;
   if (sym->isHidden() || sym->isLocal())
@@ -33,9 +34,9 @@ static bool requiresGOTAccess(const Symbol *sym) {
 }
 
 static bool allowUndefined(const Symbol* sym) {
-  // Symbols with explicit import names are always allowed to be undefined at
+  // Symbols that are explicitly imported are always allowed to be undefined at
   // link time.
-  if (sym->importName)
+  if (sym->isImported())
     return true;
   if (isa<UndefinedFunction>(sym) && config->importUndefined)
     return true;
@@ -43,32 +44,33 @@ static bool allowUndefined(const Symbol* sym) {
   return config->allowUndefinedSymbols.count(sym->getName()) != 0;
 }
 
-static void reportUndefined(Symbol *sym) {
+static void reportUndefined(ObjFile *file, Symbol *sym) {
   if (!allowUndefined(sym)) {
     switch (config->unresolvedSymbols) {
     case UnresolvedPolicy::ReportError:
-      error(toString(sym->getFile()) + ": undefined symbol: " + toString(*sym));
+      error(toString(file) + ": undefined symbol: " + toString(*sym));
       break;
     case UnresolvedPolicy::Warn:
-      warn(toString(sym->getFile()) + ": undefined symbol: " + toString(*sym));
+      warn(toString(file) + ": undefined symbol: " + toString(*sym));
       break;
     case UnresolvedPolicy::Ignore:
       LLVM_DEBUG(dbgs() << "ignoring undefined symbol: " + toString(*sym) +
                                "\n");
-      if (!config->importUndefined) {
-        if (auto *f = dyn_cast<UndefinedFunction>(sym)) {
-          if (!f->stubFunction) {
-            f->stubFunction = symtab->createUndefinedStub(*f->getSignature());
-            f->stubFunction->markLive();
-            // Mark the function itself as a stub which prevents it from being
-            // assigned a table entry.
-            f->isStub = true;
-          }
-        }
-      }
       break;
     case UnresolvedPolicy::ImportDynamic:
       break;
+    }
+
+    if (auto *f = dyn_cast<UndefinedFunction>(sym)) {
+      if (!f->stubFunction &&
+          config->unresolvedSymbols != UnresolvedPolicy::ImportDynamic &&
+          !config->importUndefined) {
+        f->stubFunction = symtab->createUndefinedStub(*f->getSignature());
+        f->stubFunction->markLive();
+        // Mark the function itself as a stub which prevents it from being
+        // assigned a table entry.
+        f->isStub = true;
+      }
     }
   }
 }
@@ -142,7 +144,7 @@ void scanRelocations(InputChunk *chunk) {
       break;
     }
 
-    if (config->isPic ||
+    if (ctx.isPic ||
         (sym->isUndefined() &&
          config->unresolvedSymbols == UnresolvedPolicy::ImportDynamic)) {
       switch (reloc.Type) {
@@ -163,18 +165,35 @@ void scanRelocations(InputChunk *chunk) {
       case R_WASM_MEMORY_ADDR_I32:
       case R_WASM_MEMORY_ADDR_I64:
         // These relocation types are only present in the data section and
-        // will be converted into code by `generateRelocationCode`.  This code
-        // requires the symbols to have GOT entries.
+        // will be converted into code by `generateRelocationCode`.  This
+        // code requires the symbols to have GOT entries.
         if (requiresGOTAccess(sym))
           addGOTEntry(sym);
         break;
       }
-    } else if (sym->isUndefined() && !config->relocatable && !sym->isWeak()) {
-      // Report undefined symbols
-      reportUndefined(sym);
+    }
+
+    if (!config->relocatable && sym->isUndefined()) {
+      switch (reloc.Type) {
+      case R_WASM_TABLE_INDEX_REL_SLEB:
+      case R_WASM_TABLE_INDEX_REL_SLEB64:
+      case R_WASM_MEMORY_ADDR_REL_SLEB:
+      case R_WASM_MEMORY_ADDR_REL_SLEB64:
+        // These relocation types are for symbols that exists relative to
+        // `__memory_base` or `__table_base` and as such only make sense for
+        // defined symbols.
+        error(toString(file) + ": relocation " + relocTypeToString(reloc.Type) +
+              " is not supported against an undefined symbol `" +
+              toString(*sym) + "`");
+        break;
+      }
+
+      if (!sym->isWeak()) {
+        // Report undefined symbols
+        reportUndefined(file, sym);
+      }
     }
   }
 }
 
-} // namespace wasm
-} // namespace lld
+} // namespace lld::wasm

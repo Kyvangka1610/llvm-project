@@ -24,9 +24,11 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/MathExtras.h"
 #include "llvm/Support/SMLoc.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/TableGen/Error.h"
+#include "llvm/TableGen/TGTimer.h"
 #include <cassert>
 #include <cstdint>
 #include <map>
@@ -69,6 +71,7 @@ struct RecordKeeperImpl {
   BitInit TrueBitInit;
   BitInit FalseBitInit;
 
+  FoldingSet<ArgumentInit> TheArgumentInitPool;
   FoldingSet<BitsInit> TheBitsInitPool;
   std::map<int64_t, IntInit *> TheIntInitPool;
   StringMap<StringInit *, BumpPtrAllocator &> StringInitStringPool;
@@ -80,10 +83,8 @@ struct RecordKeeperImpl {
   FoldingSet<FoldOpInit> TheFoldOpInitPool;
   FoldingSet<IsAOpInit> TheIsAOpInitPool;
   FoldingSet<ExistsOpInit> TheExistsOpInitPool;
-  DenseMap<std::pair<RecTy *, Init *>, VarInit *> TheVarInitPool;
+  DenseMap<std::pair<const RecTy *, Init *>, VarInit *> TheVarInitPool;
   DenseMap<std::pair<TypedInit *, unsigned>, VarBitInit *> TheVarBitInitPool;
-  DenseMap<std::pair<TypedInit *, unsigned>, VarListElementInit *>
-      TheVarListElementInitPool;
   FoldingSet<VarDefInit> TheVarDefInitPool;
   DenseMap<std::pair<Init *, StringInit *>, FieldInit *> TheFieldInitPool;
   FoldingSet<CondOpInit> TheCondOpInitPool;
@@ -92,9 +93,38 @@ struct RecordKeeperImpl {
 
   unsigned AnonCounter;
   unsigned LastRecordID;
+
+  void dumpAllocationStats(raw_ostream &OS) const;
 };
 } // namespace detail
 } // namespace llvm
+
+void detail::RecordKeeperImpl::dumpAllocationStats(raw_ostream &OS) const {
+  // Dump memory allocation related stats.
+  OS << "TheArgumentInitPool size = " << TheArgumentInitPool.size() << '\n';
+  OS << "TheBitsInitPool size = " << TheBitsInitPool.size() << '\n';
+  OS << "TheIntInitPool size = " << TheIntInitPool.size() << '\n';
+  OS << "TheBitsInitPool size = " << TheBitsInitPool.size() << '\n';
+  OS << "TheListInitPool size = " << TheListInitPool.size() << '\n';
+  OS << "TheUnOpInitPool size = " << TheUnOpInitPool.size() << '\n';
+  OS << "TheBinOpInitPool size = " << TheBinOpInitPool.size() << '\n';
+  OS << "TheTernOpInitPool size = " << TheTernOpInitPool.size() << '\n';
+  OS << "TheFoldOpInitPool size = " << TheFoldOpInitPool.size() << '\n';
+  OS << "TheIsAOpInitPool size = " << TheIsAOpInitPool.size() << '\n';
+  OS << "TheExistsOpInitPool size = " << TheExistsOpInitPool.size() << '\n';
+  OS << "TheCondOpInitPool size = " << TheCondOpInitPool.size() << '\n';
+  OS << "TheDagInitPool size = " << TheDagInitPool.size() << '\n';
+  OS << "RecordTypePool size = " << RecordTypePool.size() << '\n';
+  OS << "TheVarInitPool size = " << TheVarInitPool.size() << '\n';
+  OS << "TheVarBitInitPool size = " << TheVarBitInitPool.size() << '\n';
+  OS << "TheVarDefInitPool size = " << TheVarDefInitPool.size() << '\n';
+  OS << "TheFieldInitPool size = " << TheFieldInitPool.size() << '\n';
+  OS << "Bytes allocated = " << Allocator.getBytesAllocated() << '\n';
+  OS << "Total allocator memory = " << Allocator.getTotalMemory() << "\n\n";
+
+  OS << "Number of records instantiated = " << LastRecordID << '\n';
+  OS << "Number of anonymous records = " << AnonCounter << '\n';
+}
 
 //===----------------------------------------------------------------------===//
 //    Type implementations
@@ -104,7 +134,7 @@ struct RecordKeeperImpl {
 LLVM_DUMP_METHOD void RecTy::dump() const { print(errs()); }
 #endif
 
-ListRecTy *RecTy::getListTy() {
+const ListRecTy *RecTy::getListTy() const {
   if (!ListTy)
     ListTy = new (RK.getImpl().Allocator) ListRecTy(this);
   return ListTy;
@@ -117,7 +147,7 @@ bool RecTy::typeIsConvertibleTo(const RecTy *RHS) const {
 
 bool RecTy::typeIsA(const RecTy *RHS) const { return this == RHS; }
 
-BitRecTy *BitRecTy::get(RecordKeeper &RK) {
+const BitRecTy *BitRecTy::get(RecordKeeper &RK) {
   return &RK.getImpl().SharedBitRecTy;
 }
 
@@ -129,7 +159,7 @@ bool BitRecTy::typeIsConvertibleTo(const RecTy *RHS) const{
   return false;
 }
 
-BitsRecTy *BitsRecTy::get(RecordKeeper &RK, unsigned Sz) {
+const BitsRecTy *BitsRecTy::get(RecordKeeper &RK, unsigned Sz) {
   detail::RecordKeeperImpl &RKImpl = RK.getImpl();
   if (Sz >= RKImpl.SharedBitsRecTys.size())
     RKImpl.SharedBitsRecTys.resize(Sz + 1);
@@ -150,13 +180,7 @@ bool BitsRecTy::typeIsConvertibleTo(const RecTy *RHS) const {
   return (kind == BitRecTyKind && Size == 1) || (kind == IntRecTyKind);
 }
 
-bool BitsRecTy::typeIsA(const RecTy *RHS) const {
-  if (const BitsRecTy *RHSb = dyn_cast<BitsRecTy>(RHS))
-    return RHSb->Size == Size;
-  return false;
-}
-
-IntRecTy *IntRecTy::get(RecordKeeper &RK) {
+const IntRecTy *IntRecTy::get(RecordKeeper &RK) {
   return &RK.getImpl().SharedIntRecTy;
 }
 
@@ -165,7 +189,7 @@ bool IntRecTy::typeIsConvertibleTo(const RecTy *RHS) const {
   return kind==BitRecTyKind || kind==BitsRecTyKind || kind==IntRecTyKind;
 }
 
-StringRecTy *StringRecTy::get(RecordKeeper &RK) {
+const StringRecTy *StringRecTy::get(RecordKeeper &RK) {
   return &RK.getImpl().SharedStringRecTy;
 }
 
@@ -194,7 +218,7 @@ bool ListRecTy::typeIsA(const RecTy *RHS) const {
   return false;
 }
 
-DagRecTy *DagRecTy::get(RecordKeeper &RK) {
+const DagRecTy *DagRecTy::get(RecordKeeper &RK) {
   return &RK.getImpl().SharedDagRecTy;
 }
 
@@ -203,23 +227,22 @@ std::string DagRecTy::getAsString() const {
 }
 
 static void ProfileRecordRecTy(FoldingSetNodeID &ID,
-                               ArrayRef<Record *> Classes) {
+                               ArrayRef<const Record *> Classes) {
   ID.AddInteger(Classes.size());
-  for (Record *R : Classes)
+  for (const Record *R : Classes)
     ID.AddPointer(R);
 }
 
-RecordRecTy *RecordRecTy::get(RecordKeeper &RK,
-                              ArrayRef<Record *> UnsortedClasses) {
+const RecordRecTy *RecordRecTy::get(RecordKeeper &RK,
+                                    ArrayRef<const Record *> UnsortedClasses) {
   detail::RecordKeeperImpl &RKImpl = RK.getImpl();
   if (UnsortedClasses.empty())
     return &RKImpl.AnyRecord;
 
   FoldingSet<RecordRecTy> &ThePool = RKImpl.RecordTypePool;
 
-  SmallVector<Record *, 4> Classes(UnsortedClasses.begin(),
-                                   UnsortedClasses.end());
-  llvm::sort(Classes, [](Record *LHS, Record *RHS) {
+  SmallVector<const Record *, 4> Classes(UnsortedClasses);
+  llvm::sort(Classes, [](const Record *LHS, const Record *RHS) {
     return LHS->getNameInitAsString() < RHS->getNameInitAsString();
   });
 
@@ -241,16 +264,17 @@ RecordRecTy *RecordRecTy::get(RecordKeeper &RK,
 #endif
 
   void *Mem = RKImpl.Allocator.Allocate(
-      totalSizeToAlloc<Record *>(Classes.size()), alignof(RecordRecTy));
+      totalSizeToAlloc<const Record *>(Classes.size()), alignof(RecordRecTy));
   RecordRecTy *Ty = new (Mem) RecordRecTy(RK, Classes.size());
   std::uninitialized_copy(Classes.begin(), Classes.end(),
-                          Ty->getTrailingObjects<Record *>());
+                          Ty->getTrailingObjects<const Record *>());
   ThePool.InsertNode(Ty, IP);
   return Ty;
 }
-RecordRecTy *RecordRecTy::get(Record *Class) {
+
+const RecordRecTy *RecordRecTy::get(const Record *Class) {
   assert(Class && "unexpected null class");
-  return get(Class->getRecords(), Class);
+  return get(Class->getRecords(), {Class});
 }
 
 void RecordRecTy::Profile(FoldingSetNodeID &ID) const {
@@ -263,7 +287,7 @@ std::string RecordRecTy::getAsString() const {
 
   std::string Str = "{";
   bool First = true;
-  for (Record *R : getClasses()) {
+  for (const Record *R : getClasses()) {
     if (!First)
       Str += ", ";
     First = false;
@@ -273,11 +297,10 @@ std::string RecordRecTy::getAsString() const {
   return Str;
 }
 
-bool RecordRecTy::isSubClassOf(Record *Class) const {
-  return llvm::any_of(getClasses(), [Class](Record *MySuperClass) {
-                                      return MySuperClass == Class ||
-                                             MySuperClass->isSubClassOf(Class);
-                                    });
+bool RecordRecTy::isSubClassOf(const Record *Class) const {
+  return llvm::any_of(getClasses(), [Class](const Record *MySuperClass) {
+    return MySuperClass == Class || MySuperClass->isSubClassOf(Class);
+  });
 }
 
 bool RecordRecTy::typeIsConvertibleTo(const RecTy *RHS) const {
@@ -288,21 +311,22 @@ bool RecordRecTy::typeIsConvertibleTo(const RecTy *RHS) const {
   if (!RTy)
     return false;
 
-  return llvm::all_of(RTy->getClasses(), [this](Record *TargetClass) {
-                                           return isSubClassOf(TargetClass);
-                                         });
+  return llvm::all_of(RTy->getClasses(), [this](const Record *TargetClass) {
+    return isSubClassOf(TargetClass);
+  });
 }
 
 bool RecordRecTy::typeIsA(const RecTy *RHS) const {
   return typeIsConvertibleTo(RHS);
 }
 
-static RecordRecTy *resolveRecordTypes(RecordRecTy *T1, RecordRecTy *T2) {
-  SmallVector<Record *, 4> CommonSuperClasses;
-  SmallVector<Record *, 4> Stack(T1->classes_begin(), T1->classes_end());
+static const RecordRecTy *resolveRecordTypes(const RecordRecTy *T1,
+                                             const RecordRecTy *T2) {
+  SmallVector<const Record *, 4> CommonSuperClasses;
+  SmallVector<const Record *, 4> Stack(T1->getClasses());
 
   while (!Stack.empty()) {
-    Record *R = Stack.pop_back_val();
+    const Record *R = Stack.pop_back_val();
 
     if (T2->isSubClassOf(R)) {
       CommonSuperClasses.push_back(R);
@@ -314,24 +338,27 @@ static RecordRecTy *resolveRecordTypes(RecordRecTy *T1, RecordRecTy *T2) {
   return RecordRecTy::get(T1->getRecordKeeper(), CommonSuperClasses);
 }
 
-RecTy *llvm::resolveTypes(RecTy *T1, RecTy *T2) {
+const RecTy *llvm::resolveTypes(const RecTy *T1, const RecTy *T2) {
   if (T1 == T2)
     return T1;
 
-  if (RecordRecTy *RecTy1 = dyn_cast<RecordRecTy>(T1)) {
-    if (RecordRecTy *RecTy2 = dyn_cast<RecordRecTy>(T2))
+  if (const RecordRecTy *RecTy1 = dyn_cast<RecordRecTy>(T1)) {
+    if (const RecordRecTy *RecTy2 = dyn_cast<RecordRecTy>(T2))
       return resolveRecordTypes(RecTy1, RecTy2);
   }
 
+  assert(T1 != nullptr && "Invalid record type");
   if (T1->typeIsConvertibleTo(T2))
     return T2;
+
+  assert(T2 != nullptr && "Invalid record type");
   if (T2->typeIsConvertibleTo(T1))
     return T1;
 
-  if (ListRecTy *ListTy1 = dyn_cast<ListRecTy>(T1)) {
-    if (ListRecTy *ListTy2 = dyn_cast<ListRecTy>(T2)) {
-      RecTy* NewType = resolveTypes(ListTy1->getElementType(),
-                                    ListTy2->getElementType());
+  if (const ListRecTy *ListTy1 = dyn_cast<ListRecTy>(T1)) {
+    if (const ListRecTy *ListTy2 = dyn_cast<ListRecTy>(T2)) {
+      const RecTy *NewType =
+          resolveTypes(ListTy1->getElementType(), ListTy2->getElementType());
       if (NewType)
         return NewType->getListTy();
     }
@@ -353,6 +380,8 @@ LLVM_DUMP_METHOD void Init::dump() const { return print(errs()); }
 RecordKeeper &Init::getRecordKeeper() const {
   if (auto *TyInit = dyn_cast<TypedInit>(this))
     return TyInit->getType()->getRecordKeeper();
+  if (auto *ArgInit = dyn_cast<ArgumentInit>(this))
+    return ArgInit->getRecordKeeper();
   return cast<UnsetInit>(this)->getRecordKeeper();
 }
 
@@ -360,19 +389,57 @@ UnsetInit *UnsetInit::get(RecordKeeper &RK) {
   return &RK.getImpl().TheUnsetInit;
 }
 
-Init *UnsetInit::getCastTo(RecTy *Ty) const {
+Init *UnsetInit::getCastTo(const RecTy *Ty) const {
   return const_cast<UnsetInit *>(this);
 }
 
-Init *UnsetInit::convertInitializerTo(RecTy *Ty) const {
+Init *UnsetInit::convertInitializerTo(const RecTy *Ty) const {
   return const_cast<UnsetInit *>(this);
+}
+
+static void ProfileArgumentInit(FoldingSetNodeID &ID, Init *Value,
+                                ArgAuxType Aux) {
+  auto I = Aux.index();
+  ID.AddInteger(I);
+  if (I == ArgumentInit::Positional)
+    ID.AddInteger(std::get<ArgumentInit::Positional>(Aux));
+  if (I == ArgumentInit::Named)
+    ID.AddPointer(std::get<ArgumentInit::Named>(Aux));
+  ID.AddPointer(Value);
+}
+
+void ArgumentInit::Profile(FoldingSetNodeID &ID) const {
+  ProfileArgumentInit(ID, Value, Aux);
+}
+
+ArgumentInit *ArgumentInit::get(Init *Value, ArgAuxType Aux) {
+  FoldingSetNodeID ID;
+  ProfileArgumentInit(ID, Value, Aux);
+
+  RecordKeeper &RK = Value->getRecordKeeper();
+  detail::RecordKeeperImpl &RKImpl = RK.getImpl();
+  void *IP = nullptr;
+  if (ArgumentInit *I = RKImpl.TheArgumentInitPool.FindNodeOrInsertPos(ID, IP))
+    return I;
+
+  ArgumentInit *I = new (RKImpl.Allocator) ArgumentInit(Value, Aux);
+  RKImpl.TheArgumentInitPool.InsertNode(I, IP);
+  return I;
+}
+
+Init *ArgumentInit::resolveReferences(Resolver &R) const {
+  Init *NewValue = Value->resolveReferences(R);
+  if (NewValue != Value)
+    return cloneWithValue(NewValue);
+
+  return const_cast<ArgumentInit *>(this);
 }
 
 BitInit *BitInit::get(RecordKeeper &RK, bool V) {
   return V ? &RK.getImpl().TrueBitInit : &RK.getImpl().FalseBitInit;
 }
 
-Init *BitInit::convertInitializerTo(RecTy *Ty) const {
+Init *BitInit::convertInitializerTo(const RecTy *Ty) const {
   if (isa<BitRecTy>(Ty))
     return const_cast<BitInit *>(this);
 
@@ -415,10 +482,10 @@ BitsInit *BitsInit::get(RecordKeeper &RK, ArrayRef<Init *> Range) {
 }
 
 void BitsInit::Profile(FoldingSetNodeID &ID) const {
-  ProfileBitsInit(ID, makeArrayRef(getTrailingObjects<Init *>(), NumBits));
+  ProfileBitsInit(ID, ArrayRef(getTrailingObjects<Init *>(), NumBits));
 }
 
-Init *BitsInit::convertInitializerTo(RecTy *Ty) const {
+Init *BitsInit::convertInitializerTo(const RecTy *Ty) const {
   if (isa<BitRecTy>(Ty)) {
     if (getNumBits() != 1) return nullptr; // Only accept if just one bit!
     return getBit(0);
@@ -432,16 +499,22 @@ Init *BitsInit::convertInitializerTo(RecTy *Ty) const {
   }
 
   if (isa<IntRecTy>(Ty)) {
-    int64_t Result = 0;
-    for (unsigned i = 0, e = getNumBits(); i != e; ++i)
-      if (auto *Bit = dyn_cast<BitInit>(getBit(i)))
-        Result |= static_cast<int64_t>(Bit->getValue()) << i;
-      else
-        return nullptr;
-    return IntInit::get(getRecordKeeper(), Result);
+    std::optional<int64_t> Result = convertInitializerToInt();
+    if (Result)
+      return IntInit::get(getRecordKeeper(), *Result);
   }
 
   return nullptr;
+}
+
+std::optional<int64_t> BitsInit::convertInitializerToInt() const {
+  int64_t Result = 0;
+  for (unsigned i = 0, e = getNumBits(); i != e; ++i)
+    if (auto *Bit = dyn_cast<BitInit>(getBit(i)))
+      Result |= static_cast<int64_t>(Bit->getValue()) << i;
+    else
+      return std::nullopt;
+  return Result;
 }
 
 Init *
@@ -530,7 +603,7 @@ static bool canFitInBitfield(int64_t Value, unsigned NumBits) {
          (Value >> NumBits == 0) || (Value >> (NumBits-1) == -1);
 }
 
-Init *IntInit::convertInitializerTo(RecTy *Ty) const {
+Init *IntInit::convertInitializerTo(const RecTy *Ty) const {
   if (isa<IntRecTy>(Ty))
     return const_cast<IntInit *>(this);
 
@@ -603,16 +676,15 @@ StringInit *StringInit::get(RecordKeeper &RK, StringRef V, StringFormat Fmt) {
   return Entry.second;
 }
 
-Init *StringInit::convertInitializerTo(RecTy *Ty) const {
+Init *StringInit::convertInitializerTo(const RecTy *Ty) const {
   if (isa<StringRecTy>(Ty))
     return const_cast<StringInit *>(this);
 
   return nullptr;
 }
 
-static void ProfileListInit(FoldingSetNodeID &ID,
-                            ArrayRef<Init *> Range,
-                            RecTy *EltTy) {
+static void ProfileListInit(FoldingSetNodeID &ID, ArrayRef<Init *> Range,
+                            const RecTy *EltTy) {
   ID.AddInteger(Range.size());
   ID.AddPointer(EltTy);
 
@@ -620,7 +692,7 @@ static void ProfileListInit(FoldingSetNodeID &ID,
     ID.AddPointer(I);
 }
 
-ListInit *ListInit::get(ArrayRef<Init *> Range, RecTy *EltTy) {
+ListInit *ListInit::get(ArrayRef<Init *> Range, const RecTy *EltTy) {
   FoldingSetNodeID ID;
   ProfileListInit(ID, Range, EltTy);
 
@@ -642,12 +714,12 @@ ListInit *ListInit::get(ArrayRef<Init *> Range, RecTy *EltTy) {
 }
 
 void ListInit::Profile(FoldingSetNodeID &ID) const {
-  RecTy *EltTy = cast<ListRecTy>(getType())->getElementType();
+  const RecTy *EltTy = cast<ListRecTy>(getType())->getElementType();
 
   ProfileListInit(ID, getValues(), EltTy);
 }
 
-Init *ListInit::convertInitializerTo(RecTy *Ty) const {
+Init *ListInit::convertInitializerTo(const RecTy *Ty) const {
   if (getType() == Ty)
     return const_cast<ListInit*>(this);
 
@@ -658,7 +730,7 @@ Init *ListInit::convertInitializerTo(RecTy *Ty) const {
     // Verify that all of the elements of the list are subclasses of the
     // appropriate class!
     bool Changed = false;
-    RecTy *ElementType = LRT->getElementType();
+    const RecTy *ElementType = LRT->getElementType();
     for (Init *I : getValues())
       if (Init *CI = I->convertInitializerTo(ElementType)) {
         Elements.push_back(CI);
@@ -675,24 +747,7 @@ Init *ListInit::convertInitializerTo(RecTy *Ty) const {
   return nullptr;
 }
 
-Init *ListInit::convertInitListSlice(ArrayRef<unsigned> Elements) const {
-  if (Elements.size() == 1) {
-    if (Elements[0] >= size())
-      return nullptr;
-    return getElement(Elements[0]);
-  }
-
-  SmallVector<Init*, 8> Vals;
-  Vals.reserve(Elements.size());
-  for (unsigned Element : Elements) {
-    if (Element >= size())
-      return nullptr;
-    Vals.push_back(getElement(Element));
-  }
-  return ListInit::get(Vals, getElementType());
-}
-
-Record *ListInit::getElementAsRecord(unsigned i) const {
+const Record *ListInit::getElementAsRecord(unsigned i) const {
   assert(i < NumValues && "List element index out of range!");
   DefInit *DI = dyn_cast<DefInit>(getElement(i));
   if (!DI)
@@ -749,14 +804,14 @@ Init *OpInit::getBit(unsigned Bit) const {
   return VarBitInit::get(const_cast<OpInit*>(this), Bit);
 }
 
-static void
-ProfileUnOpInit(FoldingSetNodeID &ID, unsigned Opcode, Init *Op, RecTy *Type) {
+static void ProfileUnOpInit(FoldingSetNodeID &ID, unsigned Opcode, Init *Op,
+                            const RecTy *Type) {
   ID.AddInteger(Opcode);
   ID.AddPointer(Op);
   ID.AddPointer(Type);
 }
 
-UnOpInit *UnOpInit::get(UnaryOp Opc, Init *LHS, RecTy *Type) {
+UnOpInit *UnOpInit::get(UnaryOp Opc, Init *LHS, const RecTy *Type) {
   FoldingSetNodeID ID;
   ProfileUnOpInit(ID, Opc, LHS, Type);
 
@@ -777,6 +832,32 @@ void UnOpInit::Profile(FoldingSetNodeID &ID) const {
 Init *UnOpInit::Fold(Record *CurRec, bool IsFinal) const {
   RecordKeeper &RK = getRecordKeeper();
   switch (getOpcode()) {
+  case REPR:
+    if (LHS->isConcrete()) {
+      // If it is a Record, print the full content.
+      if (const auto *Def = dyn_cast<DefInit>(LHS)) {
+        std::string S;
+        raw_string_ostream OS(S);
+        OS << *Def->getDef();
+        return StringInit::get(RK, S);
+      } else {
+        // Otherwise, print the value of the variable.
+        //
+        // NOTE: we could recursively !repr the elements of a list,
+        // but that could produce a lot of output when printing a
+        // defset.
+        return StringInit::get(RK, LHS->getAsString());
+      }
+    }
+    break;
+  case TOLOWER:
+    if (StringInit *LHSs = dyn_cast<StringInit>(LHS))
+      return StringInit::get(RK, LHSs->getValue().lower());
+    break;
+  case TOUPPER:
+    if (StringInit *LHSs = dyn_cast<StringInit>(LHS))
+      return StringInit::get(RK, LHSs->getValue().upper());
+    break;
   case CAST:
     if (isa<StringRecTy>(getType())) {
       if (StringInit *LHSs = dyn_cast<StringInit>(LHS))
@@ -791,37 +872,40 @@ Init *UnOpInit::Fold(Record *CurRec, bool IsFinal) const {
 
     } else if (isa<RecordRecTy>(getType())) {
       if (StringInit *Name = dyn_cast<StringInit>(LHS)) {
-        if (!CurRec && !IsFinal)
-          break;
-        assert(CurRec && "NULL pointer");
-        Record *D;
-
-        // Self-references are allowed, but their resolution is delayed until
-        // the final resolve to ensure that we get the correct type for them.
-        auto *Anonymous = dyn_cast<AnonymousNameInit>(CurRec->getNameInit());
-        if (Name == CurRec->getNameInit() ||
-            (Anonymous && Name == Anonymous->getNameInit())) {
-          if (!IsFinal)
-            break;
-          D = CurRec;
-        } else {
-          D = CurRec->getRecords().getDef(Name->getValue());
-          if (!D) {
-            if (IsFinal)
-              PrintFatalError(CurRec->getLoc(),
-                              Twine("Undefined reference to record: '") +
-                              Name->getValue() + "'\n");
-            break;
+        const Record *D = RK.getDef(Name->getValue());
+        if (!D && CurRec) {
+          // Self-references are allowed, but their resolution is delayed until
+          // the final resolve to ensure that we get the correct type for them.
+          auto *Anonymous = dyn_cast<AnonymousNameInit>(CurRec->getNameInit());
+          if (Name == CurRec->getNameInit() ||
+              (Anonymous && Name == Anonymous->getNameInit())) {
+            if (!IsFinal)
+              break;
+            D = CurRec;
           }
         }
 
-        DefInit *DI = DefInit::get(D);
+        auto PrintFatalErrorHelper = [CurRec](const Twine &T) {
+          if (CurRec)
+            PrintFatalError(CurRec->getLoc(), T);
+          else
+            PrintFatalError(T);
+        };
+
+        if (!D) {
+          if (IsFinal) {
+            PrintFatalErrorHelper(Twine("Undefined reference to record: '") +
+                                  Name->getValue() + "'\n");
+          }
+          break;
+        }
+
+        DefInit *DI = D->getDefInit();
         if (!DI->getType()->typeIsA(getType())) {
-          PrintFatalError(CurRec->getLoc(),
-                          Twine("Expected type '") +
-                          getType()->getAsString() + "', got '" +
-                          DI->getType()->getAsString() + "' in: " +
-                          getAsString() + "\n");
+          PrintFatalErrorHelper(Twine("Expected type '") +
+                                getType()->getAsString() + "', got '" +
+                                DI->getType()->getAsString() + "' in: " +
+                                getAsString() + "\n");
         }
         return DI;
       }
@@ -873,16 +957,61 @@ Init *UnOpInit::Fold(Record *CurRec, bool IsFinal) const {
 
   case GETDAGOP:
     if (DagInit *Dag = dyn_cast<DagInit>(LHS)) {
-      DefInit *DI = DefInit::get(Dag->getOperatorAsDef({}));
-      if (!DI->getType()->typeIsA(getType())) {
+      // TI is not necessarily a def due to the late resolution in multiclasses,
+      // but has to be a TypedInit.
+      auto *TI = cast<TypedInit>(Dag->getOperator());
+      if (!TI->getType()->typeIsA(getType())) {
         PrintFatalError(CurRec->getLoc(),
-                        Twine("Expected type '") +
-                        getType()->getAsString() + "', got '" +
-                        DI->getType()->getAsString() + "' in: " +
-                        getAsString() + "\n");
+                        Twine("Expected type '") + getType()->getAsString() +
+                            "', got '" + TI->getType()->getAsString() +
+                            "' in: " + getAsString() + "\n");
       } else {
-        return DI;
+        return Dag->getOperator();
       }
+    }
+    break;
+
+  case LOG2:
+    if (IntInit *LHSi = dyn_cast_or_null<IntInit>(
+            LHS->convertInitializerTo(IntRecTy::get(RK)))) {
+      int64_t LHSv = LHSi->getValue();
+      if (LHSv <= 0) {
+        PrintFatalError(CurRec->getLoc(),
+                        "Illegal operation: logtwo is undefined "
+                        "on arguments less than or equal to 0");
+      } else {
+        uint64_t Log = Log2_64(LHSv);
+        assert(Log <= INT64_MAX &&
+               "Log of an int64_t must be smaller than INT64_MAX");
+        return IntInit::get(RK, static_cast<int64_t>(Log));
+      }
+    }
+    break;
+
+  case LISTFLATTEN:
+    if (ListInit *LHSList = dyn_cast<ListInit>(LHS)) {
+      const ListRecTy *InnerListTy =
+          dyn_cast<ListRecTy>(LHSList->getElementType());
+      // list of non-lists, !listflatten() is a NOP.
+      if (!InnerListTy)
+        return LHS;
+
+      auto Flatten = [](ListInit *List) -> std::optional<std::vector<Init *>> {
+        std::vector<Init *> Flattened;
+        // Concatenate elements of all the inner lists.
+        for (Init *InnerInit : List->getValues()) {
+          ListInit *InnerList = dyn_cast<ListInit>(InnerInit);
+          if (!InnerList)
+            return std::nullopt;
+          for (Init *InnerElem : InnerList->getValues())
+            Flattened.push_back(InnerElem);
+        };
+        return Flattened;
+      };
+
+      auto Flattened = Flatten(LHSList);
+      if (Flattened)
+        return ListInit::get(*Flattened, InnerListTy->getElementType());
     }
     break;
   }
@@ -908,20 +1037,33 @@ std::string UnOpInit::getAsString() const {
   case SIZE: Result = "!size"; break;
   case EMPTY: Result = "!empty"; break;
   case GETDAGOP: Result = "!getdagop"; break;
+  case LOG2 : Result = "!logtwo"; break;
+  case LISTFLATTEN:
+    Result = "!listflatten";
+    break;
+  case REPR:
+    Result = "!repr";
+    break;
+  case TOLOWER:
+    Result = "!tolower";
+    break;
+  case TOUPPER:
+    Result = "!toupper";
+    break;
   }
   return Result + "(" + LHS->getAsString() + ")";
 }
 
-static void
-ProfileBinOpInit(FoldingSetNodeID &ID, unsigned Opcode, Init *LHS, Init *RHS,
-                 RecTy *Type) {
+static void ProfileBinOpInit(FoldingSetNodeID &ID, unsigned Opcode, Init *LHS,
+                             Init *RHS, const RecTy *Type) {
   ID.AddInteger(Opcode);
   ID.AddPointer(LHS);
   ID.AddPointer(RHS);
   ID.AddPointer(Type);
 }
 
-BinOpInit *BinOpInit::get(BinaryOp Opc, Init *LHS, Init *RHS, RecTy *Type) {
+BinOpInit *BinOpInit::get(BinaryOp Opc, Init *LHS, Init *RHS,
+                          const RecTy *Type) {
   FoldingSetNodeID ID;
   ProfileBinOpInit(ID, Opc, LHS, RHS, Type);
 
@@ -1012,10 +1154,120 @@ Init *BinOpInit::getListConcat(TypedInit *LHS, Init *RHS) {
   assert(isa<ListRecTy>(LHS->getType()) && "First arg must be a list");
 
   // Shortcut for the common case of concatenating two lists.
-   if (const ListInit *LHSList = dyn_cast<ListInit>(LHS))
-     if (const ListInit *RHSList = dyn_cast<ListInit>(RHS))
-       return ConcatListInits(LHSList, RHSList);
-   return BinOpInit::get(BinOpInit::LISTCONCAT, LHS, RHS, LHS->getType());
+  if (const ListInit *LHSList = dyn_cast<ListInit>(LHS))
+    if (const ListInit *RHSList = dyn_cast<ListInit>(RHS))
+      return ConcatListInits(LHSList, RHSList);
+  return BinOpInit::get(BinOpInit::LISTCONCAT, LHS, RHS, LHS->getType());
+}
+
+std::optional<bool> BinOpInit::CompareInit(unsigned Opc, Init *LHS,
+                                           Init *RHS) const {
+  // First see if we have two bit, bits, or int.
+  IntInit *LHSi = dyn_cast_or_null<IntInit>(
+      LHS->convertInitializerTo(IntRecTy::get(getRecordKeeper())));
+  IntInit *RHSi = dyn_cast_or_null<IntInit>(
+      RHS->convertInitializerTo(IntRecTy::get(getRecordKeeper())));
+
+  if (LHSi && RHSi) {
+    bool Result;
+    switch (Opc) {
+    case EQ:
+      Result = LHSi->getValue() == RHSi->getValue();
+      break;
+    case NE:
+      Result = LHSi->getValue() != RHSi->getValue();
+      break;
+    case LE:
+      Result = LHSi->getValue() <= RHSi->getValue();
+      break;
+    case LT:
+      Result = LHSi->getValue() < RHSi->getValue();
+      break;
+    case GE:
+      Result = LHSi->getValue() >= RHSi->getValue();
+      break;
+    case GT:
+      Result = LHSi->getValue() > RHSi->getValue();
+      break;
+    default:
+      llvm_unreachable("unhandled comparison");
+    }
+    return Result;
+  }
+
+  // Next try strings.
+  StringInit *LHSs = dyn_cast<StringInit>(LHS);
+  StringInit *RHSs = dyn_cast<StringInit>(RHS);
+
+  if (LHSs && RHSs) {
+    bool Result;
+    switch (Opc) {
+    case EQ:
+      Result = LHSs->getValue() == RHSs->getValue();
+      break;
+    case NE:
+      Result = LHSs->getValue() != RHSs->getValue();
+      break;
+    case LE:
+      Result = LHSs->getValue() <= RHSs->getValue();
+      break;
+    case LT:
+      Result = LHSs->getValue() < RHSs->getValue();
+      break;
+    case GE:
+      Result = LHSs->getValue() >= RHSs->getValue();
+      break;
+    case GT:
+      Result = LHSs->getValue() > RHSs->getValue();
+      break;
+    default:
+      llvm_unreachable("unhandled comparison");
+    }
+    return Result;
+  }
+
+  // Finally, !eq and !ne can be used with records.
+  if (Opc == EQ || Opc == NE) {
+    DefInit *LHSd = dyn_cast<DefInit>(LHS);
+    DefInit *RHSd = dyn_cast<DefInit>(RHS);
+    if (LHSd && RHSd)
+      return (Opc == EQ) ? LHSd == RHSd : LHSd != RHSd;
+  }
+
+  return std::nullopt;
+}
+
+static std::optional<unsigned> getDagArgNoByKey(DagInit *Dag, Init *Key,
+                                                std::string &Error) {
+  // Accessor by index
+  if (IntInit *Idx = dyn_cast<IntInit>(Key)) {
+    int64_t Pos = Idx->getValue();
+    if (Pos < 0) {
+      // The index is negative.
+      Error =
+          (Twine("index ") + std::to_string(Pos) + Twine(" is negative")).str();
+      return std::nullopt;
+    }
+    if (Pos >= Dag->getNumArgs()) {
+      // The index is out-of-range.
+      Error = (Twine("index ") + std::to_string(Pos) +
+               " is out of range (dag has " +
+               std::to_string(Dag->getNumArgs()) + " arguments)")
+                  .str();
+      return std::nullopt;
+    }
+    return Pos;
+  }
+  assert(isa<StringInit>(Key));
+  // Accessor by name
+  StringInit *Name = dyn_cast<StringInit>(Key);
+  auto ArgNo = Dag->getArgNo(Name->getValue());
+  if (!ArgNo) {
+    // The key is not found.
+    Error = (Twine("key '") + Name->getValue() + Twine("' is not found")).str();
+    return std::nullopt;
+  }
+  return *ArgNo;
 }
 
 Init *BinOpInit::Fold(Record *CurRec) const {
@@ -1072,6 +1324,88 @@ Init *BinOpInit::Fold(Record *CurRec) const {
     }
     break;
   }
+  case LISTREMOVE: {
+    ListInit *LHSs = dyn_cast<ListInit>(LHS);
+    ListInit *RHSs = dyn_cast<ListInit>(RHS);
+    if (LHSs && RHSs) {
+      SmallVector<Init *, 8> Args;
+      for (Init *EltLHS : *LHSs) {
+        bool Found = false;
+        for (Init *EltRHS : *RHSs) {
+          if (std::optional<bool> Result = CompareInit(EQ, EltLHS, EltRHS)) {
+            if (*Result) {
+              Found = true;
+              break;
+            }
+          }
+        }
+        if (!Found)
+          Args.push_back(EltLHS);
+      }
+      return ListInit::get(Args, LHSs->getElementType());
+    }
+    break;
+  }
+  case LISTELEM: {
+    auto *TheList = dyn_cast<ListInit>(LHS);
+    auto *Idx = dyn_cast<IntInit>(RHS);
+    if (!TheList || !Idx)
+      break;
+    auto i = Idx->getValue();
+    if (i < 0 || i >= (ssize_t)TheList->size())
+      break;
+    return TheList->getElement(i);
+  }
+  case LISTSLICE: {
+    auto *TheList = dyn_cast<ListInit>(LHS);
+    auto *SliceIdxs = dyn_cast<ListInit>(RHS);
+    if (!TheList || !SliceIdxs)
+      break;
+    SmallVector<Init *, 8> Args;
+    Args.reserve(SliceIdxs->size());
+    for (auto *I : *SliceIdxs) {
+      auto *II = dyn_cast<IntInit>(I);
+      if (!II)
+        goto unresolved;
+      auto i = II->getValue();
+      if (i < 0 || i >= (ssize_t)TheList->size())
+        goto unresolved;
+      Args.push_back(TheList->getElement(i));
+    }
+    return ListInit::get(Args, TheList->getElementType());
+  }
+  case RANGEC: {
+    auto *LHSi = dyn_cast<IntInit>(LHS);
+    auto *RHSi = dyn_cast<IntInit>(RHS);
+    if (!LHSi || !RHSi)
+      break;
+
+    auto Start = LHSi->getValue();
+    auto End = RHSi->getValue();
+    SmallVector<Init *, 8> Args;
+    if (getOpcode() == RANGEC) {
+      // Closed interval
+      if (Start <= End) {
+        // Ascending order
+        Args.reserve(End - Start + 1);
+        for (auto i = Start; i <= End; ++i)
+          Args.push_back(IntInit::get(getRecordKeeper(), i));
+      } else {
+        // Descending order
+        Args.reserve(Start - End + 1);
+        for (auto i = Start; i >= End; --i)
+          Args.push_back(IntInit::get(getRecordKeeper(), i));
+      }
+    } else if (Start < End) {
+      // Half-open interval (excludes `End`)
+      Args.reserve(End - Start);
+      for (auto i = Start; i < End; ++i)
+        Args.push_back(IntInit::get(getRecordKeeper(), i));
+    } else {
+      // Empty set
+    }
+    return ListInit::get(Args, LHSi->getType());
+  }
   case STRCONCAT: {
     StringInit *LHSs = dyn_cast<StringInit>(LHS);
     StringInit *RHSs = dyn_cast<StringInit>(RHS);
@@ -1099,53 +1433,45 @@ Init *BinOpInit::Fold(Record *CurRec) const {
   case LT:
   case GE:
   case GT: {
-    // First see if we have two bit, bits, or int.
-    IntInit *LHSi = dyn_cast_or_null<IntInit>(
-        LHS->convertInitializerTo(IntRecTy::get(getRecordKeeper())));
-    IntInit *RHSi = dyn_cast_or_null<IntInit>(
-        RHS->convertInitializerTo(IntRecTy::get(getRecordKeeper())));
+    if (std::optional<bool> Result = CompareInit(getOpcode(), LHS, RHS))
+      return BitInit::get(getRecordKeeper(), *Result);
+    break;
+  }
+  case GETDAGARG: {
+    DagInit *Dag = dyn_cast<DagInit>(LHS);
+    if (Dag && isa<IntInit, StringInit>(RHS)) {
+      std::string Error;
+      auto ArgNo = getDagArgNoByKey(Dag, RHS, Error);
+      if (!ArgNo)
+        PrintFatalError(CurRec->getLoc(), "!getdagarg " + Error);
 
-    if (LHSi && RHSi) {
-      bool Result;
-      switch (getOpcode()) {
-      case EQ: Result = LHSi->getValue() == RHSi->getValue(); break;
-      case NE: Result = LHSi->getValue() != RHSi->getValue(); break;
-      case LE: Result = LHSi->getValue() <= RHSi->getValue(); break;
-      case LT: Result = LHSi->getValue() <  RHSi->getValue(); break;
-      case GE: Result = LHSi->getValue() >= RHSi->getValue(); break;
-      case GT: Result = LHSi->getValue() >  RHSi->getValue(); break;
-      default: llvm_unreachable("unhandled comparison");
+      assert(*ArgNo < Dag->getNumArgs());
+
+      Init *Arg = Dag->getArg(*ArgNo);
+      if (auto *TI = dyn_cast<TypedInit>(Arg))
+        if (!TI->getType()->typeIsConvertibleTo(getType()))
+          return UnsetInit::get(Dag->getRecordKeeper());
+      return Arg;
+    }
+    break;
+  }
+  case GETDAGNAME: {
+    DagInit *Dag = dyn_cast<DagInit>(LHS);
+    IntInit *Idx = dyn_cast<IntInit>(RHS);
+    if (Dag && Idx) {
+      int64_t Pos = Idx->getValue();
+      if (Pos < 0 || Pos >= Dag->getNumArgs()) {
+        // The index is out-of-range.
+        PrintError(CurRec->getLoc(),
+                   Twine("!getdagname index is out of range 0...") +
+                       std::to_string(Dag->getNumArgs() - 1) + ": " +
+                       std::to_string(Pos));
       }
-      return BitInit::get(getRecordKeeper(), Result);
+      Init *ArgName = Dag->getArgName(Pos);
+      if (!ArgName)
+        return UnsetInit::get(getRecordKeeper());
+      return ArgName;
     }
-
-    // Next try strings.
-    StringInit *LHSs = dyn_cast<StringInit>(LHS);
-    StringInit *RHSs = dyn_cast<StringInit>(RHS);
-
-    if (LHSs && RHSs) {
-      bool Result;
-      switch (getOpcode()) {
-      case EQ: Result = LHSs->getValue() == RHSs->getValue(); break;
-      case NE: Result = LHSs->getValue() != RHSs->getValue(); break;
-      case LE: Result = LHSs->getValue() <= RHSs->getValue(); break;
-      case LT: Result = LHSs->getValue() <  RHSs->getValue(); break;
-      case GE: Result = LHSs->getValue() >= RHSs->getValue(); break;
-      case GT: Result = LHSs->getValue() >  RHSs->getValue(); break;
-      default: llvm_unreachable("unhandled comparison");
-      }
-      return BitInit::get(getRecordKeeper(), Result);
-    }
-
-    // Finally, !eq and !ne can be used with records.
-    if (getOpcode() == EQ || getOpcode() == NE) {
-      DefInit *LHSd = dyn_cast<DefInit>(LHS);
-      DefInit *RHSd = dyn_cast<DefInit>(RHS);
-      if (LHSd && RHSd)
-        return BitInit::get(getRecordKeeper(),
-                            (getOpcode() == EQ) ? LHSd == RHSd : LHSd != RHSd);
-    }
-
     break;
   }
   case SETDAGOP: {
@@ -1206,6 +1532,7 @@ Init *BinOpInit::Fold(Record *CurRec) const {
     break;
   }
   }
+unresolved:
   return const_cast<BinOpInit *>(this);
 }
 
@@ -1222,6 +1549,11 @@ Init *BinOpInit::resolveReferences(Resolver &R) const {
 std::string BinOpInit::getAsString() const {
   std::string Result;
   switch (getOpcode()) {
+  case LISTELEM:
+  case LISTSLICE:
+    return LHS->getAsString() + "[" + RHS->getAsString() + "]";
+  case RANGEC:
+    return LHS->getAsString() + "..." + RHS->getAsString();
   case CONCAT: Result = "!con"; break;
   case ADD: Result = "!add"; break;
   case SUB: Result = "!sub"; break;
@@ -1241,16 +1573,24 @@ std::string BinOpInit::getAsString() const {
   case GT: Result = "!gt"; break;
   case LISTCONCAT: Result = "!listconcat"; break;
   case LISTSPLAT: Result = "!listsplat"; break;
+  case LISTREMOVE:
+    Result = "!listremove";
+    break;
   case STRCONCAT: Result = "!strconcat"; break;
   case INTERLEAVE: Result = "!interleave"; break;
   case SETDAGOP: Result = "!setdagop"; break;
+  case GETDAGARG:
+    Result = "!getdagarg<" + getType()->getAsString() + ">";
+    break;
+  case GETDAGNAME:
+    Result = "!getdagname";
+    break;
   }
   return Result + "(" + LHS->getAsString() + ", " + RHS->getAsString() + ")";
 }
 
-static void
-ProfileTernOpInit(FoldingSetNodeID &ID, unsigned Opcode, Init *LHS, Init *MHS,
-                  Init *RHS, RecTy *Type) {
+static void ProfileTernOpInit(FoldingSetNodeID &ID, unsigned Opcode, Init *LHS,
+                              Init *MHS, Init *RHS, const RecTy *Type) {
   ID.AddInteger(Opcode);
   ID.AddPointer(LHS);
   ID.AddPointer(MHS);
@@ -1259,7 +1599,7 @@ ProfileTernOpInit(FoldingSetNodeID &ID, unsigned Opcode, Init *LHS, Init *MHS,
 }
 
 TernOpInit *TernOpInit::get(TernaryOp Opc, Init *LHS, Init *MHS, Init *RHS,
-                            RecTy *Type) {
+                            const RecTy *Type) {
   FoldingSetNodeID ID;
   ProfileTernOpInit(ID, Opc, LHS, MHS, RHS, Type);
 
@@ -1312,7 +1652,7 @@ static Init *ForeachDagApply(Init *LHS, DagInit *MHSd, Init *RHS,
 }
 
 // Applies RHS to all elements of MHS, using LHS as a temp variable.
-static Init *ForeachHelper(Init *LHS, Init *MHS, Init *RHS, RecTy *Type,
+static Init *ForeachHelper(Init *LHS, Init *MHS, Init *RHS, const RecTy *Type,
                            Record *CurRec) {
   if (DagInit *MHSd = dyn_cast<DagInit>(MHS))
     return ForeachDagApply(LHS, MHSd, RHS, CurRec);
@@ -1333,7 +1673,7 @@ static Init *ForeachHelper(Init *LHS, Init *MHS, Init *RHS, RecTy *Type,
 
 // Evaluates RHS for all elements of MHS, using LHS as a temp variable.
 // Creates a new list with the elements that evaluated to true.
-static Init *FilterHelper(Init *LHS, Init *MHS, Init *RHS, RecTy *Type,
+static Init *FilterHelper(Init *LHS, Init *MHS, Init *RHS, const RecTy *Type,
                           Record *CurRec) {
   if (ListInit *MHSl = dyn_cast<ListInit>(MHS)) {
     SmallVector<Init *, 8> NewList;
@@ -1374,10 +1714,10 @@ Init *TernOpInit::Fold(Record *CurRec) const {
     StringInit *RHSs = dyn_cast<StringInit>(RHS);
 
     if (LHSd && MHSd && RHSd) {
-      Record *Val = RHSd->getDef();
+      const Record *Val = RHSd->getDef();
       if (LHSd->getAsString() == RHSd->getAsString())
         Val = MHSd->getDef();
-      return DefInit::get(Val);
+      return Val->getDefInit();
     }
     if (LHSv && MHSv && RHSv) {
       std::string Val = std::string(RHSv->getName());
@@ -1450,6 +1790,34 @@ Init *TernOpInit::Fold(Record *CurRec) const {
     break;
   }
 
+  case RANGE: {
+    auto *LHSi = dyn_cast<IntInit>(LHS);
+    auto *MHSi = dyn_cast<IntInit>(MHS);
+    auto *RHSi = dyn_cast<IntInit>(RHS);
+    if (!LHSi || !MHSi || !RHSi)
+      break;
+
+    auto Start = LHSi->getValue();
+    auto End = MHSi->getValue();
+    auto Step = RHSi->getValue();
+    if (Step == 0)
+      PrintError(CurRec->getLoc(), "Step of !range can't be 0");
+
+    SmallVector<Init *, 8> Args;
+    if (Start < End && Step > 0) {
+      Args.reserve((End - Start) / Step);
+      for (auto I = Start; I < End; I += Step)
+        Args.push_back(IntInit::get(getRecordKeeper(), I));
+    } else if (Start > End && Step < 0) {
+      Args.reserve((Start - End) / -Step);
+      for (auto I = Start; I > End; I += Step)
+        Args.push_back(IntInit::get(getRecordKeeper(), I));
+    } else {
+      // Empty set
+    }
+    return ListInit::get(Args, LHSi->getType());
+  }
+
   case SUBSTR: {
     StringInit *LHSs = dyn_cast<StringInit>(LHS);
     IntInit *MHSi = dyn_cast<IntInit>(MHS);
@@ -1487,6 +1855,42 @@ Init *TernOpInit::Fold(Record *CurRec) const {
       if (I == std::string::npos)
         return IntInit::get(RK, -1);
       return IntInit::get(RK, I);
+    }
+    break;
+  }
+
+  case SETDAGARG: {
+    DagInit *Dag = dyn_cast<DagInit>(LHS);
+    if (Dag && isa<IntInit, StringInit>(MHS)) {
+      std::string Error;
+      auto ArgNo = getDagArgNoByKey(Dag, MHS, Error);
+      if (!ArgNo)
+        PrintFatalError(CurRec->getLoc(), "!setdagarg " + Error);
+
+      assert(*ArgNo < Dag->getNumArgs());
+
+      SmallVector<Init *, 8> Args(Dag->getArgs());
+      SmallVector<StringInit *, 8> Names(Dag->getArgNames());
+      Args[*ArgNo] = RHS;
+      return DagInit::get(Dag->getOperator(), Dag->getName(), Args, Names);
+    }
+    break;
+  }
+
+  case SETDAGNAME: {
+    DagInit *Dag = dyn_cast<DagInit>(LHS);
+    if (Dag && isa<IntInit, StringInit>(MHS)) {
+      std::string Error;
+      auto ArgNo = getDagArgNoByKey(Dag, MHS, Error);
+      if (!ArgNo)
+        PrintFatalError(CurRec->getLoc(), "!setdagname " + Error);
+
+      assert(*ArgNo < Dag->getNumArgs());
+
+      SmallVector<Init *, 8> Args(Dag->getArgs());
+      SmallVector<StringInit *, 8> Names(Dag->getArgNames());
+      Names[*ArgNo] = dyn_cast<StringInit>(RHS);
+      return DagInit::get(Dag->getOperator(), Dag->getName(), Args, Names);
     }
     break;
   }
@@ -1533,9 +1937,18 @@ std::string TernOpInit::getAsString() const {
   case FILTER: Result = "!filter"; UnquotedLHS = true; break;
   case FOREACH: Result = "!foreach"; UnquotedLHS = true; break;
   case IF: Result = "!if"; break;
+  case RANGE:
+    Result = "!range";
+    break;
   case SUBST: Result = "!subst"; break;
   case SUBSTR: Result = "!substr"; break;
   case FIND: Result = "!find"; break;
+  case SETDAGARG:
+    Result = "!setdagarg";
+    break;
+  case SETDAGNAME:
+    Result = "!setdagname";
+    break;
   }
   return (Result + "(" +
           (UnquotedLHS ? LHS->getAsUnquotedString() : LHS->getAsString()) +
@@ -1543,7 +1956,7 @@ std::string TernOpInit::getAsString() const {
 }
 
 static void ProfileFoldOpInit(FoldingSetNodeID &ID, Init *Start, Init *List,
-                              Init *A, Init *B, Init *Expr, RecTy *Type) {
+                              Init *A, Init *B, Init *Expr, const RecTy *Type) {
   ID.AddPointer(Start);
   ID.AddPointer(List);
   ID.AddPointer(A);
@@ -1553,7 +1966,7 @@ static void ProfileFoldOpInit(FoldingSetNodeID &ID, Init *Start, Init *List,
 }
 
 FoldOpInit *FoldOpInit::get(Init *Start, Init *List, Init *A, Init *B,
-                            Init *Expr, RecTy *Type) {
+                            Init *Expr, const RecTy *Type) {
   FoldingSetNodeID ID;
   ProfileFoldOpInit(ID, Start, List, A, B, Expr, Type);
 
@@ -1611,13 +2024,13 @@ std::string FoldOpInit::getAsString() const {
       .str();
 }
 
-static void ProfileIsAOpInit(FoldingSetNodeID &ID, RecTy *CheckType,
+static void ProfileIsAOpInit(FoldingSetNodeID &ID, const RecTy *CheckType,
                              Init *Expr) {
   ID.AddPointer(CheckType);
   ID.AddPointer(Expr);
 }
 
-IsAOpInit *IsAOpInit::get(RecTy *CheckType, Init *Expr) {
+IsAOpInit *IsAOpInit::get(const RecTy *CheckType, Init *Expr) {
 
   FoldingSetNodeID ID;
   ProfileIsAOpInit(ID, CheckType, Expr);
@@ -1673,13 +2086,13 @@ std::string IsAOpInit::getAsString() const {
       .str();
 }
 
-static void ProfileExistsOpInit(FoldingSetNodeID &ID, RecTy *CheckType,
+static void ProfileExistsOpInit(FoldingSetNodeID &ID, const RecTy *CheckType,
                                 Init *Expr) {
   ID.AddPointer(CheckType);
   ID.AddPointer(Expr);
 }
 
-ExistsOpInit *ExistsOpInit::get(RecTy *CheckType, Init *Expr) {
+ExistsOpInit *ExistsOpInit::get(const RecTy *CheckType, Init *Expr) {
   FoldingSetNodeID ID;
   ProfileExistsOpInit(ID, CheckType, Expr);
 
@@ -1699,34 +2112,34 @@ void ExistsOpInit::Profile(FoldingSetNodeID &ID) const {
 
 Init *ExistsOpInit::Fold(Record *CurRec, bool IsFinal) const {
   if (StringInit *Name = dyn_cast<StringInit>(Expr)) {
-    if (!CurRec && !IsFinal)
-      return const_cast<ExistsOpInit *>(this);
-
-    // Self-references are allowed, but their resolution is delayed until
-    // the final resolve to ensure that we get the correct type for them.
-    auto *Anonymous = dyn_cast<AnonymousNameInit>(CurRec->getNameInit());
-    if (Name == CurRec->getNameInit() ||
-        (Anonymous && Name == Anonymous->getNameInit())) {
-      if (!IsFinal)
-        return const_cast<ExistsOpInit *>(this);
-
-      // No doubt that there exists a record, so we should check if types are
-      // compatiable.
-      return IntInit::get(getRecordKeeper(),
-                          CurRec->getType()->typeIsA(CheckType));
-    }
 
     // Look up all defined records to see if we can find one.
-    Record *D = CheckType->getRecordKeeper().getDef(Name->getValue());
-    if (!D) {
-      if (IsFinal)
-        return IntInit::get(getRecordKeeper(), 0);
-      return const_cast<ExistsOpInit *>(this);
+    const Record *D = CheckType->getRecordKeeper().getDef(Name->getValue());
+    if (D) {
+      // Check if types are compatible.
+      return IntInit::get(getRecordKeeper(),
+                          D->getDefInit()->getType()->typeIsA(CheckType));
     }
 
-    // Check if types are compatiable.
-    return IntInit::get(getRecordKeeper(),
-                        DefInit::get(D)->getType()->typeIsA(CheckType));
+    if (CurRec) {
+      // Self-references are allowed, but their resolution is delayed until
+      // the final resolve to ensure that we get the correct type for them.
+      auto *Anonymous = dyn_cast<AnonymousNameInit>(CurRec->getNameInit());
+      if (Name == CurRec->getNameInit() ||
+          (Anonymous && Name == Anonymous->getNameInit())) {
+        if (!IsFinal)
+          return const_cast<ExistsOpInit *>(this);
+
+        // No doubt that there exists a record, so we should check if types are
+        // compatible.
+        return IntInit::get(getRecordKeeper(),
+                            CurRec->getType()->typeIsA(CheckType));
+      }
+    }
+
+    if (IsFinal)
+      return IntInit::get(getRecordKeeper(), 0);
+    return const_cast<ExistsOpInit *>(this);
   }
   return const_cast<ExistsOpInit *>(this);
 }
@@ -1748,18 +2161,17 @@ std::string ExistsOpInit::getAsString() const {
       .str();
 }
 
-RecTy *TypedInit::getFieldType(StringInit *FieldName) const {
-  if (RecordRecTy *RecordType = dyn_cast<RecordRecTy>(getType())) {
-    for (Record *Rec : RecordType->getClasses()) {
-      if (RecordVal *Field = Rec->getValue(FieldName))
+const RecTy *TypedInit::getFieldType(StringInit *FieldName) const {
+  if (const RecordRecTy *RecordType = dyn_cast<RecordRecTy>(getType())) {
+    for (const Record *Rec : RecordType->getClasses()) {
+      if (const RecordVal *Field = Rec->getValue(FieldName))
         return Field->getType();
     }
   }
   return nullptr;
 }
 
-Init *
-TypedInit::convertInitializerTo(RecTy *Ty) const {
+Init *TypedInit::convertInitializerTo(const RecTy *Ty) const {
   if (getType() == Ty || getType()->typeIsA(Ty))
     return const_cast<TypedInit *>(this);
 
@@ -1771,7 +2183,7 @@ TypedInit::convertInitializerTo(RecTy *Ty) const {
 }
 
 Init *TypedInit::convertInitializerBitRange(ArrayRef<unsigned> Bits) const {
-  BitsRecTy *T = dyn_cast<BitsRecTy>(getType());
+  const BitsRecTy *T = dyn_cast<BitsRecTy>(getType());
   if (!T) return nullptr;  // Cannot subscript a non-bits variable.
   unsigned NumBits = T->getNumBits();
 
@@ -1786,7 +2198,7 @@ Init *TypedInit::convertInitializerBitRange(ArrayRef<unsigned> Bits) const {
   return BitsInit::get(getRecordKeeper(), NewBits);
 }
 
-Init *TypedInit::getCastTo(RecTy *Ty) const {
+Init *TypedInit::getCastTo(const RecTy *Ty) const {
   // Handle the common case quickly
   if (getType() == Ty || getType()->typeIsA(Ty))
     return const_cast<TypedInit *>(this);
@@ -1804,28 +2216,12 @@ Init *TypedInit::getCastTo(RecTy *Ty) const {
       ->Fold(nullptr);
 }
 
-Init *TypedInit::convertInitListSlice(ArrayRef<unsigned> Elements) const {
-  ListRecTy *T = dyn_cast<ListRecTy>(getType());
-  if (!T) return nullptr;  // Cannot subscript a non-list variable.
-
-  if (Elements.size() == 1)
-    return VarListElementInit::get(const_cast<TypedInit *>(this), Elements[0]);
-
-  SmallVector<Init*, 8> ListInits;
-  ListInits.reserve(Elements.size());
-  for (unsigned Element : Elements)
-    ListInits.push_back(VarListElementInit::get(const_cast<TypedInit *>(this),
-                                                Element));
-  return ListInit::get(ListInits, T->getElementType());
-}
-
-
-VarInit *VarInit::get(StringRef VN, RecTy *T) {
+VarInit *VarInit::get(StringRef VN, const RecTy *T) {
   Init *Value = StringInit::get(T->getRecordKeeper(), VN);
   return VarInit::get(Value, T);
 }
 
-VarInit *VarInit::get(Init *VN, RecTy *T) {
+VarInit *VarInit::get(Init *VN, const RecTy *T) {
   detail::RecordKeeperImpl &RK = T->getRecordKeeper().getImpl();
   VarInit *&I = RK.TheVarInitPool[std::make_pair(T, VN)];
   if (!I)
@@ -1870,52 +2266,17 @@ Init *VarBitInit::resolveReferences(Resolver &R) const {
   return const_cast<VarBitInit*>(this);
 }
 
-VarListElementInit *VarListElementInit::get(TypedInit *T, unsigned E) {
-  detail::RecordKeeperImpl &RK = T->getRecordKeeper().getImpl();
-  VarListElementInit *&I = RK.TheVarListElementInitPool[std::make_pair(T, E)];
-  if (!I)
-    I = new (RK.Allocator) VarListElementInit(T, E);
-  return I;
-}
-
-std::string VarListElementInit::getAsString() const {
-  return TI->getAsString() + "[" + utostr(Element) + "]";
-}
-
-Init *VarListElementInit::resolveReferences(Resolver &R) const {
-  Init *NewTI = TI->resolveReferences(R);
-  if (ListInit *List = dyn_cast<ListInit>(NewTI)) {
-    // Leave out-of-bounds array references as-is. This can happen without
-    // being an error, e.g. in the untaken "branch" of an !if expression.
-    if (getElementNum() < List->size())
-      return List->getElement(getElementNum());
-  }
-  if (NewTI != TI && isa<TypedInit>(NewTI))
-    return VarListElementInit::get(cast<TypedInit>(NewTI), getElementNum());
-  return const_cast<VarListElementInit *>(this);
-}
-
-Init *VarListElementInit::getBit(unsigned Bit) const {
-  if (getType() == BitRecTy::get(getRecordKeeper()))
-    return const_cast<VarListElementInit*>(this);
-  return VarBitInit::get(const_cast<VarListElementInit*>(this), Bit);
-}
-
-DefInit::DefInit(Record *D)
+DefInit::DefInit(const Record *D)
     : TypedInit(IK_DefInit, D->getType()), Def(D) {}
 
-DefInit *DefInit::get(Record *R) {
-  return R->getDefInit();
-}
-
-Init *DefInit::convertInitializerTo(RecTy *Ty) const {
+Init *DefInit::convertInitializerTo(const RecTy *Ty) const {
   if (auto *RRT = dyn_cast<RecordRecTy>(Ty))
     if (getType()->typeIsConvertibleTo(RRT))
       return const_cast<DefInit *>(this);
   return nullptr;
 }
 
-RecTy *DefInit::getFieldType(StringInit *FieldName) const {
+const RecTy *DefInit::getFieldType(StringInit *FieldName) const {
   if (const RecordVal *RV = Def->getValue(FieldName))
     return RV->getType();
   return nullptr;
@@ -1923,9 +2284,8 @@ RecTy *DefInit::getFieldType(StringInit *FieldName) const {
 
 std::string DefInit::getAsString() const { return std::string(Def->getName()); }
 
-static void ProfileVarDefInit(FoldingSetNodeID &ID,
-                              Record *Class,
-                              ArrayRef<Init *> Args) {
+static void ProfileVarDefInit(FoldingSetNodeID &ID, Record *Class,
+                              ArrayRef<ArgumentInit *> Args) {
   ID.AddInteger(Args.size());
   ID.AddPointer(Class);
 
@@ -1933,11 +2293,12 @@ static void ProfileVarDefInit(FoldingSetNodeID &ID,
     ID.AddPointer(I);
 }
 
-VarDefInit::VarDefInit(Record *Class, unsigned N)
-    : TypedInit(IK_VarDefInit, RecordRecTy::get(Class)), Class(Class),
+VarDefInit::VarDefInit(SMLoc Loc, Record *Class, unsigned N)
+    : TypedInit(IK_VarDefInit, RecordRecTy::get(Class)), Loc(Loc), Class(Class),
       NumArgs(N) {}
 
-VarDefInit *VarDefInit::get(Record *Class, ArrayRef<Init *> Args) {
+VarDefInit *VarDefInit::get(SMLoc Loc, Record *Class,
+                            ArrayRef<ArgumentInit *> Args) {
   FoldingSetNodeID ID;
   ProfileVarDefInit(ID, Class, Args);
 
@@ -1946,11 +2307,11 @@ VarDefInit *VarDefInit::get(Record *Class, ArrayRef<Init *> Args) {
   if (VarDefInit *I = RK.TheVarDefInitPool.FindNodeOrInsertPos(ID, IP))
     return I;
 
-  void *Mem = RK.Allocator.Allocate(totalSizeToAlloc<Init *>(Args.size()),
-                                    alignof(VarDefInit));
-  VarDefInit *I = new (Mem) VarDefInit(Class, Args.size());
+  void *Mem = RK.Allocator.Allocate(
+      totalSizeToAlloc<ArgumentInit *>(Args.size()), alignof(VarDefInit));
+  VarDefInit *I = new (Mem) VarDefInit(Loc, Class, Args.size());
   std::uninitialized_copy(Args.begin(), Args.end(),
-                          I->getTrailingObjects<Init *>());
+                          I->getTrailingObjects<ArgumentInit *>());
   RK.TheVarDefInitPool.InsertNode(I, IP);
   return I;
 }
@@ -1960,71 +2321,76 @@ void VarDefInit::Profile(FoldingSetNodeID &ID) const {
 }
 
 DefInit *VarDefInit::instantiate() {
-  if (!Def) {
-    RecordKeeper &Records = Class->getRecords();
-    auto NewRecOwner = std::make_unique<Record>(Records.getNewAnonymousName(),
-                                           Class->getLoc(), Records,
-                                           /*IsAnonymous=*/true);
-    Record *NewRec = NewRecOwner.get();
+  if (Def)
+    return Def;
 
-    // Copy values from class to instance
-    for (const RecordVal &Val : Class->getValues())
-      NewRec->addValue(Val);
+  RecordKeeper &Records = Class->getRecords();
+  auto NewRecOwner = std::make_unique<Record>(
+      Records.getNewAnonymousName(), Loc, Records, Record::RK_AnonymousDef);
+  Record *NewRec = NewRecOwner.get();
 
-    // Copy assertions from class to instance.
-    NewRec->appendAssertions(Class);
+  // Copy values from class to instance
+  for (const RecordVal &Val : Class->getValues())
+    NewRec->addValue(Val);
 
-    // Substitute and resolve template arguments
-    ArrayRef<Init *> TArgs = Class->getTemplateArgs();
-    MapResolver R(NewRec);
+  // Copy assertions from class to instance.
+  NewRec->appendAssertions(Class);
 
-    for (unsigned i = 0, e = TArgs.size(); i != e; ++i) {
-      if (i < args_size())
-        R.set(TArgs[i], getArg(i));
-      else
-        R.set(TArgs[i], NewRec->getValue(TArgs[i])->getValue());
+  // Copy dumps from class to instance.
+  NewRec->appendDumps(Class);
 
-      NewRec->removeValue(TArgs[i]);
-    }
+  // Substitute and resolve template arguments
+  ArrayRef<Init *> TArgs = Class->getTemplateArgs();
+  MapResolver R(NewRec);
 
-    NewRec->resolveReferences(R);
-
-    // Add superclasses.
-    ArrayRef<std::pair<Record *, SMRange>> SCs = Class->getSuperClasses();
-    for (const auto &SCPair : SCs)
-      NewRec->addSuperClass(SCPair.first, SCPair.second);
-
-    NewRec->addSuperClass(Class,
-                          SMRange(Class->getLoc().back(),
-                                  Class->getLoc().back()));
-
-    // Resolve internal references and store in record keeper
-    NewRec->resolveReferences();
-    Records.addDef(std::move(NewRecOwner));
-
-    // Check the assertions.
-    NewRec->checkRecordAssertions();
-
-    Def = DefInit::get(NewRec);
+  for (Init *Arg : TArgs) {
+    R.set(Arg, NewRec->getValue(Arg)->getValue());
+    NewRec->removeValue(Arg);
   }
 
-  return Def;
+  for (auto *Arg : args()) {
+    if (Arg->isPositional())
+      R.set(TArgs[Arg->getIndex()], Arg->getValue());
+    if (Arg->isNamed())
+      R.set(Arg->getName(), Arg->getValue());
+  }
+
+  NewRec->resolveReferences(R);
+
+  // Add superclasses.
+  for (const auto &[SC, Loc] : Class->getSuperClasses())
+    NewRec->addSuperClass(SC, Loc);
+
+  NewRec->addSuperClass(
+      Class, SMRange(Class->getLoc().back(), Class->getLoc().back()));
+
+  // Resolve internal references and store in record keeper
+  NewRec->resolveReferences();
+  Records.addDef(std::move(NewRecOwner));
+
+  // Check the assertions.
+  NewRec->checkRecordAssertions();
+
+  // Check the assertions.
+  NewRec->emitRecordDumps();
+
+  return Def = NewRec->getDefInit();
 }
 
 Init *VarDefInit::resolveReferences(Resolver &R) const {
   TrackUnresolvedResolver UR(&R);
   bool Changed = false;
-  SmallVector<Init *, 8> NewArgs;
+  SmallVector<ArgumentInit *, 8> NewArgs;
   NewArgs.reserve(args_size());
 
-  for (Init *Arg : args()) {
-    Init *NewArg = Arg->resolveReferences(UR);
+  for (ArgumentInit *Arg : args()) {
+    auto *NewArg = cast<ArgumentInit>(Arg->resolveReferences(UR));
     NewArgs.push_back(NewArg);
     Changed |= NewArg != Arg;
   }
 
   if (Changed) {
-    auto New = VarDefInit::get(Class, NewArgs);
+    auto *New = VarDefInit::get(Loc, Class, NewArgs);
     if (!UR.foundUnresolved())
       return New->instantiate();
     return New;
@@ -2079,7 +2445,7 @@ Init *FieldInit::resolveReferences(Resolver &R) const {
 
 Init *FieldInit::Fold(Record *CurRec) const {
   if (DefInit *DI = dyn_cast<DefInit>(Rec)) {
-    Record *Def = DI->getDef();
+    const Record *Def = DI->getDef();
     if (Def == CurRec)
       PrintFatalError(CurRec->getLoc(),
                       Twine("Attempting to access field '") +
@@ -2117,14 +2483,13 @@ static void ProfileCondOpInit(FoldingSetNodeID &ID,
 }
 
 void CondOpInit::Profile(FoldingSetNodeID &ID) const {
-  ProfileCondOpInit(ID,
-      makeArrayRef(getTrailingObjects<Init *>(), NumConds),
-      makeArrayRef(getTrailingObjects<Init *>() + NumConds, NumConds),
-      ValType);
+  ProfileCondOpInit(ID, ArrayRef(getTrailingObjects<Init *>(), NumConds),
+                    ArrayRef(getTrailingObjects<Init *>() + NumConds, NumConds),
+                    ValType);
 }
 
 CondOpInit *CondOpInit::get(ArrayRef<Init *> CondRange,
-                            ArrayRef<Init *> ValRange, RecTy *Ty) {
+                            ArrayRef<Init *> ValRange, const RecTy *Ty) {
   assert(CondRange.size() == ValRange.size() &&
          "Number of conditions and values must match!");
 
@@ -2187,7 +2552,7 @@ Init *CondOpInit::Fold(Record *CurRec) const {
   }
 
   PrintFatalError(CurRec->getLoc(),
-                  CurRec->getName() +
+                  CurRec->getNameInitAsString() +
                   " does not have any true condition in:" +
                   this->getAsString());
   return nullptr;
@@ -2286,14 +2651,25 @@ DagInit::get(Init *V, StringInit *VN,
 }
 
 void DagInit::Profile(FoldingSetNodeID &ID) const {
-  ProfileDagInit(ID, Val, ValName, makeArrayRef(getTrailingObjects<Init *>(), NumArgs), makeArrayRef(getTrailingObjects<StringInit *>(), NumArgNames));
+  ProfileDagInit(ID, Val, ValName,
+                 ArrayRef(getTrailingObjects<Init *>(), NumArgs),
+                 ArrayRef(getTrailingObjects<StringInit *>(), NumArgNames));
 }
 
-Record *DagInit::getOperatorAsDef(ArrayRef<SMLoc> Loc) const {
+const Record *DagInit::getOperatorAsDef(ArrayRef<SMLoc> Loc) const {
   if (DefInit *DefI = dyn_cast<DefInit>(Val))
     return DefI->getDef();
   PrintFatalError(Loc, "Expected record as operator");
   return nullptr;
+}
+
+std::optional<unsigned> DagInit::getArgNo(StringRef Name) const {
+  for (unsigned i = 0, e = getNumArgs(); i < e; ++i) {
+    StringInit *ArgName = getArgName(i);
+    if (ArgName && ArgName->getValue() == Name)
+      return i;
+  }
+  return std::nullopt;
 }
 
 Init *DagInit::resolveReferences(Resolver &R) const {
@@ -2342,7 +2718,7 @@ std::string DagInit::getAsString() const {
 //    Other implementations
 //===----------------------------------------------------------------------===//
 
-RecordVal::RecordVal(Init *N, RecTy *T, FieldKind K)
+RecordVal::RecordVal(Init *N, const RecTy *T, FieldKind K)
     : Name(N), TyAndKind(T, K) {
   setValue(UnsetInit::get(N->getRecordKeeper()));
   assert(Value && "Cannot create unset value for current type!");
@@ -2350,7 +2726,7 @@ RecordVal::RecordVal(Init *N, RecTy *T, FieldKind K)
 
 // This constructor accepts the same arguments as the above, but also
 // a source location.
-RecordVal::RecordVal(Init *N, SMLoc Loc, RecTy *T, FieldKind K)
+RecordVal::RecordVal(Init *N, SMLoc Loc, const RecTy *T, FieldKind K)
     : Name(N), Loc(Loc), TyAndKind(T, K) {
   setValue(UnsetInit::get(N->getRecordKeeper()));
   assert(Value && "Cannot create unset value for current type!");
@@ -2381,7 +2757,7 @@ bool RecordVal::setValue(Init *V) {
     if (Value) {
       assert(!isa<TypedInit>(Value) ||
              cast<TypedInit>(Value)->getType()->typeIsA(getType()));
-      if (BitsRecTy *BTy = dyn_cast<BitsRecTy>(getType())) {
+      if (const BitsRecTy *BTy = dyn_cast<BitsRecTy>(getType())) {
         if (!isa<BitsInit>(Value)) {
           SmallVector<Init *, 64> Bits;
           Bits.reserve(BTy->getNumBits());
@@ -2406,7 +2782,7 @@ bool RecordVal::setValue(Init *V, SMLoc NewLoc) {
     if (Value) {
       assert(!isa<TypedInit>(Value) ||
              cast<TypedInit>(Value)->getType()->typeIsA(getType()));
-      if (BitsRecTy *BTy = dyn_cast<BitsRecTy>(getType())) {
+      if (const BitsRecTy *BTy = dyn_cast<BitsRecTy>(getType())) {
         if (!isa<BitsInit>(Value)) {
           SmallVector<Init *, 64> Bits;
           Bits.reserve(BTy->getNumBits());
@@ -2453,13 +2829,13 @@ void Record::checkName() {
                                   "' is not a string!");
 }
 
-RecordRecTy *Record::getType() {
-  SmallVector<Record *, 4> DirectSCs;
+const RecordRecTy *Record::getType() const {
+  SmallVector<const Record *, 4> DirectSCs;
   getDirectSuperClasses(DirectSCs);
   return RecordRecTy::get(TrackedRecords, DirectSCs);
 }
 
-DefInit *Record::getDefInit() {
+DefInit *Record::getDefInit() const {
   if (!CorrespondingDefInit) {
     CorrespondingDefInit =
         new (TrackedRecords.getImpl().Allocator) DefInit(this);
@@ -2493,7 +2869,7 @@ void Record::setName(Init *NewName) {
 // so we can step through the direct superclasses in reverse order.
 
 bool Record::hasDirectSuperClass(const Record *Superclass) const {
-  ArrayRef<std::pair<Record *, SMRange>> SCs = getSuperClasses();
+  ArrayRef<std::pair<const Record *, SMRange>> SCs = getSuperClasses();
 
   for (int I = SCs.size() - 1; I >= 0; --I) {
     const Record *SC = SCs[I].first;
@@ -2505,11 +2881,12 @@ bool Record::hasDirectSuperClass(const Record *Superclass) const {
   return false;
 }
 
-void Record::getDirectSuperClasses(SmallVectorImpl<Record *> &Classes) const {
-  ArrayRef<std::pair<Record *, SMRange>> SCs = getSuperClasses();
+void Record::getDirectSuperClasses(
+    SmallVectorImpl<const Record *> &Classes) const {
+  ArrayRef<std::pair<const Record *, SMRange>> SCs = getSuperClasses();
 
   while (!SCs.empty()) {
-    Record *SC = SCs.back().first;
+    const Record *SC = SCs.back().first;
     SCs = SCs.drop_back(1 + SC->getSuperClasses().size());
     Classes.push_back(SC);
   }
@@ -2552,6 +2929,11 @@ void Record::resolveReferences(Resolver &R, const RecordVal *SkipVal) {
     Value = Assertion.Message->resolveReferences(R);
     Assertion.Message = Value;
   }
+  // Resolve the dump expressions.
+  for (auto &Dump : Dumps) {
+    Init *Value = Dump.Message->resolveReferences(R);
+    Dump.Message = Value;
+  }
 }
 
 void Record::resolveReferences(Init *NewName) {
@@ -2583,11 +2965,11 @@ raw_ostream &llvm::operator<<(raw_ostream &OS, const Record &R) {
   }
 
   OS << " {";
-  ArrayRef<std::pair<Record *, SMRange>> SC = R.getSuperClasses();
+  ArrayRef<std::pair<const Record *, SMRange>> SC = R.getSuperClasses();
   if (!SC.empty()) {
     OS << "\t//";
-    for (const auto &SuperPair : SC)
-      OS << " " << SuperPair.first->getNameInitAsString();
+    for (const auto &[SC, _] : SC)
+      OS << " " << SC->getNameInitAsString();
   }
   OS << "\n";
 
@@ -2618,20 +3000,20 @@ Init *Record::getValueInit(StringRef FieldName) const {
 }
 
 StringRef Record::getValueAsString(StringRef FieldName) const {
-  llvm::Optional<StringRef> S = getValueAsOptionalString(FieldName);
+  std::optional<StringRef> S = getValueAsOptionalString(FieldName);
   if (!S)
     PrintFatalError(getLoc(), "Record `" + getName() +
       "' does not have a field named `" + FieldName + "'!\n");
-  return S.value();
+  return *S;
 }
 
-llvm::Optional<StringRef>
+std::optional<StringRef>
 Record::getValueAsOptionalString(StringRef FieldName) const {
   const RecordVal *R = getValue(FieldName);
   if (!R || !R->getValue())
-    return llvm::Optional<StringRef>();
+    return std::nullopt;
   if (isa<UnsetInit>(R->getValue()))
-    return llvm::Optional<StringRef>();
+    return std::nullopt;
 
   if (StringInit *SI = dyn_cast<StringInit>(R->getValue()))
     return SI->getValue();
@@ -2665,16 +3047,17 @@ ListInit *Record::getValueAsListInit(StringRef FieldName) const {
                                 "' exists but does not have a list value");
 }
 
-std::vector<Record*>
+std::vector<const Record *>
 Record::getValueAsListOfDefs(StringRef FieldName) const {
   ListInit *List = getValueAsListInit(FieldName);
-  std::vector<Record*> Defs;
-  for (Init *I : List->getValues()) {
-    if (DefInit *DI = dyn_cast<DefInit>(I))
+  std::vector<const Record *> Defs;
+  for (const Init *I : List->getValues()) {
+    if (const DefInit *DI = dyn_cast<DefInit>(I))
       Defs.push_back(DI->getDef());
     else
       PrintFatalError(getLoc(), "Record `" + getName() + "', field `" +
-        FieldName + "' list is not entirely DefInit!");
+                                    FieldName +
+                                    "' list is not entirely DefInit!");
   }
   return Defs;
 }
@@ -2725,7 +3108,7 @@ Record::getValueAsListOfStrings(StringRef FieldName) const {
   return Strings;
 }
 
-Record *Record::getValueAsDef(StringRef FieldName) const {
+const Record *Record::getValueAsDef(StringRef FieldName) const {
   const RecordVal *R = getValue(FieldName);
   if (!R || !R->getValue())
     PrintFatalError(getLoc(), "Record `" + getName() +
@@ -2737,7 +3120,7 @@ Record *Record::getValueAsDef(StringRef FieldName) const {
     FieldName + "' does not have a def initializer!");
 }
 
-Record *Record::getValueAsOptionalDef(StringRef FieldName) const {
+const Record *Record::getValueAsOptionalDef(StringRef FieldName) const {
   const RecordVal *R = getValue(FieldName);
   if (!R || !R->getValue())
     PrintFatalError(getLoc(), "Record `" + getName() +
@@ -2750,7 +3133,6 @@ Record *Record::getValueAsOptionalDef(StringRef FieldName) const {
   PrintFatalError(getLoc(), "Record `" + getName() + "', field `" +
     FieldName + "' does not have either a def initializer or '?'!");
 }
-
 
 bool Record::getValueAsBit(StringRef FieldName) const {
   const RecordVal *R = getValue(FieldName);
@@ -2801,10 +3183,28 @@ void Record::checkRecordAssertions() {
   RecordResolver R(*this);
   R.setFinal(true);
 
+  bool AnyFailed = false;
   for (const auto &Assertion : getAssertions()) {
     Init *Condition = Assertion.Condition->resolveReferences(R);
     Init *Message = Assertion.Message->resolveReferences(R);
-    CheckAssert(Assertion.Loc, Condition, Message);
+    AnyFailed |= CheckAssert(Assertion.Loc, Condition, Message);
+  }
+
+  if (!AnyFailed)
+    return;
+
+  // If any of the record assertions failed, print some context that will
+  // help see where the record that caused these assert failures is defined.
+  PrintError(this, "assertion failed in this record");
+}
+
+void Record::emitRecordDumps() {
+  RecordResolver R(*this);
+  R.setFinal(true);
+
+  for (const auto &Dump : getDumps()) {
+    Init *Message = Dump.Message->resolveReferences(R);
+    dumpMessage(Dump.Loc, Message);
   }
 }
 
@@ -2819,7 +3219,9 @@ void Record::checkUnusedTemplateArgs() {
 }
 
 RecordKeeper::RecordKeeper()
-    : Impl(std::make_unique<detail::RecordKeeperImpl>(*this)) {}
+    : Impl(std::make_unique<detail::RecordKeeperImpl>(*this)),
+      Timer(std::make_unique<TGTimer>()) {}
+
 RecordKeeper::~RecordKeeper() = default;
 
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
@@ -2843,66 +3245,24 @@ Init *RecordKeeper::getNewAnonymousName() {
   return AnonymousNameInit::get(*this, getImpl().AnonCounter++);
 }
 
-// These functions implement the phase timing facility. Starting a timer
-// when one is already running stops the running one.
-
-void RecordKeeper::startTimer(StringRef Name) {
-  if (TimingGroup) {
-    if (LastTimer && LastTimer->isRunning()) {
-      LastTimer->stopTimer();
-      if (BackendTimer) {
-        LastTimer->clear();
-        BackendTimer = false;
-      }
-    }
-
-    LastTimer = new Timer("", Name, *TimingGroup);
-    LastTimer->startTimer();
-  }
-}
-
-void RecordKeeper::stopTimer() {
-  if (TimingGroup) {
-    assert(LastTimer && "No phase timer was started");
-    LastTimer->stopTimer();
-  }
-}
-
-void RecordKeeper::startBackendTimer(StringRef Name) {
-  if (TimingGroup) {
-    startTimer(Name);
-    BackendTimer = true;
-  }
-}
-
-void RecordKeeper::stopBackendTimer() {
-  if (TimingGroup) {
-    if (BackendTimer) {
-      stopTimer();
-      BackendTimer = false;
-    }
-  }
-}
-
-std::vector<Record *>
+ArrayRef<const Record *>
 RecordKeeper::getAllDerivedDefinitions(StringRef ClassName) const {
   // We cache the record vectors for single classes. Many backends request
   // the same vectors multiple times.
-  auto Pair = ClassRecordsMap.try_emplace(ClassName);
-  if (Pair.second)
-    Pair.first->second = getAllDerivedDefinitions(makeArrayRef(ClassName));
-
-  return Pair.first->second;
+  auto [Iter, Inserted] = Cache.try_emplace(ClassName.str());
+  if (Inserted)
+    Iter->second = getAllDerivedDefinitions(ArrayRef(ClassName));
+  return Iter->second;
 }
 
-std::vector<Record *> RecordKeeper::getAllDerivedDefinitions(
-    ArrayRef<StringRef> ClassNames) const {
-  SmallVector<Record *, 2> ClassRecs;
-  std::vector<Record *> Defs;
+std::vector<const Record *>
+RecordKeeper::getAllDerivedDefinitions(ArrayRef<StringRef> ClassNames) const {
+  SmallVector<const Record *, 2> ClassRecs;
+  std::vector<const Record *> Defs;
 
   assert(ClassNames.size() > 0 && "At least one class must be passed.");
   for (const auto &ClassName : ClassNames) {
-    Record *Class = getClass(ClassName);
+    const Record *Class = getClass(ClassName);
     if (!Class)
       PrintFatalError("The class '" + ClassName + "' is not defined\n");
     ClassRecs.push_back(Class);
@@ -2910,18 +3270,23 @@ std::vector<Record *> RecordKeeper::getAllDerivedDefinitions(
 
   for (const auto &OneDef : getDefs()) {
     if (all_of(ClassRecs, [&OneDef](const Record *Class) {
-                            return OneDef.second->isSubClassOf(Class);
-                          }))
+          return OneDef.second->isSubClassOf(Class);
+        }))
       Defs.push_back(OneDef.second.get());
   }
-
+  llvm::sort(Defs, LessRecord());
   return Defs;
 }
 
-std::vector<Record *>
+ArrayRef<const Record *>
 RecordKeeper::getAllDerivedDefinitionsIfDefined(StringRef ClassName) const {
-  return getClass(ClassName) ? getAllDerivedDefinitions(ClassName)
-                             : std::vector<Record *>();
+  if (getClass(ClassName))
+    return getAllDerivedDefinitions(ClassName);
+  return Cache[""];
+}
+
+void RecordKeeper::dumpAllocationStats(raw_ostream &OS) const {
+  Impl->dumpAllocationStats(OS);
 }
 
 Init *MapResolver::resolve(Init *VarName) {

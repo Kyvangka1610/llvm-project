@@ -1,6 +1,6 @@
-// RUN: not llvm-mc -arch=amdgcn -mcpu=gfx1010 -mattr=+wavefrontsize32,-wavefrontsize64 %s 2>&1 | FileCheck --check-prefixes=CHECK,GFX1010 --implicit-check-not=error: %s
-// RUN: not llvm-mc -arch=amdgcn -mcpu=gfx1010 -mattr=-wavefrontsize32,+wavefrontsize64 %s 2>&1 | FileCheck --check-prefixes=CHECK,GFX1010 --implicit-check-not=error: %s
-// RUN: not llvm-mc -arch=amdgcn -mcpu=gfx1013 -mattr=+wavefrontsize32,-wavefrontsize64 %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// RUN: not llvm-mc -triple=amdgcn -mcpu=gfx1010 -mattr=+wavefrontsize32 %s 2>&1 | FileCheck --check-prefixes=CHECK,GFX1010 --implicit-check-not=error: %s
+// RUN: not llvm-mc -triple=amdgcn -mcpu=gfx1010 -mattr=+wavefrontsize64 %s 2>&1 | FileCheck --check-prefixes=CHECK,GFX1010 --implicit-check-not=error: %s
+// RUN: not llvm-mc -triple=amdgcn -mcpu=gfx1013 -mattr=+wavefrontsize32 %s 2>&1 | FileCheck --implicit-check-not=error: %s
 
 buffer_atomic_add_f32 v0, v2, s[4:7], 0 idxen glc
 // CHECK: :[[@LINE-1]]:{{[0-9]+}}: error: instruction not supported on this GPU
@@ -213,6 +213,9 @@ buffer_store_d16_hi_format_x v1, off, s[12:15], -1 offset:4095
 // CHECK: :[[@LINE-1]]:{{[0-9]+}}: error: instruction not supported on this GPU
 
 buffer_store_lds_dword s[4:7], -1 offset:4095 lds
+// CHECK: :[[@LINE-1]]:{{[0-9]+}}: error: instruction not supported on this GPU
+
+buffer_wbinvl1
 // CHECK: :[[@LINE-1]]:{{[0-9]+}}: error: instruction not supported on this GPU
 
 buffer_wbinvl1_vol
@@ -761,10 +764,10 @@ global_store_d16_hi_b8 v1, v2, s[104:105]
 global_store_dword_addtid v1, off offset:16 glc slc dlc
 // CHECK: :[[@LINE-1]]:{{[0-9]+}}: error: instruction not supported on this GPU
 
-image_bvh64_intersect_ray v[252:255], v[240:255], ttmp[12:15] a16
+image_bvh64_intersect_ray v[252:255], v[247:255], ttmp[12:15] a16
 // GFX1010: :[[@LINE-1]]:{{[0-9]+}}: error: instruction not supported on this GPU
 
-image_bvh_intersect_ray v[252:255], v[1:16], s[8:11]
+image_bvh_intersect_ray v[252:255], v[1:11], s[8:11]
 // GFX1010: :[[@LINE-1]]:{{[0-9]+}}: error: instruction not supported on this GPU
 
 image_msaa_load v14, [v204,v11,v14,v19], s[40:47] dmask:0x1 dim:SQ_RSRC_IMG_2D_MSAA_ARRAY
@@ -3285,6 +3288,9 @@ v_subrev_u32_e64 v255, s[12:13], v1, v2
 // CHECK: :[[@LINE-1]]:{{[0-9]+}}: error: instruction not supported on this GPU
 
 v_subrev_u32_sdwa v1, vcc, v2, v3 dst_sel:DWORD dst_unused:UNUSED_PAD src0_sel:WORD_1 src1_sel:BYTE_2
+// CHECK: :[[@LINE-1]]:{{[0-9]+}}: error: instruction not supported on this GPU
+
+v_swap_b16 v0.l, v0.l
 // CHECK: :[[@LINE-1]]:{{[0-9]+}}: error: instruction not supported on this GPU
 
 v_wmma_bf16_16x16x16_bf16 v[16:19], 1.0, v[8:15], v[16:19]

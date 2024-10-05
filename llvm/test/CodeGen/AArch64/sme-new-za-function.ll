@@ -1,20 +1,21 @@
 ; RUN: opt -S -mtriple=aarch64-linux-gnu -aarch64-sme-abi %s | FileCheck %s
 ; RUN: opt -S -mtriple=aarch64-linux-gnu -aarch64-sme-abi -aarch64-sme-abi %s | FileCheck %s
 
-declare void @shared_za_callee() "aarch64_pstate_za_shared"
+declare void @shared_za_callee() "aarch64_inout_za"
 
-define void @private_za() "aarch64_pstate_za_new" {
+define void @private_za() "aarch64_new_za" {
 ; CHECK-LABEL: @private_za(
 ; CHECK-NEXT:  prelude:
 ; CHECK-NEXT:    [[TPIDR2:%.*]] = call i64 @llvm.aarch64.sme.get.tpidr2()
 ; CHECK-NEXT:    [[CMP:%.*]] = icmp ne i64 [[TPIDR2]], 0
 ; CHECK-NEXT:    br i1 [[CMP]], label [[SAVE_ZA:%.*]], label [[TMP0:%.*]]
 ; CHECK:       save.za:
-; CHECK-NEXT:    call void @__arm_tpidr2_save()
+; CHECK-NEXT:    call aarch64_sme_preservemost_from_x0 void @__arm_tpidr2_save()
 ; CHECK-NEXT:    call void @llvm.aarch64.sme.set.tpidr2(i64 0)
 ; CHECK-NEXT:    br label [[TMP0]]
 ; CHECK:       0:
 ; CHECK-NEXT:    call void @llvm.aarch64.sme.za.enable()
+; CHECK-NEXT:    call void @llvm.aarch64.sme.zero(i32 255)
 ; CHECK-NEXT:    call void @shared_za_callee()
 ; CHECK-NEXT:    call void @llvm.aarch64.sme.za.disable()
 ; CHECK-NEXT:    ret void
@@ -23,18 +24,19 @@ define void @private_za() "aarch64_pstate_za_new" {
   ret void
 }
 
-define i32 @private_za_multiple_exit(i32 %a, i32 %b, i64 %cond) "aarch64_pstate_za_new" {
+define i32 @private_za_multiple_exit(i32 %a, i32 %b, i64 %cond) "aarch64_new_za" {
 ; CHECK-LABEL: @private_za_multiple_exit(
 ; CHECK-NEXT:  prelude:
 ; CHECK-NEXT:    [[TPIDR2:%.*]] = call i64 @llvm.aarch64.sme.get.tpidr2()
 ; CHECK-NEXT:    [[CMP:%.*]] = icmp ne i64 [[TPIDR2]], 0
 ; CHECK-NEXT:    br i1 [[CMP]], label [[SAVE_ZA:%.*]], label [[ENTRY:%.*]]
 ; CHECK:       save.za:
-; CHECK-NEXT:    call void @__arm_tpidr2_save()
+; CHECK-NEXT:    call aarch64_sme_preservemost_from_x0 void @__arm_tpidr2_save()
 ; CHECK-NEXT:    call void @llvm.aarch64.sme.set.tpidr2(i64 0)
 ; CHECK-NEXT:    br label [[ENTRY]]
 ; CHECK:       entry:
 ; CHECK-NEXT:    call void @llvm.aarch64.sme.za.enable()
+; CHECK-NEXT:    call void @llvm.aarch64.sme.zero(i32 255)
 ; CHECK-NEXT:    [[TOBOOL:%.*]] = icmp eq i64 [[COND:%.*]], 1
 ; CHECK-NEXT:    br i1 [[TOBOOL]], label [[IF_ELSE:%.*]], label [[IF_END:%.*]]
 ; CHECK:       if.else:
@@ -59,4 +61,5 @@ if.end:
   ret i32 %sub
 }
 
-; CHECK: declare "aarch64_pstate_sm_compatible" void @__arm_tpidr2_save()
+; CHECK: declare void @__arm_tpidr2_save() #[[ATTR:[0-9]+]]
+; CHECK: attributes #[[ATTR]] = { "aarch64_pstate_sm_compatible" }

@@ -18,8 +18,8 @@
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/ScheduleDAG.h"
 #include "llvm/CodeGen/SelectionDAGNodes.h"
+#include "llvm/CodeGenTypes/MachineValueType.h"
 #include "llvm/Support/Casting.h"
-#include "llvm/Support/MachineValueType.h"
 #include <cassert>
 #include <string>
 #include <vector>
@@ -184,7 +184,8 @@ class InstrItineraryData;
     void BuildSchedUnits();
     void AddSchedEdges();
 
-    void EmitPhysRegCopy(SUnit *SU, DenseMap<SUnit*, Register> &VRBaseMap,
+    void EmitPhysRegCopy(SUnit *SU,
+                         SmallDenseMap<SUnit *, Register, 16> &VRBaseMap,
                          MachineBasicBlock::iterator InsertPos);
   };
 

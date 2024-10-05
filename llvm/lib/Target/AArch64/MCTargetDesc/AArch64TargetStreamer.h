@@ -30,12 +30,13 @@ public:
   /// MCExpr that can be used to refer to the constant pool location.
   const MCExpr *addConstantPoolEntry(const MCExpr *, unsigned Size, SMLoc Loc);
 
-  /// Callback used to implemnt the .ltorg directive.
+  /// Callback used to implement the .ltorg directive.
   /// Emit contents of constant pool for the current section.
   void emitCurrentConstantPool();
 
   /// Callback used to implement the .note.gnu.property section.
-  void emitNoteSection(unsigned Flags);
+  void emitNoteSection(unsigned Flags, uint64_t PAuthABIPlatform = -1,
+                       uint64_t PAuthABIVersion = -1);
 
   /// Callback used to implement the .inst directive.
   virtual void emitInst(uint32_t Inst);
@@ -66,6 +67,7 @@ public:
   virtual void emitARM64WinCFITrapFrame() {}
   virtual void emitARM64WinCFIMachineFrame() {}
   virtual void emitARM64WinCFIContext() {}
+  virtual void emitARM64WinCFIECContext() {}
   virtual void emitARM64WinCFIClearUnwoundToCall() {}
   virtual void emitARM64WinCFIPACSignLR() {}
   virtual void emitARM64WinCFISaveAnyRegI(unsigned Reg, int Offset) {}
@@ -91,6 +93,7 @@ private:
 
   void emitInst(uint32_t Inst) override;
   void emitDirectiveVariantPCS(MCSymbol *Symbol) override;
+  void finish() override;
 
 public:
   AArch64TargetELFStreamer(MCStreamer &S) : AArch64TargetStreamer(S) {}
@@ -132,6 +135,7 @@ public:
   void emitARM64WinCFITrapFrame() override;
   void emitARM64WinCFIMachineFrame() override;
   void emitARM64WinCFIContext() override;
+  void emitARM64WinCFIECContext() override;
   void emitARM64WinCFIClearUnwoundToCall() override;
   void emitARM64WinCFIPACSignLR() override;
   void emitARM64WinCFISaveAnyRegI(unsigned Reg, int Offset) override;
@@ -153,6 +157,8 @@ private:
 
 MCTargetStreamer *
 createAArch64ObjectTargetStreamer(MCStreamer &S, const MCSubtargetInfo &STI);
+
+MCTargetStreamer *createAArch64NullTargetStreamer(MCStreamer &S);
 
 } // end namespace llvm
 

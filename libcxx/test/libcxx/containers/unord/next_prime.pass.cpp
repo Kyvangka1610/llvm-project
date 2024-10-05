@@ -18,11 +18,12 @@
 
 #include <__hash_table>
 #include <cassert>
+#include <cstddef>
 
 #include "test_macros.h"
 
 bool
-is_prime(size_t n)
+is_prime(std::size_t n)
 {
     switch (n)
     {
@@ -30,7 +31,7 @@ is_prime(size_t n)
     case 1:
         return false;
     }
-    for (size_t i = 2; i*i <= n; ++i)
+    for (std::size_t i = 2; i*i <= n; ++i)
     {
         if (n % i == 0)
             return false;

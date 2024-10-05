@@ -29,9 +29,6 @@
 /* Default OpenMP runtime used by -fopenmp. */
 #define CLANG_DEFAULT_OPENMP_RUNTIME "${CLANG_DEFAULT_OPENMP_RUNTIME}"
 
-/* Default architecture for OpenMP offloading to Nvidia GPUs. */
-#define CLANG_OPENMP_NVPTX_DEFAULT_ARCH "${CLANG_OPENMP_NVPTX_DEFAULT_ARCH}"
-
 /* Default architecture for SystemZ. */
 #define CLANG_SYSTEMZ_DEFAULT_ARCH "${CLANG_SYSTEMZ_DEFAULT_ARCH}"
 
@@ -60,8 +57,11 @@
 /* Define if we have sys/resource.h (rlimits) */
 #cmakedefine CLANG_HAVE_RLIMITS ${CLANG_HAVE_RLIMITS}
 
-/* The LLVM product name and version */
-#define BACKEND_PACKAGE_STRING "${BACKEND_PACKAGE_STRING}"
+/* Define if we have dlfcn.h */
+#cmakedefine CLANG_HAVE_DLFCN_H ${CLANG_HAVE_DLFCN_H}
+
+/* Define if dladdr() is available on this platform. */
+#cmakedefine CLANG_HAVE_DLADDR ${CLANG_HAVE_DLADDR}
 
 /* Linker version detected at compile time. */
 #cmakedefine HOST_LINK_VERSION "${HOST_LINK_VERSION}"
@@ -82,5 +82,8 @@
 
 /* Spawn a new process clang.exe for the CC1 tool invocation, when necessary */
 #cmakedefine01 CLANG_SPAWN_CC1
+
+/* Whether CIR is built into Clang */
+#cmakedefine01 CLANG_ENABLE_CIR
 
 #endif

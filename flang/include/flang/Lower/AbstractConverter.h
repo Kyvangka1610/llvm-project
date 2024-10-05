@@ -17,16 +17,16 @@
 #include "flang/Lower/LoweringOptions.h"
 #include "flang/Lower/PFTDefs.h"
 #include "flang/Optimizer/Builder/BoxValue.h"
+#include "flang/Optimizer/Dialect/FIRAttr.h"
 #include "flang/Semantics/symbol.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Operation.h"
 #include "llvm/ADT/ArrayRef.h"
 
-namespace fir {
-class KindMapping;
-class FirOpBuilder;
-} // namespace fir
+namespace mlir {
+class SymbolTable;
+}
 
 namespace fir {
 class KindMapping;
@@ -52,17 +52,24 @@ class CharBlock;
 }
 namespace semantics {
 class Symbol;
+class Scope;
 class DerivedTypeSpec;
 } // namespace semantics
 
 namespace lower {
+class SymMap;
+struct SymbolBox;
 namespace pft {
 struct Variable;
 }
 
 using SomeExpr = Fortran::evaluate::Expr<Fortran::evaluate::SomeType>;
 using SymbolRef = Fortran::common::Reference<const Fortran::semantics::Symbol>;
+using TypeConstructionStack =
+    llvm::DenseMap<const Fortran::semantics::Scope *, mlir::Type>;
 class StatementContext;
+
+using ExprToValueMap = llvm::DenseMap<const SomeExpr *, mlir::Value>;
 
 //===----------------------------------------------------------------------===//
 // AbstractConverter interface
@@ -81,7 +88,8 @@ public:
   virtual mlir::Value getSymbolAddress(SymbolRef sym) = 0;
 
   virtual fir::ExtendedValue
-  getSymbolExtendedValue(const Fortran::semantics::Symbol &sym) = 0;
+  getSymbolExtendedValue(const Fortran::semantics::Symbol &sym,
+                         Fortran::lower::SymMap *symMap = nullptr) = 0;
 
   /// Get the binding of an implied do variable by name.
   virtual mlir::Value impliedDoBinding(llvm::StringRef name) = 0;
@@ -92,6 +100,14 @@ public:
   /// Binds the symbol to an fir extended value. The symbol binding will be
   /// added or replaced at the inner-most level of the local symbol map.
   virtual void bindSymbol(SymbolRef sym, const fir::ExtendedValue &exval) = 0;
+
+  /// Override lowering of expression with pre-lowered values.
+  /// Associate mlir::Value to evaluate::Expr. All subsequent call to
+  /// genExprXXX() will replace any occurrence of an overridden
+  /// expression in the expression tree by the pre-lowered values.
+  virtual void overrideExprValues(const ExprToValueMap *) = 0;
+  void resetExprOverrides() { overrideExprValues(nullptr); }
+  virtual const ExprToValueMap *getExprOverrides() = 0;
 
   /// Get the label set associated with a symbol.
   virtual bool lookupLabelSet(SymbolRef sym, pft::LabelSet &labelSet) = 0;
@@ -104,19 +120,44 @@ public:
   virtual bool
   createHostAssociateVarClone(const Fortran::semantics::Symbol &sym) = 0;
 
+  virtual void
+  createHostAssociateVarCloneDealloc(const Fortran::semantics::Symbol &sym) = 0;
+
   virtual void copyHostAssociateVar(
       const Fortran::semantics::Symbol &sym,
       mlir::OpBuilder::InsertPoint *copyAssignIP = nullptr) = 0;
 
+  virtual void copyVar(mlir::Location loc, mlir::Value dst, mlir::Value src,
+                       fir::FortranVariableFlagsEnum attrs) = 0;
+
+  /// For a given symbol, check if it is present in the inner-most
+  /// level of the symbol map.
+  virtual bool
+  isPresentShallowLookup(const Fortran::semantics::Symbol &sym) = 0;
+
   /// Collect the set of symbols with \p flag in \p eval
-  /// region if \p collectSymbols is true. Likewise, collect the
+  /// region if \p collectSymbols is true. Otherwise, collect the
   /// set of the host symbols with \p flag of the associated symbols in \p eval
-  /// region if collectHostAssociatedSymbols is true.
+  /// region if collectHostAssociatedSymbols is true. This allows gathering
+  /// host association details of symbols particularly in nested directives
+  /// irrespective of \p flag \p, and can be useful where host
+  /// association details are needed in flag-agnostic manner.
   virtual void collectSymbolSet(
       pft::Evaluation &eval,
       llvm::SetVector<const Fortran::semantics::Symbol *> &symbolSet,
       Fortran::semantics::Symbol::Flag flag, bool collectSymbols = true,
       bool collectHostAssociatedSymbols = false) = 0;
+
+  /// For the given literal constant \p expression, returns a unique name
+  /// that can be used to create a global object to represent this
+  /// literal constant. It will return the same name for equivalent
+  /// literal constant expressions. \p eleTy specifies the data type
+  /// of the constant elements. For array constants it specifies
+  /// the array's element type.
+  virtual llvm::StringRef
+  getUniqueLitName(mlir::Location loc,
+                   std::unique_ptr<Fortran::lower::SomeExpr> expression,
+                   mlir::Type eleTy) = 0;
 
   //===--------------------------------------------------------------------===//
   // Expressions
@@ -180,6 +221,18 @@ public:
   /// function.
   virtual void bindHostAssocTuple(mlir::Value val) = 0;
 
+  /// Returns fir.dummy_scope operation's result value to be used
+  /// as dummy_scope operand of hlfir.declare operations for the dummy
+  /// arguments of this function.
+  virtual mlir::Value dummyArgsScopeValue() const = 0;
+
+  /// Returns true if the given symbol is a dummy argument of this function.
+  /// Note that it returns false for all the symbols after all the variables
+  /// are instantiated for this function, i.e. it can only be used reliably
+  /// during the instatiation of the variables.
+  virtual bool
+  isRegisteredDummySymbol(Fortran::semantics::SymbolRef symRef) const = 0;
+
   //===--------------------------------------------------------------------===//
   // Types
   //===--------------------------------------------------------------------===//
@@ -193,7 +246,7 @@ public:
   /// Generate the type from a category and kind and length parameters.
   virtual mlir::Type
   genType(Fortran::common::TypeCategory tc, int kind,
-          llvm::ArrayRef<std::int64_t> lenParameters = llvm::None) = 0;
+          llvm::ArrayRef<std::int64_t> lenParameters = std::nullopt) = 0;
   /// Generate the type from a DerivedTypeSpec.
   virtual mlir::Type genType(const Fortran::semantics::DerivedTypeSpec &) = 0;
   /// Generate the type from a Variable
@@ -201,8 +254,14 @@ public:
 
   /// Register a runtime derived type information object symbol to ensure its
   /// object will be generated as a global.
-  virtual void registerRuntimeTypeInfo(mlir::Location loc,
-                                       SymbolRef typeInfoSym) = 0;
+  virtual void
+  registerTypeInfo(mlir::Location loc, SymbolRef typeInfoSym,
+                   const Fortran::semantics::DerivedTypeSpec &typeSpec,
+                   fir::RecordType type) = 0;
+
+  /// Get stack of derived type in construction. This is an internal entry point
+  /// for the type conversion utility to allow lowering recursive derived types.
+  virtual TypeConstructionStack &getTypeConstructionStack() = 0;
 
   //===--------------------------------------------------------------------===//
   // Locations
@@ -215,6 +274,9 @@ public:
   /// Generate the location as converted from a CharBlock
   virtual mlir::Location genLocation(const Fortran::parser::CharBlock &) = 0;
 
+  /// Get the converter's current scope
+  virtual const Fortran::semantics::Scope &getCurrentScope() = 0;
+
   //===--------------------------------------------------------------------===//
   // FIR/MLIR
   //===--------------------------------------------------------------------===//
@@ -225,10 +287,22 @@ public:
   virtual mlir::ModuleOp &getModuleOp() = 0;
   /// Get the MLIRContext
   virtual mlir::MLIRContext &getMLIRContext() = 0;
-  /// Unique a symbol
+  /// Unique a symbol (add a containing scope specific prefix)
   virtual std::string mangleName(const Fortran::semantics::Symbol &) = 0;
+  /// Unique a derived type (add a containing scope specific prefix)
+  virtual std::string
+  mangleName(const Fortran::semantics::DerivedTypeSpec &) = 0;
+  /// Unique a compiler generated name (add a containing scope specific prefix)
+  virtual std::string mangleName(std::string &) = 0;
+  /// Return the field name for a derived type component inside a fir.record
+  /// type.
+  virtual std::string
+  getRecordTypeFieldName(const Fortran::semantics::Symbol &component) = 0;
+
   /// Get the KindMap.
   virtual const fir::KindMapping &getKindMap() = 0;
+
+  virtual Fortran::lower::StatementContext &getFctCtx() = 0;
 
   AbstractConverter(const Fortran::lower::LoweringOptions &loweringOptions)
       : loweringOptions(loweringOptions) {}
@@ -238,10 +312,28 @@ public:
   // Miscellaneous
   //===--------------------------------------------------------------------===//
 
+  /// Generate IR for Evaluation \p eval.
+  virtual void genEval(pft::Evaluation &eval,
+                       bool unstructuredContext = true) = 0;
+
   /// Return options controlling lowering behavior.
   const Fortran::lower::LoweringOptions &getLoweringOptions() const {
     return loweringOptions;
   }
+
+  /// Find the symbol in one level up of symbol map such as for host-association
+  /// in OpenMP code or return null.
+  virtual Fortran::lower::SymbolBox
+  lookupOneLevelUpSymbol(const Fortran::semantics::Symbol &sym) = 0;
+
+  /// Return the mlir::SymbolTable associated to the ModuleOp.
+  /// Look-ups are faster using it than using module.lookup<>,
+  /// but the module op should be queried in case of failure
+  /// because this symbol table is not guaranteed to contain
+  /// all the symbols from the ModuleOp (the symbol table should
+  /// always be provided to the builder helper creating globals and
+  /// functions in order to be in sync).
+  virtual mlir::SymbolTable *getMLIRSymbolTable() = 0;
 
 private:
   /// Options controlling lowering behavior.

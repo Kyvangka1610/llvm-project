@@ -97,13 +97,27 @@ add_entrypoint_object(
   HDRS
     ../fork.h
   DEPENDS
-    libc.include.errno
     libc.include.unistd
     libc.include.sys_syscall
-    libc.src.__support.fork_callbacks
+    libc.src.__support.threads.fork_callbacks
     libc.src.__support.OSUtil.osutil
     libc.src.__support.threads.thread
     libc.src.errno.errno
+    libc.src.__support.threads.identifier
+)
+
+add_entrypoint_object(
+  fpathconf
+  SRCS
+    fpathconf.cpp
+  HDRS
+    ../fpathconf.h
+  DEPENDS
+    libc.include.unistd
+    libc.include.sys_syscall
+    libc.src.__support.OSUtil.osutil
+    libc.src.errno.errno
+    libc.src.unistd.linux.pathconf_utils
 )
 
 add_entrypoint_object(
@@ -113,7 +127,6 @@ add_entrypoint_object(
   HDRS
     ../execv.h
   DEPENDS
-    libc.include.errno
     libc.include.sys_syscall
     libc.src.__support.OSUtil.osutil
     libc.src.errno.errno
@@ -127,7 +140,6 @@ add_entrypoint_object(
   HDRS
     ../execve.h
   DEPENDS
-    libc.include.errno
     libc.include.sys_syscall
     libc.src.__support.OSUtil.osutil
     libc.src.errno.errno
@@ -166,7 +178,6 @@ add_entrypoint_object(
   HDRS
     ../getcwd.h
   DEPENDS
-    libc.include.errno
     libc.include.stdlib
     libc.include.unistd
     libc.include.sys_syscall
@@ -230,7 +241,7 @@ add_entrypoint_object(
     ../isatty.h
   DEPENDS
     libc.include.unistd
-    libc.include.errno
+    libc.include.sys_ioctl
     libc.include.sys_syscall
     libc.src.__support.OSUtil.osutil
     libc.src.errno.errno
@@ -278,6 +289,47 @@ add_entrypoint_object(
 )
 
 add_entrypoint_object(
+  pathconf
+  SRCS
+    pathconf.cpp
+  HDRS
+    ../pathconf.h
+  DEPENDS
+    libc.include.unistd
+    libc.include.sys_syscall
+    libc.src.__support.OSUtil.osutil
+    libc.src.errno.errno
+    libc.src.unistd.linux.pathconf_utils
+)
+
+add_object_library(
+  pathconf_utils
+  SRCS
+    pathconf_utils.cpp
+  HDRS
+    pathconf_utils.h
+  DEPENDS
+    libc.hdr.limits_macros
+    libc.hdr.unistd_macros
+    libc.src.__support.OSUtil.osutil
+    libc.src.errno.errno
+    libc.src.sys.statvfs.linux.statfs_utils
+)
+
+add_entrypoint_object(
+  pipe
+  SRCS
+    pipe.cpp
+  HDRS
+    ../pipe.h
+  DEPENDS
+    libc.include.unistd
+    libc.include.sys_syscall
+    libc.src.__support.OSUtil.osutil
+    libc.src.errno.errno
+)
+
+add_entrypoint_object(
   pread
   SRCS
     pread.cpp
@@ -287,6 +339,7 @@ add_entrypoint_object(
     libc.include.unistd
     libc.include.sys_syscall
     libc.src.__support.OSUtil.osutil
+    libc.src.__support.macros.sanitizer
     libc.src.errno.errno
 )
 
@@ -313,6 +366,7 @@ add_entrypoint_object(
     libc.include.unistd
     libc.include.sys_syscall
     libc.src.__support.OSUtil.osutil
+    libc.src.__support.macros.sanitizer
     libc.src.errno.errno
 )
 
@@ -406,7 +460,9 @@ add_entrypoint_object(
     ../sysconf.h
   DEPENDS
     libc.include.unistd
+    libc.include.sys_auxv
     libc.src.errno.errno
+    libc.src.sys.auxv.getauxval
 )
 
 add_entrypoint_object(

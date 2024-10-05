@@ -1,4 +1,11 @@
-cmake_minimum_required(VERSION 3.13.4)
+cmake_minimum_required(VERSION 3.20.0)
+set(LLVM_SUBPROJECT_TITLE "LLDB")
+
+if(NOT DEFINED LLVM_COMMON_CMAKE_UTILS)
+  set(LLVM_COMMON_CMAKE_UTILS ${CMAKE_CURRENT_SOURCE_DIR}/../cmake)
+endif()
+include(${LLVM_COMMON_CMAKE_UTILS}/Modules/CMakePolicy.cmake
+  NO_POLICY_SCOPE)
 
 # Add path for custom modules.
 set(CMAKE_MODULE_PATH
@@ -12,6 +19,7 @@ set(CMAKE_MODULE_PATH
 if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   project(lldb)
   set(LLDB_BUILT_STANDALONE TRUE)
+  set(LLVM_INCLUDE_TESTS ON CACHE INTERNAL "")
 endif()
 
 # Must go below project(..)
@@ -20,11 +28,11 @@ include(GNUInstallDirs)
 option(LLDB_INCLUDE_TESTS "Generate build targets for the LLDB unit tests." ${LLVM_INCLUDE_TESTS})
 
 if(LLDB_BUILT_STANDALONE)
-  include(LLDBStandalone)
-
   set(CMAKE_CXX_STANDARD 17 CACHE STRING "C++ standard to conform to")
   set(CMAKE_CXX_STANDARD_REQUIRED YES)
   set(CMAKE_CXX_EXTENSIONS NO)
+
+  include(LLDBStandalone)
 endif()
 
 include(LLDBConfig)
@@ -37,6 +45,10 @@ endif()
 
 if (WIN32)
   add_definitions(-D_ENABLE_EXTENDED_ALIGNED_STORAGE)
+  if (NOT MSVC)
+    # _BSD_SOURCE is required for MinGW's getopt.h to define optreset
+    add_definitions(-D_BSD_SOURCE)
+  endif()
 endif()
 
 if (LLDB_ENABLE_PYTHON)
@@ -64,6 +76,14 @@ if (LLDB_ENABLE_PYTHON)
       endif()
     endif()
   endforeach()
+  # Make sure lldb extension has "_d" suffix on Windows in Debug mode.
+  if(WIN32 AND CMAKE_BUILD_TYPE STREQUAL Debug)
+    string(SUBSTRING ${LLDB_PYTHON_EXT_SUFFIX} 0 2 FIRST_2_CHARS)
+    # Add "_d" manually if LLDB_PYTHON_EXT_SUFFIX lacks it due to release Python configuration.
+    if(NOT FIRST_2_CHARS STREQUAL "_d")
+      set(LLDB_PYTHON_EXT_SUFFIX "_d${LLDB_PYTHON_EXT_SUFFIX}")
+    endif()
+  endif()
 endif ()
 
 if (LLDB_ENABLE_LUA)

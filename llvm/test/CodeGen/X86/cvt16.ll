@@ -89,9 +89,6 @@ define float @test3(float %src) nounwind uwtable readnone {
 ; F16C-LABEL: test3:
 ; F16C:       # %bb.0:
 ; F16C-NEXT:    vcvtps2ph $4, %xmm0, %xmm0
-; F16C-NEXT:    vmovd %xmm0, %eax
-; F16C-NEXT:    movzwl %ax, %eax
-; F16C-NEXT:    vmovd %eax, %xmm0
 ; F16C-NEXT:    vcvtph2ps %xmm0, %xmm0
 ; F16C-NEXT:    retq
 ;

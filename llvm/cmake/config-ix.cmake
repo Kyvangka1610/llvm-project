@@ -10,6 +10,7 @@ include(CheckCXXSymbolExists)
 include(CheckFunctionExists)
 include(CheckStructHasMember)
 include(CheckCCompilerFlag)
+include(CheckCSourceCompiles)
 include(CMakePushCheckState)
 
 include(CheckCompilerVersion)
@@ -43,7 +44,6 @@ endif()
 check_include_file(dlfcn.h HAVE_DLFCN_H)
 check_include_file(errno.h HAVE_ERRNO_H)
 check_include_file(fcntl.h HAVE_FCNTL_H)
-check_include_file(link.h HAVE_LINK_H)
 check_include_file(malloc/malloc.h HAVE_MALLOC_MALLOC_H)
 if( NOT PURE_WINDOWS )
   check_include_file(pthread.h HAVE_PTHREAD_H)
@@ -51,11 +51,9 @@ endif()
 check_include_file(signal.h HAVE_SIGNAL_H)
 check_include_file(sys/ioctl.h HAVE_SYS_IOCTL_H)
 check_include_file(sys/mman.h HAVE_SYS_MMAN_H)
-check_include_file(sys/param.h HAVE_SYS_PARAM_H)
 check_include_file(sys/resource.h HAVE_SYS_RESOURCE_H)
 check_include_file(sys/stat.h HAVE_SYS_STAT_H)
 check_include_file(sys/time.h HAVE_SYS_TIME_H)
-check_include_file(sys/types.h HAVE_SYS_TYPES_H)
 check_include_file(sysexits.h HAVE_SYSEXITS_H)
 check_include_file(termios.h HAVE_TERMIOS_H)
 check_include_file(unistd.h HAVE_UNISTD_H)
@@ -63,15 +61,25 @@ check_include_file(valgrind/valgrind.h HAVE_VALGRIND_VALGRIND_H)
 check_include_file(fenv.h HAVE_FENV_H)
 check_symbol_exists(FE_ALL_EXCEPT "fenv.h" HAVE_DECL_FE_ALL_EXCEPT)
 check_symbol_exists(FE_INEXACT "fenv.h" HAVE_DECL_FE_INEXACT)
+check_c_source_compiles("
+        #if __has_attribute(used)
+        #define LLVM_ATTRIBUTE_USED __attribute__((__used__))
+        #else
+        #define LLVM_ATTRIBUTE_USED
+        #endif
+        LLVM_ATTRIBUTE_USED void *foo() {
+          return __builtin_thread_pointer();
+        }
+        int main(void) { return 0; }"
+        HAVE_BUILTIN_THREAD_POINTER)
 
 check_include_file(mach/mach.h HAVE_MACH_MACH_H)
 check_include_file(CrashReporterClient.h HAVE_CRASHREPORTERCLIENT_H)
 if(APPLE)
-  include(CheckCSourceCompiles)
-  CHECK_C_SOURCE_COMPILES("
+  check_c_source_compiles("
      static const char *__crashreporter_info__ = 0;
      asm(\".desc ___crashreporter_info__, 0x10\");
-     int main() { return 0; }"
+     int main(void) { return 0; }"
     HAVE_CRASHREPORTER_INFO)
 endif()
 
@@ -220,35 +228,31 @@ if(NOT LLVM_USE_SANITIZER MATCHES "Memory.*")
   if (NOT PURE_WINDOWS)
     # Skip libedit if using ASan as it contains memory leaks.
     if (LLVM_ENABLE_LIBEDIT AND NOT LLVM_USE_SANITIZER MATCHES ".*Address.*")
-      find_package(LibEdit)
-      set(HAVE_LIBEDIT ${LibEdit_FOUND})
+      if(LLVM_ENABLE_LIBEDIT STREQUAL FORCE_ON)
+        find_package(LibEdit REQUIRED)
+      else()
+        find_package(LibEdit)
+      endif()
+      set(HAVE_LIBEDIT "${LibEdit_FOUND}")
     else()
       set(HAVE_LIBEDIT 0)
     endif()
-    if(LLVM_ENABLE_TERMINFO)
-      if(LLVM_ENABLE_TERMINFO STREQUAL FORCE_ON)
-        find_package(Terminfo REQUIRED)
-      else()
-        find_package(Terminfo)
-      endif()
-      set(LLVM_ENABLE_TERMINFO "${Terminfo_FOUND}")
-    endif()
   else()
-    set(LLVM_ENABLE_TERMINFO 0)
+    set(HAVE_LIBEDIT 0)
   endif()
 else()
-  set(LLVM_ENABLE_TERMINFO 0)
+  set(HAVE_LIBEDIT 0)
 endif()
 
-check_library_exists(xar xar_open "" LLVM_HAVE_LIBXAR)
-if(LLVM_HAVE_LIBXAR)
-  message(STATUS "The xar file format has been deprecated: LLVM_HAVE_LIBXAR might be removed in the future.")
-  # The xar file format has been deprecated since macOS 12.0.
-  if (CMAKE_OSX_DEPLOYMENT_TARGET VERSION_GREATER_EQUAL 12)
-    set(LLVM_HAVE_LIBXAR 0)
-  else()
-    set(XAR_LIB xar)
+if(LLVM_HAS_LOGF128)
+  include(CheckCXXSymbolExists)
+  check_cxx_symbol_exists(logf128 math.h HAS_LOGF128)
+
+  if(LLVM_HAS_LOGF128 STREQUAL FORCE_ON AND NOT HAS_LOGF128)
+    message(FATAL_ERROR "Failed to configure logf128")
   endif()
+
+  set(LLVM_HAS_LOGF128 "${HAS_LOGF128}")
 endif()
 
 # function checks
@@ -284,9 +288,6 @@ check_symbol_exists(futimes sys/time.h HAVE_FUTIMES)
 if( HAVE_SIGNAL_H AND NOT LLVM_USE_SANITIZER MATCHES ".*Address.*" AND NOT APPLE )
   check_symbol_exists(sigaltstack signal.h HAVE_SIGALTSTACK)
 endif()
-set(CMAKE_REQUIRED_DEFINITIONS "-D_LARGEFILE64_SOURCE")
-check_symbol_exists(lseek64 "sys/types.h;unistd.h" HAVE_LSEEK64)
-set(CMAKE_REQUIRED_DEFINITIONS "")
 check_symbol_exists(mallctl malloc_np.h HAVE_MALLCTL)
 check_symbol_exists(mallinfo malloc.h HAVE_MALLINFO)
 check_symbol_exists(mallinfo2 malloc.h HAVE_MALLINFO2)
@@ -296,7 +297,6 @@ check_symbol_exists(getrlimit "sys/types.h;sys/time.h;sys/resource.h" HAVE_GETRL
 check_symbol_exists(posix_spawn spawn.h HAVE_POSIX_SPAWN)
 check_symbol_exists(pread unistd.h HAVE_PREAD)
 check_symbol_exists(sbrk unistd.h HAVE_SBRK)
-check_symbol_exists(strerror string.h HAVE_STRERROR)
 check_symbol_exists(strerror_r string.h HAVE_STRERROR_R)
 check_symbol_exists(strerror_s string.h HAVE_DECL_STRERROR_S)
 check_symbol_exists(setenv stdlib.h HAVE_SETENV)
@@ -324,16 +324,6 @@ if( PURE_WINDOWS )
   check_function_exists(__main HAVE___MAIN)
   check_function_exists(__cmpdi2 HAVE___CMPDI2)
 endif()
-if( HAVE_DLFCN_H )
-  if( HAVE_LIBDL )
-    list(APPEND CMAKE_REQUIRED_LIBRARIES dl)
-  endif()
-  check_symbol_exists(dlopen dlfcn.h HAVE_DLOPEN)
-  check_symbol_exists(dladdr dlfcn.h HAVE_DLADDR)
-  if( HAVE_LIBDL )
-    list(REMOVE_ITEM CMAKE_REQUIRED_LIBRARIES dl)
-  endif()
-endif()
 
 CHECK_STRUCT_HAS_MEMBER("struct stat" st_mtimespec.tv_nsec
     "sys/types.h;sys/stat.h" HAVE_STRUCT_STAT_ST_MTIMESPEC_TV_NSEC)
@@ -348,18 +338,38 @@ endif()
 
 check_symbol_exists(__GLIBC__ stdio.h LLVM_USING_GLIBC)
 if( LLVM_USING_GLIBC )
-  add_definitions( -D_GNU_SOURCE )
+  add_compile_definitions(_GNU_SOURCE)
   list(APPEND CMAKE_REQUIRED_DEFINITIONS "-D_GNU_SOURCE")
+# enable 64bit off_t on 32bit systems using glibc
+  if (CMAKE_SIZEOF_VOID_P EQUAL 4)
+    add_compile_definitions(_FILE_OFFSET_BITS=64)
+    list(APPEND CMAKE_REQUIRED_DEFINITIONS "-D_FILE_OFFSET_BITS=64")
+  endif()
 endif()
-# This check requires _GNU_SOURCE
+
+# This check requires _GNU_SOURCE.
 if (NOT PURE_WINDOWS)
   if (LLVM_PTHREAD_LIB)
     list(APPEND CMAKE_REQUIRED_LIBRARIES ${LLVM_PTHREAD_LIB})
   endif()
   check_symbol_exists(pthread_getname_np pthread.h HAVE_PTHREAD_GETNAME_NP)
   check_symbol_exists(pthread_setname_np pthread.h HAVE_PTHREAD_SETNAME_NP)
+  check_symbol_exists(pthread_get_name_np "pthread.h;pthread_np.h" HAVE_PTHREAD_GET_NAME_NP)
+  check_symbol_exists(pthread_set_name_np "pthread.h;pthread_np.h" HAVE_PTHREAD_SET_NAME_NP)
   if (LLVM_PTHREAD_LIB)
     list(REMOVE_ITEM CMAKE_REQUIRED_LIBRARIES ${LLVM_PTHREAD_LIB})
+  endif()
+endif()
+
+# This check requires _GNU_SOURCE.
+if( HAVE_DLFCN_H )
+  if( HAVE_LIBDL )
+    list(APPEND CMAKE_REQUIRED_LIBRARIES dl)
+  endif()
+  check_symbol_exists(dlopen dlfcn.h HAVE_DLOPEN)
+  check_symbol_exists(dladdr dlfcn.h HAVE_DLADDR)
+  if( HAVE_LIBDL )
+    list(REMOVE_ITEM CMAKE_REQUIRED_LIBRARIES dl)
   endif()
 endif()
 
@@ -405,15 +415,18 @@ if( LLVM_ENABLE_PIC )
   set(ENABLE_PIC 1)
 else()
   set(ENABLE_PIC 0)
-  check_cxx_compiler_flag("-fno-pie" SUPPORTS_NO_PIE_FLAG)
-  if(SUPPORTS_NO_PIE_FLAG)
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fno-pie")
-  endif()
+  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fno-pie")
 endif()
 
-check_cxx_compiler_flag("-Wvariadic-macros" SUPPORTS_VARIADIC_MACROS_FLAG)
-check_cxx_compiler_flag("-Wgnu-zero-variadic-macro-arguments"
-                        SUPPORTS_GNU_ZERO_VARIADIC_MACRO_ARGUMENTS_FLAG)
+set(SUPPORTS_VARIADIC_MACROS_FLAG 0)
+if (LLVM_COMPILER_IS_GCC_COMPATIBLE)
+  set(SUPPORTS_VARIADIC_MACROS_FLAG 1)
+endif()
+if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  set(SUPPORTS_GNU_ZERO_VARIADIC_MACRO_ARGUMENTS_FLAG 1)
+else()
+  set(SUPPORTS_GNU_ZERO_VARIADIC_MACRO_ARGUMENTS_FLAG 0)
+endif()
 
 set(USE_NO_MAYBE_UNINITIALIZED 0)
 set(USE_NO_UNINITIALIZED 0)
@@ -421,16 +434,17 @@ set(USE_NO_UNINITIALIZED 0)
 # Disable gcc's potentially uninitialized use analysis as it presents lots of
 # false positives.
 if (CMAKE_COMPILER_IS_GNUCXX)
-  check_cxx_compiler_flag("-Wmaybe-uninitialized" HAS_MAYBE_UNINITIALIZED)
-  if (HAS_MAYBE_UNINITIALIZED)
-    set(USE_NO_MAYBE_UNINITIALIZED 1)
+  # Disable all -Wuninitialized warning for old GCC versions.
+  if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS 12.0)
+    set(USE_NO_UNINITIALIZED 1)
   else()
-    # Only recent versions of gcc make the distinction between -Wuninitialized
-    # and -Wmaybe-uninitialized. If -Wmaybe-uninitialized isn't supported, just
-    # turn off all uninitialized use warnings.
-    check_cxx_compiler_flag("-Wuninitialized" HAS_UNINITIALIZED)
-    set(USE_NO_UNINITIALIZED ${HAS_UNINITIALIZED})
+    set(USE_NO_MAYBE_UNINITIALIZED 1)
   endif()
+endif()
+
+if(LLVM_INCLUDE_TESTS)
+  include(GetErrcMessages)
+  get_errc_messages(LLVM_LIT_ERRC_MESSAGES)
 endif()
 
 # By default, we target the host, but this can be overridden at CMake
@@ -440,6 +454,7 @@ get_host_triple(LLVM_INFERRED_HOST_TRIPLE)
 
 set(LLVM_HOST_TRIPLE "${LLVM_INFERRED_HOST_TRIPLE}" CACHE STRING
     "Host on which LLVM binaries will run")
+message(STATUS "LLVM host triple: ${LLVM_HOST_TRIPLE}")
 
 # Determine the native architecture.
 string(TOLOWER "${LLVM_TARGET_ARCH}" LLVM_NATIVE_ARCH)
@@ -505,8 +520,7 @@ foreach (NATIVE_KEYWORD host Native)
   endif()
 endforeach()
 
-list(FIND LLVM_TARGETS_TO_BUILD ${LLVM_NATIVE_ARCH} NATIVE_ARCH_IDX)
-if (NATIVE_ARCH_IDX EQUAL -1)
+if (NOT ${LLVM_NATIVE_ARCH} IN_LIST LLVM_TARGETS_TO_BUILD)
   message(STATUS
     "Native target ${LLVM_NATIVE_ARCH} is not selected; lli will not JIT code")
 else ()
@@ -622,15 +636,30 @@ if(CMAKE_GENERATOR MATCHES "Ninja" AND
 endif()
 
 if(CMAKE_HOST_APPLE AND APPLE)
-  if(NOT CMAKE_XCRUN)
-    find_program(CMAKE_XCRUN NAMES xcrun)
-  endif()
-  if(CMAKE_XCRUN)
-    execute_process(COMMAND ${CMAKE_XCRUN} -find ld
-      OUTPUT_VARIABLE LD64_EXECUTABLE
-      OUTPUT_STRIP_TRAILING_WHITESPACE)
-  else()
-    find_program(LD64_EXECUTABLE NAMES ld DOC "The ld64 linker")
+  if(NOT LD64_EXECUTABLE)
+    if(NOT CMAKE_XCRUN)
+      find_program(CMAKE_XCRUN NAMES xcrun)
+    endif()
+
+    # First, check if there's ld-classic, which is ld64 in newer SDKs.
+    if(CMAKE_XCRUN)
+      execute_process(COMMAND ${CMAKE_XCRUN} -find ld-classic
+        OUTPUT_VARIABLE LD64_EXECUTABLE
+        OUTPUT_STRIP_TRAILING_WHITESPACE)
+    else()
+      find_program(LD64_EXECUTABLE NAMES ld-classic DOC "The ld64 linker")
+    endif()
+
+    # Otherwise look for ld directly.
+    if(NOT LD64_EXECUTABLE)
+        if(CMAKE_XCRUN)
+          execute_process(COMMAND ${CMAKE_XCRUN} -find ld
+            OUTPUT_VARIABLE LD64_EXECUTABLE
+            OUTPUT_STRIP_TRAILING_WHITESPACE)
+        else()
+          find_program(LD64_EXECUTABLE NAMES ld DOC "The ld64 linker")
+        endif()
+    endif()
   endif()
 
   if(LD64_EXECUTABLE)

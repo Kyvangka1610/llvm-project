@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "polly/CodeGen/LoopGeneratorsKMP.h"
+#include "llvm/Analysis/LoopInfo.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Module.h"
 
@@ -81,7 +82,7 @@ Function *ParallelLoopGeneratorKMP::prepareSubFnDefinition(Function *F) const {
                                    LongType,
                                    LongType,
                                    LongType,
-                                   Builder.getInt8PtrTy()};
+                                   Builder.getPtrTy()};
 
   FunctionType *FT = FunctionType::get(Builder.getVoidTy(), Arguments, false);
   Function *SubFn = Function::Create(FT, Function::InternalLinkage,
@@ -135,21 +136,20 @@ ParallelLoopGeneratorKMP::createSubFn(Value *SequentialLoopStride,
   Function *SubFn = createSubFnDefinition();
   LLVMContext &Context = SubFn->getContext();
 
-  // Store the previous basic block.
-  BasicBlock *PrevBB = Builder.GetInsertBlock();
-
   // Create basic blocks.
   BasicBlock *HeaderBB = BasicBlock::Create(Context, "polly.par.setup", SubFn);
+  SubFnDT = std::make_unique<DominatorTree>(*SubFn);
+  SubFnLI = std::make_unique<LoopInfo>(*SubFnDT);
+
   BasicBlock *ExitBB = BasicBlock::Create(Context, "polly.par.exit", SubFn);
   BasicBlock *CheckNextBB =
       BasicBlock::Create(Context, "polly.par.checkNext", SubFn);
   BasicBlock *PreHeaderBB =
       BasicBlock::Create(Context, "polly.par.loadIVBounds", SubFn);
 
-  DT.addNewBlock(HeaderBB, PrevBB);
-  DT.addNewBlock(ExitBB, HeaderBB);
-  DT.addNewBlock(CheckNextBB, HeaderBB);
-  DT.addNewBlock(PreHeaderBB, HeaderBB);
+  SubFnDT->addNewBlock(ExitBB, HeaderBB);
+  SubFnDT->addNewBlock(CheckNextBB, HeaderBB);
+  SubFnDT->addNewBlock(PreHeaderBB, HeaderBB);
 
   // Fill up basic block HeaderBB.
   Builder.SetInsertPoint(HeaderBB);
@@ -175,11 +175,7 @@ ParallelLoopGeneratorKMP::createSubFn(Value *SequentialLoopStride,
   std::advance(AI, 1);
   Value *Shared = &*AI;
 
-  Value *UserContext = Builder.CreateBitCast(Shared, StructData->getType(),
-                                             "polly.par.userContext");
-
-  extractValuesFromStruct(Data, StructData->getAllocatedType(), UserContext,
-                          Map);
+  extractValuesFromStruct(Data, StructData->getAllocatedType(), Shared, Map);
 
   const auto Alignment = llvm::Align(is64BitArch() ? 8 : 4);
   Value *ID = Builder.CreateAlignedLoad(Builder.getInt32Ty(), IDPtr, Alignment,
@@ -295,8 +291,8 @@ ParallelLoopGeneratorKMP::createSubFn(Value *SequentialLoopStride,
   Builder.CreateBr(CheckNextBB);
   Builder.SetInsertPoint(&*--Builder.GetInsertPoint());
   BasicBlock *AfterBB;
-  Value *IV = createLoop(LB, UB, SequentialLoopStride, Builder, LI, DT, AfterBB,
-                         ICmpInst::ICMP_SLE, nullptr, true,
+  Value *IV = createLoop(LB, UB, SequentialLoopStride, Builder, *SubFnLI,
+                         *SubFnDT, AfterBB, ICmpInst::ICMP_SLE, nullptr, true,
                          /* UseGuard */ false);
 
   BasicBlock::iterator LoopBody = Builder.GetInsertPoint();
@@ -310,6 +306,10 @@ ParallelLoopGeneratorKMP::createSubFn(Value *SequentialLoopStride,
   }
   Builder.CreateRetVoid();
   Builder.SetInsertPoint(&*LoopBody);
+
+  // FIXME: Call SubFnDT->verify() and SubFnLI->verify() to check that the
+  // DominatorTree/LoopInfo has been created correctly. Alternatively, recreate
+  // from scratch since it is not needed here directly.
 
   return std::make_tuple(IV, SubFn);
 }
@@ -516,7 +516,7 @@ GlobalVariable *ParallelLoopGeneratorKMP::createSourceLocation() {
     if (!IdentTy) {
       Type *LocMembers[] = {Builder.getInt32Ty(), Builder.getInt32Ty(),
                             Builder.getInt32Ty(), Builder.getInt32Ty(),
-                            Builder.getInt8PtrTy()};
+                            Builder.getPtrTy()};
 
       IdentTy =
           StructType::create(M->getContext(), LocMembers, StructName, false);

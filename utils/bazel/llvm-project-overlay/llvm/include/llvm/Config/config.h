@@ -73,7 +73,7 @@
 #define HAVE_DLOPEN 1
 
 /* Define if dladdr() is available on this platform. */
-/* #undef HAVE_DLADDR */
+#define HAVE_DLADDR 1
 
 /* Define to 1 if we can register EH frames on this platform. */
 /* HAVE_REGISTER_FRAME defined in Bazel*/
@@ -141,12 +141,6 @@
 /* Define to 1 if you have the `pthread_setname_np' function. */
 #define HAVE_PTHREAD_SETNAME_NP 1
 
-/* Define to 1 if you have the <link.h> header file. */
-/* HAVE_LINK_H defined in Bazel */
-
-/* Define to 1 if you have the `lseek64' function. */
-/* HAVE_LSEEK64 defined in Bazel */
-
 /* Define to 1 if you have the <mach/mach.h> header file. */
 /* HAVE_MACH_MACH_H defined in Bazel */
 
@@ -192,9 +186,6 @@
 /* Define to 1 if you have the <signal.h> header file. */
 #define HAVE_SIGNAL_H 1
 
-/* Define to 1 if you have the `strerror' function. */
-#define HAVE_STRERROR 1
-
 /* Define to 1 if you have the `strerror_r' function. */
 /* HAVE_STRERROR_R defined in Bazel */
 
@@ -206,9 +197,6 @@
 
 /* Define to 1 if you have the <sys/mman.h> header file. */
 #define HAVE_SYS_MMAN_H 1
-
-/* Define to 1 if you have the <sys/param.h> header file. */
-#define HAVE_SYS_PARAM_H 1
 
 /* Define to 1 if you have the <sys/resource.h> header file. */
 #define HAVE_SYS_RESOURCE_H 1
@@ -224,12 +212,6 @@
 
 /* Define to 1 if stat struct has st_mtim member. */
 /* HAVE_STRUCT_STAT_ST_MTIM_TV_NSEC defined in Bazel */
-
-/* Define to 1 if you have the <sys/types.h> header file. */
-#define HAVE_SYS_TYPES_H 1
-
-/* Define if the setupterm() function is supported this platform. */
-/* LLVM_ENABLE_TERMINFO defined in Bazel */
 
 /* Define to 1 if you have the <termios.h> header file. */
 #define HAVE_TERMIOS_H 1
@@ -311,6 +293,9 @@
 
 /* Whether tools show host and target info when invoked with --version */
 #define LLVM_VERSION_PRINTER_SHOW_HOST_TARGET_INFO 1
+
+/* Whether tools show optional build config flags when invoked with --version */
+#define LLVM_VERSION_PRINTER_SHOW_BUILD_CONFIG 1
 
 /* Define if libxml2 is supported on this platform. */
 /* #undef LLVM_ENABLE_LIBXML2 */

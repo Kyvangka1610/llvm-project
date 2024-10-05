@@ -4,10 +4,10 @@
 ; RUN: llc -mtriple=amdgcn--amdhsa -mcpu=kaveri -mattr=-flat-for-global -verify-machineinstrs < %s | FileCheck -check-prefix=GFX7 %s
 
 
-define amdgpu_kernel void @s_pack_v2f16(i32 addrspace(4)* %in0, i32 addrspace(4)* %in1) #0 {
+define amdgpu_kernel void @s_pack_v2f16(ptr addrspace(4) %in0, ptr addrspace(4) %in1) #0 {
 ; GFX9-LABEL: s_pack_v2f16:
 ; GFX9:       ; %bb.0:
-; GFX9-NEXT:    s_load_dwordx4 s[0:3], s[4:5], 0x0
+; GFX9-NEXT:    s_load_dwordx4 s[0:3], s[6:7], 0x0
 ; GFX9-NEXT:    s_waitcnt lgkmcnt(0)
 ; GFX9-NEXT:    s_load_dword s4, s[0:1], 0x0
 ; GFX9-NEXT:    s_load_dword s5, s[2:3], 0x0
@@ -20,7 +20,7 @@ define amdgpu_kernel void @s_pack_v2f16(i32 addrspace(4)* %in0, i32 addrspace(4)
 ;
 ; GFX8-LABEL: s_pack_v2f16:
 ; GFX8:       ; %bb.0:
-; GFX8-NEXT:    s_load_dwordx4 s[0:3], s[4:5], 0x0
+; GFX8-NEXT:    s_load_dwordx4 s[0:3], s[6:7], 0x0
 ; GFX8-NEXT:    s_waitcnt lgkmcnt(0)
 ; GFX8-NEXT:    s_load_dword s0, s[0:1], 0x0
 ; GFX8-NEXT:    s_load_dword s1, s[2:3], 0x0
@@ -35,7 +35,7 @@ define amdgpu_kernel void @s_pack_v2f16(i32 addrspace(4)* %in0, i32 addrspace(4)
 ;
 ; GFX7-LABEL: s_pack_v2f16:
 ; GFX7:       ; %bb.0:
-; GFX7-NEXT:    s_load_dwordx4 s[0:3], s[4:5], 0x0
+; GFX7-NEXT:    s_load_dwordx4 s[0:3], s[6:7], 0x0
 ; GFX7-NEXT:    s_waitcnt lgkmcnt(0)
 ; GFX7-NEXT:    s_load_dword s0, s[0:1], 0x0
 ; GFX7-NEXT:    s_load_dword s1, s[2:3], 0x0
@@ -47,8 +47,8 @@ define amdgpu_kernel void @s_pack_v2f16(i32 addrspace(4)* %in0, i32 addrspace(4)
 ; GFX7-NEXT:    ; use s0
 ; GFX7-NEXT:    ;;#ASMEND
 ; GFX7-NEXT:    s_endpgm
-  %val0 = load volatile i32, i32 addrspace(4)* %in0
-  %val1 = load volatile i32, i32 addrspace(4)* %in1
+  %val0 = load volatile i32, ptr addrspace(4) %in0
+  %val1 = load volatile i32, ptr addrspace(4) %in1
   %lo.i = trunc i32 %val0 to i16
   %hi.i = trunc i32 %val1 to i16
   %lo = bitcast i16 %lo.i to half
@@ -61,10 +61,10 @@ define amdgpu_kernel void @s_pack_v2f16(i32 addrspace(4)* %in0, i32 addrspace(4)
   ret void
 }
 
-define amdgpu_kernel void @s_pack_v2f16_imm_lo(i32 addrspace(4)* %in1) #0 {
+define amdgpu_kernel void @s_pack_v2f16_imm_lo(ptr addrspace(4) %in1) #0 {
 ; GFX9-LABEL: s_pack_v2f16_imm_lo:
 ; GFX9:       ; %bb.0:
-; GFX9-NEXT:    s_load_dwordx2 s[0:1], s[4:5], 0x0
+; GFX9-NEXT:    s_load_dwordx2 s[0:1], s[6:7], 0x0
 ; GFX9-NEXT:    s_waitcnt lgkmcnt(0)
 ; GFX9-NEXT:    s_load_dword s0, s[0:1], 0x0
 ; GFX9-NEXT:    s_waitcnt lgkmcnt(0)
@@ -76,7 +76,7 @@ define amdgpu_kernel void @s_pack_v2f16_imm_lo(i32 addrspace(4)* %in1) #0 {
 ;
 ; GFX8-LABEL: s_pack_v2f16_imm_lo:
 ; GFX8:       ; %bb.0:
-; GFX8-NEXT:    s_load_dwordx2 s[0:1], s[4:5], 0x0
+; GFX8-NEXT:    s_load_dwordx2 s[0:1], s[6:7], 0x0
 ; GFX8-NEXT:    s_waitcnt lgkmcnt(0)
 ; GFX8-NEXT:    s_load_dword s0, s[0:1], 0x0
 ; GFX8-NEXT:    s_waitcnt lgkmcnt(0)
@@ -89,7 +89,7 @@ define amdgpu_kernel void @s_pack_v2f16_imm_lo(i32 addrspace(4)* %in1) #0 {
 ;
 ; GFX7-LABEL: s_pack_v2f16_imm_lo:
 ; GFX7:       ; %bb.0:
-; GFX7-NEXT:    s_load_dwordx2 s[0:1], s[4:5], 0x0
+; GFX7-NEXT:    s_load_dwordx2 s[0:1], s[6:7], 0x0
 ; GFX7-NEXT:    s_waitcnt lgkmcnt(0)
 ; GFX7-NEXT:    s_load_dword s0, s[0:1], 0x0
 ; GFX7-NEXT:    s_waitcnt lgkmcnt(0)
@@ -99,7 +99,7 @@ define amdgpu_kernel void @s_pack_v2f16_imm_lo(i32 addrspace(4)* %in1) #0 {
 ; GFX7-NEXT:    ; use s0
 ; GFX7-NEXT:    ;;#ASMEND
 ; GFX7-NEXT:    s_endpgm
-  %val1 = load i32, i32 addrspace(4)* %in1
+  %val1 = load i32, ptr addrspace(4) %in1
   %hi.i = trunc i32 %val1 to i16
   %hi = bitcast i16 %hi.i to half
   %vec.0 = insertelement <2 x half> undef, half 0xH1234, i32 0
@@ -110,10 +110,10 @@ define amdgpu_kernel void @s_pack_v2f16_imm_lo(i32 addrspace(4)* %in1) #0 {
   ret void
 }
 
-define amdgpu_kernel void @s_pack_v2f16_imm_hi(i32 addrspace(4)* %in0) #0 {
+define amdgpu_kernel void @s_pack_v2f16_imm_hi(ptr addrspace(4) %in0) #0 {
 ; GFX9-LABEL: s_pack_v2f16_imm_hi:
 ; GFX9:       ; %bb.0:
-; GFX9-NEXT:    s_load_dwordx2 s[0:1], s[4:5], 0x0
+; GFX9-NEXT:    s_load_dwordx2 s[0:1], s[6:7], 0x0
 ; GFX9-NEXT:    s_waitcnt lgkmcnt(0)
 ; GFX9-NEXT:    s_load_dword s0, s[0:1], 0x0
 ; GFX9-NEXT:    s_waitcnt lgkmcnt(0)
@@ -125,7 +125,7 @@ define amdgpu_kernel void @s_pack_v2f16_imm_hi(i32 addrspace(4)* %in0) #0 {
 ;
 ; GFX8-LABEL: s_pack_v2f16_imm_hi:
 ; GFX8:       ; %bb.0:
-; GFX8-NEXT:    s_load_dwordx2 s[0:1], s[4:5], 0x0
+; GFX8-NEXT:    s_load_dwordx2 s[0:1], s[6:7], 0x0
 ; GFX8-NEXT:    s_waitcnt lgkmcnt(0)
 ; GFX8-NEXT:    s_load_dword s0, s[0:1], 0x0
 ; GFX8-NEXT:    s_waitcnt lgkmcnt(0)
@@ -138,7 +138,7 @@ define amdgpu_kernel void @s_pack_v2f16_imm_hi(i32 addrspace(4)* %in0) #0 {
 ;
 ; GFX7-LABEL: s_pack_v2f16_imm_hi:
 ; GFX7:       ; %bb.0:
-; GFX7-NEXT:    s_load_dwordx2 s[0:1], s[4:5], 0x0
+; GFX7-NEXT:    s_load_dwordx2 s[0:1], s[6:7], 0x0
 ; GFX7-NEXT:    s_waitcnt lgkmcnt(0)
 ; GFX7-NEXT:    s_load_dword s0, s[0:1], 0x0
 ; GFX7-NEXT:    s_waitcnt lgkmcnt(0)
@@ -148,7 +148,7 @@ define amdgpu_kernel void @s_pack_v2f16_imm_hi(i32 addrspace(4)* %in0) #0 {
 ; GFX7-NEXT:    ; use s0
 ; GFX7-NEXT:    ;;#ASMEND
 ; GFX7-NEXT:    s_endpgm
-  %val0 = load i32, i32 addrspace(4)* %in0
+  %val0 = load i32, ptr addrspace(4) %in0
   %lo.i = trunc i32 %val0 to i16
   %lo = bitcast i16 %lo.i to half
   %vec.0 = insertelement <2 x half> undef, half %lo, i32 0
@@ -159,10 +159,10 @@ define amdgpu_kernel void @s_pack_v2f16_imm_hi(i32 addrspace(4)* %in0) #0 {
   ret void
 }
 
-define amdgpu_kernel void @v_pack_v2f16(i32 addrspace(1)* %in0, i32 addrspace(1)* %in1) #0 {
+define amdgpu_kernel void @v_pack_v2f16(ptr addrspace(1) %in0, ptr addrspace(1) %in1) #0 {
 ; GFX9-LABEL: v_pack_v2f16:
 ; GFX9:       ; %bb.0:
-; GFX9-NEXT:    s_load_dwordx4 s[0:3], s[4:5], 0x0
+; GFX9-NEXT:    s_load_dwordx4 s[0:3], s[6:7], 0x0
 ; GFX9-NEXT:    v_lshlrev_b32_e32 v0, 2, v0
 ; GFX9-NEXT:    s_waitcnt lgkmcnt(0)
 ; GFX9-NEXT:    global_load_dword v1, v0, s[0:1] glc
@@ -178,7 +178,7 @@ define amdgpu_kernel void @v_pack_v2f16(i32 addrspace(1)* %in0, i32 addrspace(1)
 ;
 ; GFX8-LABEL: v_pack_v2f16:
 ; GFX8:       ; %bb.0:
-; GFX8-NEXT:    s_load_dwordx4 s[0:3], s[4:5], 0x0
+; GFX8-NEXT:    s_load_dwordx4 s[0:3], s[6:7], 0x0
 ; GFX8-NEXT:    v_lshlrev_b32_e32 v2, 2, v0
 ; GFX8-NEXT:    s_waitcnt lgkmcnt(0)
 ; GFX8-NEXT:    v_mov_b32_e32 v1, s1
@@ -191,8 +191,8 @@ define amdgpu_kernel void @v_pack_v2f16(i32 addrspace(1)* %in0, i32 addrspace(1)
 ; GFX8-NEXT:    s_waitcnt vmcnt(0)
 ; GFX8-NEXT:    flat_load_dword v1, v[2:3] glc
 ; GFX8-NEXT:    s_waitcnt vmcnt(0)
-; GFX8-NEXT:    v_lshlrev_b32_e32 v1, 16, v1
-; GFX8-NEXT:    v_or_b32_sdwa v0, v0, v1 dst_sel:DWORD dst_unused:UNUSED_PAD src0_sel:WORD_0 src1_sel:DWORD
+; GFX8-NEXT:    s_mov_b32 s0, 0x1000504
+; GFX8-NEXT:    v_perm_b32 v0, v0, v1, s0
 ; GFX8-NEXT:    ;;#ASMSTART
 ; GFX8-NEXT:    ; use v0
 ; GFX8-NEXT:    ;;#ASMEND
@@ -200,7 +200,7 @@ define amdgpu_kernel void @v_pack_v2f16(i32 addrspace(1)* %in0, i32 addrspace(1)
 ;
 ; GFX7-LABEL: v_pack_v2f16:
 ; GFX7:       ; %bb.0:
-; GFX7-NEXT:    s_load_dwordx4 s[0:3], s[4:5], 0x0
+; GFX7-NEXT:    s_load_dwordx4 s[0:3], s[6:7], 0x0
 ; GFX7-NEXT:    s_mov_b32 s7, 0x100f000
 ; GFX7-NEXT:    s_mov_b32 s6, 0
 ; GFX7-NEXT:    v_lshlrev_b32_e32 v0, 2, v0
@@ -222,10 +222,10 @@ define amdgpu_kernel void @v_pack_v2f16(i32 addrspace(1)* %in0, i32 addrspace(1)
 ; GFX7-NEXT:    s_endpgm
   %tid = call i32 @llvm.amdgcn.workitem.id.x()
   %tid.ext = sext i32 %tid to i64
-  %in0.gep = getelementptr inbounds i32, i32 addrspace(1)* %in0, i64 %tid.ext
-  %in1.gep = getelementptr inbounds i32, i32 addrspace(1)* %in1, i64 %tid.ext
-  %val0 = load volatile i32, i32 addrspace(1)* %in0.gep
-  %val1 = load volatile i32, i32 addrspace(1)* %in1.gep
+  %in0.gep = getelementptr inbounds i32, ptr addrspace(1) %in0, i64 %tid.ext
+  %in1.gep = getelementptr inbounds i32, ptr addrspace(1) %in1, i64 %tid.ext
+  %val0 = load volatile i32, ptr addrspace(1) %in0.gep
+  %val1 = load volatile i32, ptr addrspace(1) %in1.gep
   %lo.i = trunc i32 %val0 to i16
   %hi.i = trunc i32 %val1 to i16
   %lo = bitcast i16 %lo.i to half
@@ -237,10 +237,10 @@ define amdgpu_kernel void @v_pack_v2f16(i32 addrspace(1)* %in0, i32 addrspace(1)
   ret void
 }
 
-define amdgpu_kernel void @v_pack_v2f16_user(i32 addrspace(1)* %in0, i32 addrspace(1)* %in1) #0 {
+define amdgpu_kernel void @v_pack_v2f16_user(ptr addrspace(1) %in0, ptr addrspace(1) %in1) #0 {
 ; GFX9-LABEL: v_pack_v2f16_user:
 ; GFX9:       ; %bb.0:
-; GFX9-NEXT:    s_load_dwordx4 s[0:3], s[4:5], 0x0
+; GFX9-NEXT:    s_load_dwordx4 s[0:3], s[6:7], 0x0
 ; GFX9-NEXT:    v_lshlrev_b32_e32 v0, 2, v0
 ; GFX9-NEXT:    s_waitcnt lgkmcnt(0)
 ; GFX9-NEXT:    global_load_dword v1, v0, s[0:1] glc
@@ -258,7 +258,7 @@ define amdgpu_kernel void @v_pack_v2f16_user(i32 addrspace(1)* %in0, i32 addrspa
 ;
 ; GFX8-LABEL: v_pack_v2f16_user:
 ; GFX8:       ; %bb.0:
-; GFX8-NEXT:    s_load_dwordx4 s[0:3], s[4:5], 0x0
+; GFX8-NEXT:    s_load_dwordx4 s[0:3], s[6:7], 0x0
 ; GFX8-NEXT:    v_lshlrev_b32_e32 v2, 2, v0
 ; GFX8-NEXT:    s_waitcnt lgkmcnt(0)
 ; GFX8-NEXT:    v_mov_b32_e32 v1, s1
@@ -271,10 +271,10 @@ define amdgpu_kernel void @v_pack_v2f16_user(i32 addrspace(1)* %in0, i32 addrspa
 ; GFX8-NEXT:    s_waitcnt vmcnt(0)
 ; GFX8-NEXT:    flat_load_dword v1, v[2:3] glc
 ; GFX8-NEXT:    s_waitcnt vmcnt(0)
+; GFX8-NEXT:    s_mov_b32 s0, 0x1000504
 ; GFX8-NEXT:    s_mov_b32 s3, 0x1100f000
 ; GFX8-NEXT:    s_mov_b32 s2, -1
-; GFX8-NEXT:    v_lshlrev_b32_e32 v1, 16, v1
-; GFX8-NEXT:    v_or_b32_sdwa v0, v0, v1 dst_sel:DWORD dst_unused:UNUSED_PAD src0_sel:WORD_0 src1_sel:DWORD
+; GFX8-NEXT:    v_perm_b32 v0, v0, v1, s0
 ; GFX8-NEXT:    v_add_u32_e32 v0, vcc, 9, v0
 ; GFX8-NEXT:    buffer_store_dword v0, off, s[0:3], 0
 ; GFX8-NEXT:    s_waitcnt vmcnt(0)
@@ -282,7 +282,7 @@ define amdgpu_kernel void @v_pack_v2f16_user(i32 addrspace(1)* %in0, i32 addrspa
 ;
 ; GFX7-LABEL: v_pack_v2f16_user:
 ; GFX7:       ; %bb.0:
-; GFX7-NEXT:    s_load_dwordx4 s[0:3], s[4:5], 0x0
+; GFX7-NEXT:    s_load_dwordx4 s[0:3], s[6:7], 0x0
 ; GFX7-NEXT:    s_mov_b32 s6, 0
 ; GFX7-NEXT:    s_mov_b32 s7, 0x100f000
 ; GFX7-NEXT:    v_lshlrev_b32_e32 v0, 2, v0
@@ -305,10 +305,10 @@ define amdgpu_kernel void @v_pack_v2f16_user(i32 addrspace(1)* %in0, i32 addrspa
 ; GFX7-NEXT:    s_endpgm
   %tid = call i32 @llvm.amdgcn.workitem.id.x()
   %tid.ext = sext i32 %tid to i64
-  %in0.gep = getelementptr inbounds i32, i32 addrspace(1)* %in0, i64 %tid.ext
-  %in1.gep = getelementptr inbounds i32, i32 addrspace(1)* %in1, i64 %tid.ext
-  %val0 = load volatile i32, i32 addrspace(1)* %in0.gep
-  %val1 = load volatile i32, i32 addrspace(1)* %in1.gep
+  %in0.gep = getelementptr inbounds i32, ptr addrspace(1) %in0, i64 %tid.ext
+  %in1.gep = getelementptr inbounds i32, ptr addrspace(1) %in1, i64 %tid.ext
+  %val0 = load volatile i32, ptr addrspace(1) %in0.gep
+  %val1 = load volatile i32, ptr addrspace(1) %in1.gep
   %lo.i = trunc i32 %val0 to i16
   %hi.i = trunc i32 %val1 to i16
   %lo = bitcast i16 %lo.i to half
@@ -317,14 +317,14 @@ define amdgpu_kernel void @v_pack_v2f16_user(i32 addrspace(1)* %in0, i32 addrspa
   %vec.1 = insertelement <2 x half> %vec.0, half %hi, i32 1
   %vec.i32 = bitcast <2 x half> %vec.1 to i32
   %foo = add i32 %vec.i32, 9
-  store volatile i32 %foo, i32 addrspace(1)* undef
+  store volatile i32 %foo, ptr addrspace(1) undef
   ret void
 }
 
-define amdgpu_kernel void @v_pack_v2f16_imm_lo(i32 addrspace(1)* %in1) #0 {
+define amdgpu_kernel void @v_pack_v2f16_imm_lo(ptr addrspace(1) %in1) #0 {
 ; GFX9-LABEL: v_pack_v2f16_imm_lo:
 ; GFX9:       ; %bb.0:
-; GFX9-NEXT:    s_load_dwordx2 s[0:1], s[4:5], 0x0
+; GFX9-NEXT:    s_load_dwordx2 s[0:1], s[6:7], 0x0
 ; GFX9-NEXT:    v_lshlrev_b32_e32 v0, 2, v0
 ; GFX9-NEXT:    v_mov_b32_e32 v1, 0x5040100
 ; GFX9-NEXT:    s_waitcnt lgkmcnt(0)
@@ -339,7 +339,7 @@ define amdgpu_kernel void @v_pack_v2f16_imm_lo(i32 addrspace(1)* %in1) #0 {
 ;
 ; GFX8-LABEL: v_pack_v2f16_imm_lo:
 ; GFX8:       ; %bb.0:
-; GFX8-NEXT:    s_load_dwordx2 s[0:1], s[4:5], 0x0
+; GFX8-NEXT:    s_load_dwordx2 s[0:1], s[6:7], 0x0
 ; GFX8-NEXT:    v_lshlrev_b32_e32 v0, 2, v0
 ; GFX8-NEXT:    s_waitcnt lgkmcnt(0)
 ; GFX8-NEXT:    v_mov_b32_e32 v1, s1
@@ -356,7 +356,7 @@ define amdgpu_kernel void @v_pack_v2f16_imm_lo(i32 addrspace(1)* %in1) #0 {
 ;
 ; GFX7-LABEL: v_pack_v2f16_imm_lo:
 ; GFX7:       ; %bb.0:
-; GFX7-NEXT:    s_load_dwordx2 s[0:1], s[4:5], 0x0
+; GFX7-NEXT:    s_load_dwordx2 s[0:1], s[6:7], 0x0
 ; GFX7-NEXT:    s_mov_b32 s3, 0x100f000
 ; GFX7-NEXT:    s_mov_b32 s2, 0
 ; GFX7-NEXT:    v_lshlrev_b32_e32 v0, 2, v0
@@ -372,8 +372,8 @@ define amdgpu_kernel void @v_pack_v2f16_imm_lo(i32 addrspace(1)* %in1) #0 {
 ; GFX7-NEXT:    s_endpgm
   %tid = call i32 @llvm.amdgcn.workitem.id.x()
   %tid.ext = sext i32 %tid to i64
-  %in1.gep = getelementptr inbounds i32, i32 addrspace(1)* %in1, i64 %tid.ext
-  %val1 = load volatile i32, i32 addrspace(1)* %in1.gep
+  %in1.gep = getelementptr inbounds i32, ptr addrspace(1) %in1, i64 %tid.ext
+  %val1 = load volatile i32, ptr addrspace(1) %in1.gep
   %hi.i = trunc i32 %val1 to i16
   %hi = bitcast i16 %hi.i to half
   %vec.0 = insertelement <2 x half> undef, half 0xH1234, i32 0
@@ -383,10 +383,10 @@ define amdgpu_kernel void @v_pack_v2f16_imm_lo(i32 addrspace(1)* %in1) #0 {
   ret void
 }
 
-define amdgpu_kernel void @v_pack_v2f16_inline_imm_lo(i32 addrspace(1)* %in1) #0 {
+define amdgpu_kernel void @v_pack_v2f16_inline_imm_lo(ptr addrspace(1) %in1) #0 {
 ; GFX9-LABEL: v_pack_v2f16_inline_imm_lo:
 ; GFX9:       ; %bb.0:
-; GFX9-NEXT:    s_load_dwordx2 s[0:1], s[4:5], 0x0
+; GFX9-NEXT:    s_load_dwordx2 s[0:1], s[6:7], 0x0
 ; GFX9-NEXT:    v_lshlrev_b32_e32 v0, 2, v0
 ; GFX9-NEXT:    v_mov_b32_e32 v1, 0x5040100
 ; GFX9-NEXT:    s_waitcnt lgkmcnt(0)
@@ -401,7 +401,7 @@ define amdgpu_kernel void @v_pack_v2f16_inline_imm_lo(i32 addrspace(1)* %in1) #0
 ;
 ; GFX8-LABEL: v_pack_v2f16_inline_imm_lo:
 ; GFX8:       ; %bb.0:
-; GFX8-NEXT:    s_load_dwordx2 s[0:1], s[4:5], 0x0
+; GFX8-NEXT:    s_load_dwordx2 s[0:1], s[6:7], 0x0
 ; GFX8-NEXT:    v_lshlrev_b32_e32 v0, 2, v0
 ; GFX8-NEXT:    s_waitcnt lgkmcnt(0)
 ; GFX8-NEXT:    v_mov_b32_e32 v1, s1
@@ -418,7 +418,7 @@ define amdgpu_kernel void @v_pack_v2f16_inline_imm_lo(i32 addrspace(1)* %in1) #0
 ;
 ; GFX7-LABEL: v_pack_v2f16_inline_imm_lo:
 ; GFX7:       ; %bb.0:
-; GFX7-NEXT:    s_load_dwordx2 s[0:1], s[4:5], 0x0
+; GFX7-NEXT:    s_load_dwordx2 s[0:1], s[6:7], 0x0
 ; GFX7-NEXT:    s_mov_b32 s3, 0x100f000
 ; GFX7-NEXT:    s_mov_b32 s2, 0
 ; GFX7-NEXT:    v_lshlrev_b32_e32 v0, 2, v0
@@ -434,8 +434,8 @@ define amdgpu_kernel void @v_pack_v2f16_inline_imm_lo(i32 addrspace(1)* %in1) #0
 ; GFX7-NEXT:    s_endpgm
   %tid = call i32 @llvm.amdgcn.workitem.id.x()
   %tid.ext = sext i32 %tid to i64
-  %in1.gep = getelementptr inbounds i32, i32 addrspace(1)* %in1, i64 %tid.ext
-  %val1 = load volatile i32, i32 addrspace(1)* %in1.gep
+  %in1.gep = getelementptr inbounds i32, ptr addrspace(1) %in1, i64 %tid.ext
+  %val1 = load volatile i32, ptr addrspace(1) %in1.gep
   %hi.i = trunc i32 %val1 to i16
   %hi = bitcast i16 %hi.i to half
   %vec.0 = insertelement <2 x half> undef, half 4.0, i32 0
@@ -445,10 +445,10 @@ define amdgpu_kernel void @v_pack_v2f16_inline_imm_lo(i32 addrspace(1)* %in1) #0
   ret void
 }
 
-define amdgpu_kernel void @v_pack_v2f16_imm_hi(i32 addrspace(1)* %in0) #0 {
+define amdgpu_kernel void @v_pack_v2f16_imm_hi(ptr addrspace(1) %in0) #0 {
 ; GFX9-LABEL: v_pack_v2f16_imm_hi:
 ; GFX9:       ; %bb.0:
-; GFX9-NEXT:    s_load_dwordx2 s[0:1], s[4:5], 0x0
+; GFX9-NEXT:    s_load_dwordx2 s[0:1], s[6:7], 0x0
 ; GFX9-NEXT:    v_lshlrev_b32_e32 v0, 2, v0
 ; GFX9-NEXT:    v_mov_b32_e32 v1, 0x5040100
 ; GFX9-NEXT:    s_waitcnt lgkmcnt(0)
@@ -463,7 +463,7 @@ define amdgpu_kernel void @v_pack_v2f16_imm_hi(i32 addrspace(1)* %in0) #0 {
 ;
 ; GFX8-LABEL: v_pack_v2f16_imm_hi:
 ; GFX8:       ; %bb.0:
-; GFX8-NEXT:    s_load_dwordx2 s[0:1], s[4:5], 0x0
+; GFX8-NEXT:    s_load_dwordx2 s[0:1], s[6:7], 0x0
 ; GFX8-NEXT:    v_lshlrev_b32_e32 v0, 2, v0
 ; GFX8-NEXT:    s_waitcnt lgkmcnt(0)
 ; GFX8-NEXT:    v_mov_b32_e32 v1, s1
@@ -480,7 +480,7 @@ define amdgpu_kernel void @v_pack_v2f16_imm_hi(i32 addrspace(1)* %in0) #0 {
 ;
 ; GFX7-LABEL: v_pack_v2f16_imm_hi:
 ; GFX7:       ; %bb.0:
-; GFX7-NEXT:    s_load_dwordx2 s[0:1], s[4:5], 0x0
+; GFX7-NEXT:    s_load_dwordx2 s[0:1], s[6:7], 0x0
 ; GFX7-NEXT:    s_mov_b32 s3, 0x100f000
 ; GFX7-NEXT:    s_mov_b32 s2, 0
 ; GFX7-NEXT:    v_lshlrev_b32_e32 v0, 2, v0
@@ -496,8 +496,8 @@ define amdgpu_kernel void @v_pack_v2f16_imm_hi(i32 addrspace(1)* %in0) #0 {
 ; GFX7-NEXT:    s_endpgm
   %tid = call i32 @llvm.amdgcn.workitem.id.x()
   %tid.ext = sext i32 %tid to i64
-  %in0.gep = getelementptr inbounds i32, i32 addrspace(1)* %in0, i64 %tid.ext
-  %val0 = load volatile i32, i32 addrspace(1)* %in0.gep
+  %in0.gep = getelementptr inbounds i32, ptr addrspace(1) %in0, i64 %tid.ext
+  %val0 = load volatile i32, ptr addrspace(1) %in0.gep
   %lo.i = trunc i32 %val0 to i16
   %lo = bitcast i16 %lo.i to half
   %vec.0 = insertelement <2 x half> undef, half %lo, i32 0
@@ -507,10 +507,10 @@ define amdgpu_kernel void @v_pack_v2f16_imm_hi(i32 addrspace(1)* %in0) #0 {
   ret void
 }
 
-define amdgpu_kernel void @v_pack_v2f16_inline_f16imm_hi(i32 addrspace(1)* %in0) #0 {
+define amdgpu_kernel void @v_pack_v2f16_inline_f16imm_hi(ptr addrspace(1) %in0) #0 {
 ; GFX9-LABEL: v_pack_v2f16_inline_f16imm_hi:
 ; GFX9:       ; %bb.0:
-; GFX9-NEXT:    s_load_dwordx2 s[0:1], s[4:5], 0x0
+; GFX9-NEXT:    s_load_dwordx2 s[0:1], s[6:7], 0x0
 ; GFX9-NEXT:    v_lshlrev_b32_e32 v0, 2, v0
 ; GFX9-NEXT:    v_mov_b32_e32 v1, 0x5040100
 ; GFX9-NEXT:    s_waitcnt lgkmcnt(0)
@@ -525,7 +525,7 @@ define amdgpu_kernel void @v_pack_v2f16_inline_f16imm_hi(i32 addrspace(1)* %in0)
 ;
 ; GFX8-LABEL: v_pack_v2f16_inline_f16imm_hi:
 ; GFX8:       ; %bb.0:
-; GFX8-NEXT:    s_load_dwordx2 s[0:1], s[4:5], 0x0
+; GFX8-NEXT:    s_load_dwordx2 s[0:1], s[6:7], 0x0
 ; GFX8-NEXT:    v_lshlrev_b32_e32 v0, 2, v0
 ; GFX8-NEXT:    s_waitcnt lgkmcnt(0)
 ; GFX8-NEXT:    v_mov_b32_e32 v1, s1
@@ -542,7 +542,7 @@ define amdgpu_kernel void @v_pack_v2f16_inline_f16imm_hi(i32 addrspace(1)* %in0)
 ;
 ; GFX7-LABEL: v_pack_v2f16_inline_f16imm_hi:
 ; GFX7:       ; %bb.0:
-; GFX7-NEXT:    s_load_dwordx2 s[0:1], s[4:5], 0x0
+; GFX7-NEXT:    s_load_dwordx2 s[0:1], s[6:7], 0x0
 ; GFX7-NEXT:    s_mov_b32 s3, 0x100f000
 ; GFX7-NEXT:    s_mov_b32 s2, 0
 ; GFX7-NEXT:    v_lshlrev_b32_e32 v0, 2, v0
@@ -558,8 +558,8 @@ define amdgpu_kernel void @v_pack_v2f16_inline_f16imm_hi(i32 addrspace(1)* %in0)
 ; GFX7-NEXT:    s_endpgm
   %tid = call i32 @llvm.amdgcn.workitem.id.x()
   %tid.ext = sext i32 %tid to i64
-  %in0.gep = getelementptr inbounds i32, i32 addrspace(1)* %in0, i64 %tid.ext
-  %val0 = load volatile i32, i32 addrspace(1)* %in0.gep
+  %in0.gep = getelementptr inbounds i32, ptr addrspace(1) %in0, i64 %tid.ext
+  %val0 = load volatile i32, ptr addrspace(1) %in0.gep
   %lo.i = trunc i32 %val0 to i16
   %lo = bitcast i16 %lo.i to half
   %vec.0 = insertelement <2 x half> undef, half %lo, i32 0
@@ -569,10 +569,10 @@ define amdgpu_kernel void @v_pack_v2f16_inline_f16imm_hi(i32 addrspace(1)* %in0)
   ret void
 }
 
-define amdgpu_kernel void @v_pack_v2f16_inline_imm_hi(i32 addrspace(1)* %in0) #0 {
+define amdgpu_kernel void @v_pack_v2f16_inline_imm_hi(ptr addrspace(1) %in0) #0 {
 ; GFX9-LABEL: v_pack_v2f16_inline_imm_hi:
 ; GFX9:       ; %bb.0:
-; GFX9-NEXT:    s_load_dwordx2 s[0:1], s[4:5], 0x0
+; GFX9-NEXT:    s_load_dwordx2 s[0:1], s[6:7], 0x0
 ; GFX9-NEXT:    v_lshlrev_b32_e32 v0, 2, v0
 ; GFX9-NEXT:    v_mov_b32_e32 v1, 0x5040100
 ; GFX9-NEXT:    s_waitcnt lgkmcnt(0)
@@ -586,7 +586,7 @@ define amdgpu_kernel void @v_pack_v2f16_inline_imm_hi(i32 addrspace(1)* %in0) #0
 ;
 ; GFX8-LABEL: v_pack_v2f16_inline_imm_hi:
 ; GFX8:       ; %bb.0:
-; GFX8-NEXT:    s_load_dwordx2 s[0:1], s[4:5], 0x0
+; GFX8-NEXT:    s_load_dwordx2 s[0:1], s[6:7], 0x0
 ; GFX8-NEXT:    v_lshlrev_b32_e32 v0, 2, v0
 ; GFX8-NEXT:    s_waitcnt lgkmcnt(0)
 ; GFX8-NEXT:    v_mov_b32_e32 v1, s1
@@ -603,7 +603,7 @@ define amdgpu_kernel void @v_pack_v2f16_inline_imm_hi(i32 addrspace(1)* %in0) #0
 ;
 ; GFX7-LABEL: v_pack_v2f16_inline_imm_hi:
 ; GFX7:       ; %bb.0:
-; GFX7-NEXT:    s_load_dwordx2 s[0:1], s[4:5], 0x0
+; GFX7-NEXT:    s_load_dwordx2 s[0:1], s[6:7], 0x0
 ; GFX7-NEXT:    s_mov_b32 s3, 0x100f000
 ; GFX7-NEXT:    s_mov_b32 s2, 0
 ; GFX7-NEXT:    v_lshlrev_b32_e32 v0, 2, v0
@@ -619,8 +619,8 @@ define amdgpu_kernel void @v_pack_v2f16_inline_imm_hi(i32 addrspace(1)* %in0) #0
 ; GFX7-NEXT:    s_endpgm
   %tid = call i32 @llvm.amdgcn.workitem.id.x()
   %tid.ext = sext i32 %tid to i64
-  %in0.gep = getelementptr inbounds i32, i32 addrspace(1)* %in0, i64 %tid.ext
-  %val0 = load volatile i32, i32 addrspace(1)* %in0.gep
+  %in0.gep = getelementptr inbounds i32, ptr addrspace(1) %in0, i64 %tid.ext
+  %val0 = load volatile i32, ptr addrspace(1) %in0.gep
   %lo.i = trunc i32 %val0 to i16
   %lo = bitcast i16 %lo.i to half
   %vec.0 = insertelement <2 x half> undef, half %lo, i32 0

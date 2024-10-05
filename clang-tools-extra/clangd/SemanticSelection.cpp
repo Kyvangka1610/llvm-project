@@ -11,9 +11,6 @@
 #include "Protocol.h"
 #include "Selection.h"
 #include "SourceCode.h"
-#include "clang-pseudo/Bracket.h"
-#include "clang-pseudo/DirectiveTree.h"
-#include "clang-pseudo/Token.h"
 #include "clang/AST/DeclBase.h"
 #include "clang/Basic/SourceLocation.h"
 #include "clang/Basic/SourceManager.h"
@@ -25,6 +22,10 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Error.h"
+#include "support/Bracket.h"
+#include "support/DirectiveTree.h"
+#include "support/Token.h"
+#include <optional>
 #include <queue>
 #include <vector>
 
@@ -40,15 +41,15 @@ void addIfDistinct(const Range &R, std::vector<Range> &Result) {
   }
 }
 
-llvm::Optional<FoldingRange> toFoldingRange(SourceRange SR,
-                                            const SourceManager &SM) {
+std::optional<FoldingRange> toFoldingRange(SourceRange SR,
+                                           const SourceManager &SM) {
   const auto Begin = SM.getDecomposedLoc(SR.getBegin()),
              End = SM.getDecomposedLoc(SR.getEnd());
   // Do not produce folding ranges if either range ends is not within the main
   // file. Macros have their own FileID so this also checks if locations are not
   // within the macros.
   if ((Begin.first != SM.getMainFileID()) || (End.first != SM.getMainFileID()))
-    return llvm::None;
+    return std::nullopt;
   FoldingRange Range;
   Range.startCharacter = SM.getColumnNumber(Begin.first, Begin.second) - 1;
   Range.startLine = SM.getLineNumber(Begin.first, Begin.second) - 1;
@@ -57,7 +58,7 @@ llvm::Optional<FoldingRange> toFoldingRange(SourceRange SR,
   return Range;
 }
 
-llvm::Optional<FoldingRange>
+std::optional<FoldingRange>
 extractFoldingRange(const syntax::Node *Node,
                     const syntax::TokenBufferTokenManager &TM) {
   if (const auto *Stmt = dyn_cast<syntax::CompoundStatement>(Node)) {
@@ -69,7 +70,7 @@ extractFoldingRange(const syntax::Node *Node,
     const auto *RBrace = cast_or_null<syntax::Leaf>(
         Stmt->findChild(syntax::NodeRole::CloseParen));
     if (!LBrace || !RBrace)
-      return llvm::None;
+      return std::nullopt;
     // Fold the entire range within braces, including whitespace.
     const SourceLocation LBraceLocInfo =
                              TM.getToken(LBrace->getTokenKey())->endLocation(),
@@ -82,7 +83,7 @@ extractFoldingRange(const syntax::Node *Node,
     if (Range && Range->startLine != Range->endLine)
       return Range;
   }
-  return llvm::None;
+  return std::nullopt;
 }
 
 // Traverse the tree and collect folding ranges along the way.
@@ -153,7 +154,7 @@ llvm::Expected<SelectionRange> getSemanticRanges(ParsedAST &AST, Position Pos) {
   Head.range = std::move(Ranges.front());
   SelectionRange *Tail = &Head;
   for (auto &Range :
-       llvm::makeMutableArrayRef(Ranges.data(), Ranges.size()).drop_front()) {
+       llvm::MutableArrayRef(Ranges.data(), Ranges.size()).drop_front()) {
     Tail->parent = std::make_unique<SelectionRange>();
     Tail = Tail->parent.get();
     Tail->range = std::move(Range);
@@ -180,16 +181,16 @@ llvm::Expected<std::vector<FoldingRange>> getFoldingRanges(ParsedAST &AST) {
 // Related issue: https://github.com/clangd/clangd/issues/310
 llvm::Expected<std::vector<FoldingRange>>
 getFoldingRanges(const std::string &Code, bool LineFoldingOnly) {
-  auto OrigStream = pseudo::lex(Code, clang::pseudo::genericLangOpts());
+  auto OrigStream = lex(Code, genericLangOpts());
 
-  auto DirectiveStructure = pseudo::DirectiveTree::parse(OrigStream);
-  pseudo::chooseConditionalBranches(DirectiveStructure, OrigStream);
+  auto DirectiveStructure = DirectiveTree::parse(OrigStream);
+  chooseConditionalBranches(DirectiveStructure, OrigStream);
 
   // FIXME: Provide ranges in the disabled-PP regions as well.
   auto Preprocessed = DirectiveStructure.stripDirectives(OrigStream);
 
-  auto ParseableStream = cook(Preprocessed, clang::pseudo::genericLangOpts());
-  pseudo::pairBrackets(ParseableStream);
+  auto ParseableStream = cook(Preprocessed, genericLangOpts());
+  pairBrackets(ParseableStream);
 
   std::vector<FoldingRange> Result;
   auto AddFoldingRange = [&](Position Start, Position End,
@@ -204,19 +205,19 @@ getFoldingRanges(const std::string &Code, bool LineFoldingOnly) {
     FR.kind = Kind.str();
     Result.push_back(FR);
   };
-  auto OriginalToken = [&](const pseudo::Token &T) {
+  auto OriginalToken = [&](const Token &T) {
     return OrigStream.tokens()[T.OriginalIndex];
   };
-  auto StartOffset = [&](const pseudo::Token &T) {
+  auto StartOffset = [&](const Token &T) {
     return OriginalToken(T).text().data() - Code.data();
   };
-  auto StartPosition = [&](const pseudo::Token &T) {
+  auto StartPosition = [&](const Token &T) {
     return offsetToPosition(Code, StartOffset(T));
   };
-  auto EndOffset = [&](const pseudo::Token &T) {
+  auto EndOffset = [&](const Token &T) {
     return StartOffset(T) + OriginalToken(T).Length;
   };
-  auto EndPosition = [&](const pseudo::Token &T) {
+  auto EndPosition = [&](const Token &T) {
     return offsetToPosition(Code, EndOffset(T));
   };
   auto Tokens = ParseableStream.tokens();
@@ -234,7 +235,7 @@ getFoldingRanges(const std::string &Code, bool LineFoldingOnly) {
       }
     }
   }
-  auto IsBlockComment = [&](const pseudo::Token &T) {
+  auto IsBlockComment = [&](const Token &T) {
     assert(T.Kind == tok::comment);
     return OriginalToken(T).Length >= 2 &&
            Code.substr(StartOffset(T), 2) == "/*";
@@ -245,10 +246,10 @@ getFoldingRanges(const std::string &Code, bool LineFoldingOnly) {
       T++;
       continue;
     }
-    pseudo::Token *FirstComment = T;
+    Token *FirstComment = T;
     // Show starting sentinals (// and /*) of the comment.
     Position Start = offsetToPosition(Code, 2 + StartOffset(*FirstComment));
-    pseudo::Token *LastComment = T;
+    Token *LastComment = T;
     Position End = EndPosition(*T);
     while (T != Tokens.end() && T->Kind == tok::comment &&
            StartPosition(*T).line <= End.line + 1) {

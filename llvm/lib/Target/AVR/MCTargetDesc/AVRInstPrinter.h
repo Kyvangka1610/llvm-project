@@ -26,14 +26,14 @@ public:
                  const MCRegisterInfo &MRI)
       : MCInstPrinter(MAI, MII, MRI) {}
 
-  static const char *getPrettyRegisterName(unsigned RegNo,
+  static const char *getPrettyRegisterName(MCRegister Reg,
                                            MCRegisterInfo const &MRI);
 
   void printInst(const MCInst *MI, uint64_t Address, StringRef Annot,
                  const MCSubtargetInfo &STI, raw_ostream &O) override;
 
 private:
-  static const char *getRegisterName(unsigned RegNo,
+  static const char *getRegisterName(MCRegister Reg,
                                      unsigned AltIdx = AVR::NoRegAltName);
 
   void printOperand(const MCInst *MI, unsigned OpNo, raw_ostream &O);

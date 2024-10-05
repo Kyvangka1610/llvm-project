@@ -1,3 +1,6 @@
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${LIBC_TARGET_OS})
+  add_subdirectory(${LIBC_TARGET_OS})
+endif()
 add_custom_target(stdio-integration-tests)
 add_dependencies(libc-integration-tests stdio-integration-tests)
 
@@ -9,8 +12,6 @@ add_integration_test(
     stdio-integration-tests
   SRCS
     sprintf_size_test.cpp
-  LOADER
-    libc.loader.linux.crt1
   DEPENDS
     libc.src.stdio.sprintf
   ARGS
@@ -26,8 +27,6 @@ add_integration_test(
     stdio-integration-tests
   SRCS
     sprintf_size_test.cpp
-  LOADER
-    libc.loader.linux.crt1
   ARGS
     "%s %c %d"
     "First arg"

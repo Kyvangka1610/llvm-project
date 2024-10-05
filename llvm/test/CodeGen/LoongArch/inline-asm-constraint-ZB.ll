@@ -1,6 +1,6 @@
-; RUN: llc --mtriple=loongarch64 --verify-machineinstrs < %s \
+; RUN: llc --mtriple=loongarch64 -mattr=+d --verify-machineinstrs < %s \
 ; RUN:   | FileCheck %s --check-prefix=ASM
-; RUN: llc --mtriple=loongarch64 --print-after-isel -o /dev/null 2>&1 < %s \
+; RUN: llc --mtriple=loongarch64 -mattr=+d --print-after-isel -o /dev/null 2>&1 < %s \
 ; RUN:   | FileCheck %s --check-prefix=MACHINE-INSTR
 
 ;; Note amswap.w is not available on loongarch32.
@@ -45,5 +45,18 @@ define void @ZB_variable_offset(ptr %p, i32 signext %idx) nounwind {
 ;; Make sure machine instr with this "ZB" constraint is printed correctly.
 ; MACHINE-INSTR: INLINEASM{{.*}}[mem:ZB]
   call void asm "amswap.w $$r12, $$r13, $0", "*^ZB"(ptr elementtype(i32) %1)
+  ret void
+}
+
+define void @ZB_Input_Output(ptr %p) nounwind {
+; ASM-LABEL: ZB_Input_Output:
+; ASM:       # %bb.0:
+; ASM-NEXT:    #APP
+; ASM-NEXT:    amadd_db.d $zero, $t1, $a0
+; ASM-NEXT:    #NO_APP
+; ASM-NEXT:    ret
+;; Make sure machine instr with this "ZB" constraint is printed correctly.
+; MACHINE-INSTR: INLINEASM{{.*}}[mem:ZB], %0:gpr, 0
+  call void asm "amadd_db.d $$zero, $$r13, $0", "=*^ZB,*^ZB,~{memory}"(ptr elementtype(i64) %p, ptr elementtype(i64) %p)
   ret void
 }

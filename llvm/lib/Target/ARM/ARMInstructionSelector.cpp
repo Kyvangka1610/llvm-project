@@ -13,8 +13,8 @@
 #include "ARMRegisterBankInfo.h"
 #include "ARMSubtarget.h"
 #include "ARMTargetMachine.h"
+#include "llvm/CodeGen/GlobalISel/GIMatchTableExecutorImpl.h"
 #include "llvm/CodeGen/GlobalISel/InstructionSelector.h"
-#include "llvm/CodeGen/GlobalISel/InstructionSelectorImpl.h"
 #include "llvm/CodeGen/MachineConstantPool.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/IR/IntrinsicsARM.h"
@@ -142,6 +142,8 @@ private:
                        int OpIdx = -1) const;
   void renderVFPF64Imm(MachineInstrBuilder &New, const MachineInstr &Old,
                        int OpIdx = -1) const;
+  void renderInvertedImm(MachineInstrBuilder &MIB, const MachineInstr &MI,
+                         int OpIdx = -1) const;
 
 #define GET_GLOBALISEL_PREDICATES_DECL
 #include "ARMGenGlobalISel.inc"
@@ -212,7 +214,7 @@ static bool selectCopy(MachineInstr &I, const TargetInstrInfo &TII,
                        MachineRegisterInfo &MRI, const TargetRegisterInfo &TRI,
                        const RegisterBankInfo &RBI) {
   Register DstReg = I.getOperand(0).getReg();
-  if (Register::isPhysicalRegister(DstReg))
+  if (DstReg.isPhysical())
     return true;
 
   const TargetRegisterClass *RC = guessRegClass(DstReg, MRI, TRI, RBI);
@@ -833,6 +835,15 @@ void ARMInstructionSelector::renderVFPF64Imm(
   assert(FPImmEncoding != -1 && "Invalid immediate value");
 
   NewInstBuilder.addImm(FPImmEncoding);
+}
+
+void ARMInstructionSelector::renderInvertedImm(MachineInstrBuilder &MIB,
+                                               const MachineInstr &MI,
+                                               int OpIdx) const {
+  assert(MI.getOpcode() == TargetOpcode::G_CONSTANT && OpIdx == -1 &&
+         "Expected G_CONSTANT");
+  int64_t CVal = MI.getOperand(1).getCImm()->getSExtValue();
+  MIB.addImm(~CVal);
 }
 
 bool ARMInstructionSelector::select(MachineInstr &I) {

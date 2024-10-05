@@ -4,17 +4,16 @@ add_llvm_library(LLVMBOLTPasses
   AllocCombiner.cpp
   AsmDump.cpp
   BinaryPasses.cpp
-  BinaryFunctionCallGraph.cpp
   CMOVConversion.cpp
   CacheMetrics.cpp
-  CallGraph.cpp
-  CallGraphWalker.cpp
   DataflowAnalysis.cpp
   DataflowInfoManager.cpp
   FrameAnalysis.cpp
   FrameOptimizer.cpp
+  FixRelaxationPass.cpp
+  FixRISCVCallsPass.cpp
   HFSort.cpp
-  HFSortPlus.cpp
+  Hugify.cpp
   IdenticalCodeFolding.cpp
   IndirectCallPromotion.cpp
   Inliner.cpp
@@ -55,6 +54,7 @@ add_llvm_library(LLVMBOLTPasses
   AsmPrinter
   MC
   Support
+  TargetParser
   TransformUtils
   )
 

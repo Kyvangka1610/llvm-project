@@ -32,9 +32,12 @@ Using Clang as a Compiler
    UndefinedBehaviorSanitizer
    DataFlowSanitizer
    LeakSanitizer
+   RealtimeSanitizer
    SanitizerCoverage
    SanitizerStats
    SanitizerSpecialCaseList
+   BoundsSafety
+   BoundsSafetyImplPlans
    ControlFlowIntegrity
    LTOVisibility
    SafeStack
@@ -47,10 +50,12 @@ Using Clang as a Compiler
    OpenCLSupport
    OpenMPSupport
    SYCLSupport
+   HIPSupport
    HLSL/HLSLDocs
    ThinLTO
    APINotes
    DebuggingCoroutines
+   AMDGPUSupport
    CommandGuide/index
    FAQ
 
@@ -64,6 +69,7 @@ Using Clang as a Library
    ExternalClangExamples
    IntroductionToTheClangAST
    LibTooling
+   LibClang
    LibFormat
    ClangPlugins
    RAVFrontendAction
@@ -87,10 +93,10 @@ Using Clang Tools
    ClangFormatStyleOptions
    ClangFormattedStatus
    ClangLinkerWrapper
-   ClangNvlinkWrapper
+   ClangNVLinkWrapper
    ClangOffloadBundler
-   ClangOffloadWrapper
    ClangOffloadPackager
+   ClangRepl
 
 Design Documents
 ================
@@ -101,6 +107,7 @@ Design Documents
    CodeOwners
    InternalsManual
    DriverInternals
+   Multilib
    OffloadingDesign
    PCHInternals
    ItaniumMangleAbiTags
@@ -112,6 +119,5 @@ Indices and tables
 ==================
 
 * :ref:`genindex`
-* :ref:`modindex`
 * :ref:`search`
 

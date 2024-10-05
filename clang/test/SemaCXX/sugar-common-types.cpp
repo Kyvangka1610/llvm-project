@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -fsyntax-only -verify %s -std=c++20 -fenable-matrix -triple i686-pc-win32
+// RUN: %clang_cc1 -fsyntax-only -verify %s -std=c++20 -x objective-c++ -fobjc-arc -fenable-matrix -triple i686-pc-win32
 
 enum class N {};
 
@@ -90,13 +90,6 @@ N t19 = 0 ? (__underlying_type(EnumsX::X)){} : (__underlying_type(EnumsY::Y)){};
 N t20 = 0 ? (__underlying_type(EnumsX::X)){} : (__underlying_type(EnumsY::X)){};
 // expected-error@-1 {{rvalue of type '__underlying_type(Enums::X)' (aka 'int')}}
 
-using SBTF1 = SS1 [[clang::btf_type_tag("1")]];
-using SBTF2 = ::SS1 [[clang::btf_type_tag("1")]];
-using SBTF3 = ::SS1 [[clang::btf_type_tag("2")]];
-
-N t21 = 0 ? (SBTF1){} : (SBTF3){}; // expected-error {{from 'SS1'}}
-N t22 = 0 ? (SBTF1){} : (SBTF2){}; // expected-error {{from 'SS1 btf_type_tag(1)' (aka 'SS1')}}
-
 using QX = const SB1 *;
 using QY = const ::SB1 *;
 N t23 = 0 ? (QX){} : (QY){}; // expected-error {{rvalue of type 'const SB1 *' (aka 'const SS1 *')}}
@@ -131,3 +124,25 @@ using UPY1 = C::type1;
 auto t32 = 0 ? (UPX1){} : (UPY1){};
 N t33 = t32;  // expected-error {{lvalue of type 'C::type1' (aka 'int *')}}
 N t34 = *t32; // expected-error {{lvalue of type 'B1' (aka 'int')}}
+
+// See https://github.com/llvm/llvm-project/issues/61419
+namespace PR61419 {
+  template <class T0, class T1> struct pair {
+    T0 first;
+    T1 second;
+  };
+
+  extern const pair<id, id> p;
+  id t = false ? p.first : p.second;
+} // namespace PR61419
+
+namespace GH67603 {
+  template <class> using A = long;
+  template <class B> void h() {
+    using C = B;
+    using D = B;
+    N t = 0 ? A<decltype(C())>() : A<decltype(D())>();
+    // expected-error@-1 {{rvalue of type 'A<decltype(C())>' (aka 'long')}}
+  }
+  template void h<int>();
+} // namespace GH67603

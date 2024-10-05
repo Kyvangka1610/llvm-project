@@ -250,8 +250,7 @@ bool Filler::delayHasHazard(MachineBasicBlock::iterator candidate,
       return true;
   }
 
-  for (unsigned i = 0, e = candidate->getNumOperands(); i!= e; ++i) {
-    const MachineOperand &MO = candidate->getOperand(i);
+  for (const MachineOperand &MO : candidate->operands()) {
     if (!MO.isReg())
       continue; // skip
 
@@ -283,6 +282,20 @@ bool Filler::delayHasHazard(MachineBasicBlock::iterator candidate,
       Opcode >=  SP::FDIVD && Opcode <= SP::FSQRTD)
     return true;
 
+  if (Subtarget->fixTN0009() && candidate->mayStore())
+    return true;
+
+  if (Subtarget->fixTN0013()) {
+    switch (Opcode) {
+    case SP::FDIVS:
+    case SP::FDIVD:
+    case SP::FSQRTS:
+    case SP::FSQRTD:
+      return true;
+    default:
+      break;
+    }
+  }
 
   return false;
 }

@@ -72,16 +72,16 @@ define void @test_smax(i32 %x) {
   ret void
 }
 
-define void @test_abs1(i32* %p) {
+define void @test_abs1(ptr %p) {
 ; CHECK-LABEL: @test_abs1(
-; CHECK-NEXT:    [[X:%.*]] = load i32, i32* [[P:%.*]], align 4, !range [[RNG0:![0-9]+]]
+; CHECK-NEXT:    [[X:%.*]] = load i32, ptr [[P:%.*]], align 4, !range [[RNG0:![0-9]+]]
 ; CHECK-NEXT:    [[A:%.*]] = call i32 @llvm.abs.i32(i32 [[X]], i1 true)
 ; CHECK-NEXT:    call void @use(i1 true)
 ; CHECK-NEXT:    [[C2:%.*]] = icmp ult i32 [[A]], 15
 ; CHECK-NEXT:    call void @use(i1 [[C2]])
 ; CHECK-NEXT:    ret void
 ;
-  %x = load i32, i32* %p, !range !{i32 -15, i32 10}
+  %x = load i32, ptr %p, !range !{i32 -15, i32 10}
   %a = call i32 @llvm.abs.i32(i32 %x, i1 false)
   %c1 = icmp ule i32 %a, 15
   call void @use(i1 %c1)

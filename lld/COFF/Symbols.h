@@ -22,13 +22,6 @@
 
 namespace lld {
 
-std::string toString(coff::Symbol &b);
-
-// There are two different ways to convert an Archive::Symbol to a string:
-// One for Microsoft name mangling and one for Itanium name mangling.
-// Call the functions toCOFFString and toELFString, not just toString.
-std::string toCOFFString(const coff::Archive::Symbol &b);
-
 namespace coff {
 
 using llvm::object::Archive;
@@ -37,6 +30,7 @@ using llvm::object::coff_import_header;
 using llvm::object::coff_symbol_generic;
 
 class ArchiveFile;
+class COFFLinkerContext;
 class InputFile;
 class ObjFile;
 class SymbolTable;
@@ -104,15 +98,15 @@ protected:
   friend SymbolTable;
   explicit Symbol(Kind k, StringRef n = "")
       : symbolKind(k), isExternal(true), isCOMDAT(false),
-        writtenToSymtab(false), pendingArchiveLoad(false), isGCRoot(false),
-        isRuntimePseudoReloc(false), deferUndefined(false), canInline(true),
-        isWeak(false), nameSize(n.size()),
-        nameData(n.empty() ? nullptr : n.data()) {
+        writtenToSymtab(false), isUsedInRegularObj(false),
+        pendingArchiveLoad(false), isGCRoot(false), isRuntimePseudoReloc(false),
+        deferUndefined(false), canInline(true), isWeak(false),
+        nameSize(n.size()), nameData(n.empty() ? nullptr : n.data()) {
     assert((!n.empty() || k <= LastDefinedCOFFKind) &&
            "If the name is empty, the Symbol must be a DefinedCOFF.");
   }
 
-  const unsigned symbolKind : 8;
+  unsigned symbolKind : 8;
   unsigned isExternal : 1;
 
 public:
@@ -250,37 +244,33 @@ private:
 // Absolute symbols.
 class DefinedAbsolute : public Defined {
 public:
-  DefinedAbsolute(StringRef n, COFFSymbolRef s)
-      : Defined(DefinedAbsoluteKind, n), va(s.getValue()) {
+  DefinedAbsolute(const COFFLinkerContext &c, StringRef n, COFFSymbolRef s)
+      : Defined(DefinedAbsoluteKind, n), va(s.getValue()), ctx(c) {
     isExternal = s.isExternal();
   }
 
-  DefinedAbsolute(StringRef n, uint64_t v)
-      : Defined(DefinedAbsoluteKind, n), va(v) {}
+  DefinedAbsolute(const COFFLinkerContext &c, StringRef n, uint64_t v)
+      : Defined(DefinedAbsoluteKind, n), va(v), ctx(c) {}
 
   static bool classof(const Symbol *s) {
     return s->kind() == DefinedAbsoluteKind;
   }
 
-  uint64_t getRVA() { return va - config->imageBase; }
+  uint64_t getRVA();
   void setVA(uint64_t v) { va = v; }
   uint64_t getVA() const { return va; }
 
-  // Section index relocations against absolute symbols resolve to
-  // this 16 bit number, and it is the largest valid section index
-  // plus one. This variable keeps it.
-  static uint16_t numOutputSections;
-
 private:
   uint64_t va;
+  const COFFLinkerContext &ctx;
 };
 
 // This symbol is used for linker-synthesized symbols like __ImageBase and
 // __safe_se_handler_table.
 class DefinedSynthetic : public Defined {
 public:
-  explicit DefinedSynthetic(StringRef name, Chunk *c)
-      : Defined(DefinedSyntheticKind, name), c(c) {}
+  explicit DefinedSynthetic(StringRef name, Chunk *c, uint32_t offset = 0)
+      : Defined(DefinedSyntheticKind, name), c(c), offset(offset) {}
 
   static bool classof(const Symbol *s) {
     return s->kind() == DefinedSyntheticKind;
@@ -288,11 +278,12 @@ public:
 
   // A null chunk indicates that this is __ImageBase. Otherwise, this is some
   // other synthesized chunk, like SEHTableChunk.
-  uint32_t getRVA() { return c ? c->getRVA() : 0; }
+  uint32_t getRVA() { return c ? c->getRVA() + offset : 0; }
   Chunk *getChunk() { return c; }
 
 private:
   Chunk *c;
+  uint32_t offset;
 };
 
 // This class represents a symbol defined in an archive file. It is
@@ -350,6 +341,9 @@ public:
   // symbol by searching the chain of fallback symbols. Returns the symbol if
   // successful, otherwise returns null.
   Defined *getWeakAlias();
+
+  // If this symbol is external weak, replace this object with aliased symbol.
+  bool resolveWeakAlias();
 };
 
 // Windows-specific classes.
@@ -360,23 +354,23 @@ public:
 // table in an output. The former has "__imp_" prefix.
 class DefinedImportData : public Defined {
 public:
-  DefinedImportData(StringRef n, ImportFile *f)
-      : Defined(DefinedImportDataKind, n), file(f) {
-  }
+  DefinedImportData(StringRef n, ImportFile *file, Chunk *&location)
+      : Defined(DefinedImportDataKind, n), file(file), location(location) {}
 
   static bool classof(const Symbol *s) {
     return s->kind() == DefinedImportDataKind;
   }
 
-  uint64_t getRVA() { return file->location->getRVA(); }
-  Chunk *getChunk() { return file->location; }
-  void setLocation(Chunk *addressTable) { file->location = addressTable; }
+  uint64_t getRVA() { return getChunk()->getRVA(); }
+  Chunk *getChunk() { return location; }
+  void setLocation(Chunk *addressTable) { location = addressTable; }
 
   StringRef getDLLName() { return file->dllName; }
   StringRef getExternalName() { return file->externalName; }
   uint16_t getOrdinal() { return file->hdr->OrdinalHint; }
 
   ImportFile *file;
+  Chunk *&location;
 
   // This is a pointer to the synthetic symbol associated with the load thunk
   // for this symbol that will be called if the DLL is delay-loaded. This is
@@ -393,19 +387,20 @@ public:
 // a regular name. A function pointer is given as a DefinedImportData.
 class DefinedImportThunk : public Defined {
 public:
-  DefinedImportThunk(StringRef name, DefinedImportData *s, uint16_t machine);
+  DefinedImportThunk(COFFLinkerContext &ctx, StringRef name,
+                     DefinedImportData *s, ImportThunkChunk *chunk);
 
   static bool classof(const Symbol *s) {
     return s->kind() == DefinedImportThunkKind;
   }
 
   uint64_t getRVA() { return data->getRVA(); }
-  Chunk *getChunk() { return data; }
+  ImportThunkChunk *getChunk() const { return data; }
 
   DefinedImportData *wrappedSym;
 
 private:
-  Chunk *data;
+  ImportThunkChunk *data;
 };
 
 // If you have a symbol "foo" in your object file, a symbol name
@@ -415,8 +410,9 @@ private:
 // This is here just for compatibility with MSVC.
 class DefinedLocalImport : public Defined {
 public:
-  DefinedLocalImport(StringRef n, Defined *s)
-      : Defined(DefinedLocalImportKind, n), data(make<LocalImportChunk>(s)) {}
+  DefinedLocalImport(COFFLinkerContext &ctx, StringRef n, Defined *s)
+      : Defined(DefinedLocalImportKind, n),
+        data(make<LocalImportChunk>(ctx, s)) {}
 
   static bool classof(const Symbol *s) {
     return s->kind() == DefinedLocalImportKind;
@@ -506,10 +502,16 @@ void replaceSymbol(Symbol *s, ArgT &&... arg) {
   assert(static_cast<Symbol *>(static_cast<T *>(nullptr)) == nullptr &&
          "Not a Symbol");
   bool canInline = s->canInline;
+  bool isUsedInRegularObj = s->isUsedInRegularObj;
   new (s) T(std::forward<ArgT>(arg)...);
   s->canInline = canInline;
+  s->isUsedInRegularObj = isUsedInRegularObj;
 }
 } // namespace coff
+
+std::string toString(const coff::COFFLinkerContext &ctx, coff::Symbol &b);
+std::string toCOFFString(const coff::COFFLinkerContext &ctx,
+                         const llvm::object::Archive::Symbol &b);
 
 } // namespace lld
 

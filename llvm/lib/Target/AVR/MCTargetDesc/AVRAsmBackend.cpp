@@ -13,6 +13,7 @@
 #include "MCTargetDesc/AVRAsmBackend.h"
 #include "MCTargetDesc/AVRFixupKinds.h"
 #include "MCTargetDesc/AVRMCTargetDesc.h"
+#include "llvm/ADT/StringSwitch.h"
 #include "llvm/MC/MCAsmBackend.h"
 #include "llvm/MC/MCAssembler.h"
 #include "llvm/MC/MCContext.h"
@@ -87,6 +88,9 @@ static void adjustBranch(unsigned Size, const MCFixup &Fixup, uint64_t &Value,
 /// Adjusts the value of a relative branch target before fixup application.
 static void adjustRelativeBranch(unsigned Size, const MCFixup &Fixup,
                                  uint64_t &Value, MCContext *Ctx = nullptr) {
+  // Jumps are relative to the current instruction.
+  Value -= 2;
+
   // We have one extra bit of precision because the value is rightshifted by
   // one.
   signed_width(Size + 1, Value, std::string("branch target"), Fixup, Ctx);
@@ -185,6 +189,16 @@ static void fixup_port6(const MCFixup &Fixup, uint64_t &Value,
   unsigned_width(6, Value, std::string("port number"), Fixup, Ctx);
 
   Value = ((Value & 0x30) << 5) | (Value & 0x0f);
+}
+
+/// 7-bit data space address fixup for the LDS/STS instructions on AVRTiny.
+///
+/// Resolves to:
+/// 1010 ikkk dddd kkkk
+static void fixup_lds_sts_16(const MCFixup &Fixup, uint64_t &Value,
+                             MCContext *Ctx = nullptr) {
+  unsigned_width(7, Value, std::string("immediate"), Fixup, Ctx);
+  Value = ((Value & 0x70) << 8) | (Value & 0x0f);
 }
 
 /// Adjusts a program memory address.
@@ -343,6 +357,10 @@ void AVRAsmBackend::adjustFixupValue(const MCFixup &Fixup,
     adjust::fixup_port6(Fixup, Value, Ctx);
     break;
 
+  case AVR::fixup_lds_sts_16:
+    adjust::fixup_lds_sts_16(Fixup, Value, Ctx);
+    break;
+
   // Fixups which do not require adjustments.
   case FK_Data_1:
   case FK_Data_2:
@@ -366,6 +384,8 @@ void AVRAsmBackend::applyFixup(const MCAssembler &Asm, const MCFixup &Fixup,
                                MutableArrayRef<char> Data, uint64_t Value,
                                bool IsResolved,
                                const MCSubtargetInfo *STI) const {
+  if (Fixup.getKind() >= FirstLiteralRelocationKind)
+    return;
   adjustFixupValue(Fixup, Target, Value, &Asm.getContext());
   if (Value == 0)
     return; // Doesn't change encoding.
@@ -388,6 +408,21 @@ void AVRAsmBackend::applyFixup(const MCAssembler &Asm, const MCFixup &Fixup,
     uint8_t mask = (((Value >> (i * 8)) & 0xff));
     Data[Offset + i] |= mask;
   }
+}
+
+std::optional<MCFixupKind> AVRAsmBackend::getFixupKind(StringRef Name) const {
+  unsigned Type;
+  Type = llvm::StringSwitch<unsigned>(Name)
+#define ELF_RELOC(X, Y) .Case(#X, Y)
+#include "llvm/BinaryFormat/ELFRelocs/AVR.def"
+#undef ELF_RELOC
+             .Case("BFD_RELOC_NONE", ELF::R_AVR_NONE)
+             .Case("BFD_RELOC_16", ELF::R_AVR_16)
+             .Case("BFD_RELOC_32", ELF::R_AVR_32)
+             .Default(-1u);
+  if (Type != -1u)
+    return static_cast<MCFixupKind>(FirstLiteralRelocationKind + Type);
+  return std::nullopt;
 }
 
 MCFixupKindInfo const &AVRAsmBackend::getFixupKindInfo(MCFixupKind Kind) const {
@@ -449,6 +484,11 @@ MCFixupKindInfo const &AVRAsmBackend::getFixupKindInfo(MCFixupKind Kind) const {
       {"fixup_port5", 3, 5, 0},
   };
 
+  // Fixup kinds from .reloc directive are like R_AVR_NONE. They do not require
+  // any extra processing.
+  if (Kind >= FirstLiteralRelocationKind)
+    return MCAsmBackend::getFixupKindInfo(FK_NONE);
+
   if (Kind < FirstTargetFixupKind)
     return MCAsmBackend::getFixupKindInfo(Kind);
 
@@ -471,13 +511,15 @@ bool AVRAsmBackend::writeNopData(raw_ostream &OS, uint64_t Count,
 
 bool AVRAsmBackend::shouldForceRelocation(const MCAssembler &Asm,
                                           const MCFixup &Fixup,
-                                          const MCValue &Target) {
+                                          const MCValue &Target,
+                                          const MCSubtargetInfo *STI) {
   switch ((unsigned)Fixup.getKind()) {
   default:
-    return false;
-  // Fixups which should always be recorded as relocations.
+    return Fixup.getKind() >= FirstLiteralRelocationKind;
   case AVR::fixup_7_pcrel:
   case AVR::fixup_13_pcrel:
+    // Always resolve relocations for PC-relative branches
+    return false;
   case AVR::fixup_call:
     return true;
   }

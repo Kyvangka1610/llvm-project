@@ -30,17 +30,12 @@ namespace llvm {
 
 class MipsDAGToDAGISel : public SelectionDAGISel {
 public:
-  explicit MipsDAGToDAGISel(MipsTargetMachine &TM, CodeGenOpt::Level OL)
+  MipsDAGToDAGISel() = delete;
+
+  explicit MipsDAGToDAGISel(MipsTargetMachine &TM, CodeGenOptLevel OL)
       : SelectionDAGISel(TM, OL), Subtarget(nullptr) {}
 
-  // Pass Name
-  StringRef getPassName() const override {
-    return "MIPS DAG->DAG Pattern Instruction Selection";
-  }
-
   bool runOnMachineFunction(MachineFunction &MF) override;
-
-  void getAnalysisUsage(AnalysisUsage &AU) const override;
 
 protected:
   SDNode *getGlobalBaseReg();
@@ -142,8 +137,16 @@ private:
   virtual void processFunctionAfterISel(MachineFunction &MF) = 0;
 
   bool SelectInlineAsmMemoryOperand(const SDValue &Op,
-                                    unsigned ConstraintID,
+                                    InlineAsm::ConstraintCode ConstraintID,
                                     std::vector<SDValue> &OutOps) override;
+  bool isUnneededShiftMask(SDNode *N, unsigned ShAmtBits) const;
+};
+
+class MipsDAGToDAGISelLegacy : public SelectionDAGISelLegacy {
+public:
+  static char ID;
+  MipsDAGToDAGISelLegacy(std::unique_ptr<SelectionDAGISel> S);
+  void getAnalysisUsage(AnalysisUsage &AU) const override;
 };
 }
 

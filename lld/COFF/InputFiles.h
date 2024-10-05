@@ -55,6 +55,8 @@ class Defined;
 class DefinedImportData;
 class DefinedImportThunk;
 class DefinedRegular;
+class ImportThunkChunk;
+class ImportThunkChunkARM64EC;
 class SectionChunk;
 class Symbol;
 class Undefined;
@@ -82,7 +84,9 @@ public:
   virtual void parse() = 0;
 
   // Returns the CPU type this file was compiled to.
-  virtual MachineTypes getMachineType() { return IMAGE_FILE_MACHINE_UNKNOWN; }
+  virtual MachineTypes getMachineType() const {
+    return IMAGE_FILE_MACHINE_UNKNOWN;
+  }
 
   MemoryBufferRef mb;
 
@@ -133,7 +137,7 @@ public:
   static bool classof(const InputFile *f) { return f->kind() == ObjectKind; }
   void parse() override;
   void parseLazy();
-  MachineTypes getMachineType() override;
+  MachineTypes getMachineType() const override;
   ArrayRef<Chunk *> getChunks() { return chunks; }
   ArrayRef<SectionChunk *> getDebugChunks() { return debugChunks; }
   ArrayRef<SectionChunk *> getSXDataChunks() { return sxDataChunks; }
@@ -177,7 +181,10 @@ public:
   bool hasSafeSEH() { return feat00Flags & 0x1; }
 
   // True if this file was compiled with /guard:cf.
-  bool hasGuardCF() { return feat00Flags & 0x4800; }
+  bool hasGuardCF() { return feat00Flags & 0x800; }
+
+  // True if this file was compiled with /guard:ehcont.
+  bool hasGuardEHCont() { return feat00Flags & 0x4000; }
 
   // Pointer to the PDB module descriptor builder. Various debug info records
   // will reference object files by "module index", which is here. Things like
@@ -192,7 +199,7 @@ public:
   // When using Microsoft precompiled headers, this is the PCH's key.
   // The same key is used by both the precompiled object, and objects using the
   // precompiled object. Any difference indicates out-of-date objects.
-  llvm::Optional<uint32_t> pchSignature;
+  std::optional<uint32_t> pchSignature;
 
   // Whether this file was compiled with /hotpatch.
   bool hotPatchable = false;
@@ -206,11 +213,11 @@ public:
   // The .debug$P or .debug$T section data if present. Empty otherwise.
   ArrayRef<uint8_t> debugTypes;
 
-  llvm::Optional<std::pair<StringRef, uint32_t>>
+  std::optional<std::pair<StringRef, uint32_t>>
   getVariableLocation(StringRef var);
 
-  llvm::Optional<llvm::DILineInfo> getDILineInfo(uint32_t offset,
-                                                 uint32_t sectionIndex);
+  std::optional<llvm::DILineInfo> getDILineInfo(uint32_t offset,
+                                                uint32_t sectionIndex);
 
 private:
   const coff_section* getSection(uint32_t i);
@@ -224,6 +231,7 @@ private:
   void initializeSymbols();
   void initializeFlags();
   void initializeDependencies();
+  void initializeECThunks();
 
   SectionChunk *
   readSection(uint32_t sectionNumber,
@@ -258,7 +266,7 @@ private:
                         bool &prevailing, DefinedRegular *leader,
                         const llvm::object::coff_aux_section_definition *def);
 
-  llvm::Optional<Symbol *>
+  std::optional<Symbol *>
   createDefined(COFFSymbolRef sym,
                 std::vector<const llvm::object::coff_aux_section_definition *>
                     &comdatDefs,
@@ -288,6 +296,8 @@ private:
   std::vector<SectionChunk *> guardIATChunks;
   std::vector<SectionChunk *> guardLJmpChunks;
   std::vector<SectionChunk *> guardEHContChunks;
+
+  std::vector<SectionChunk *> hybmpChunks;
 
   // This vector contains a list of all symbols defined or referenced by this
   // file. They are indexed such that you can get a Symbol by symbol
@@ -319,7 +329,7 @@ public:
                                           StringRef path, ObjFile *fromFile);
 
   // Record possible errors while opening the PDB file
-  llvm::Optional<Error> loadErr;
+  std::optional<std::string> loadErrorStr;
 
   // This is the actual interface to the PDB (if it was opened successfully)
   std::unique_ptr<llvm::pdb::NativeSession> session;
@@ -333,33 +343,39 @@ public:
 // for details about the format.
 class ImportFile : public InputFile {
 public:
-  explicit ImportFile(COFFLinkerContext &ctx, MemoryBufferRef m)
-      : InputFile(ctx, ImportKind, m) {}
+  explicit ImportFile(COFFLinkerContext &ctx, MemoryBufferRef m);
 
   static bool classof(const InputFile *f) { return f->kind() == ImportKind; }
+  MachineTypes getMachineType() const override;
 
-  Symbol *impSym = nullptr;
-  Symbol *thunkSym = nullptr;
+  DefinedImportData *impSym = nullptr;
+  Defined *thunkSym = nullptr;
+  ImportThunkChunkARM64EC *impchkThunk = nullptr;
   std::string dllName;
 
 private:
   void parse() override;
+  ImportThunkChunk *makeImportThunk();
 
 public:
   StringRef externalName;
   const coff_import_header *hdr;
   Chunk *location = nullptr;
 
+  // Auxiliary IAT symbols and chunks on ARM64EC.
+  DefinedImportData *impECSym = nullptr;
+  Chunk *auxLocation = nullptr;
+  Defined *auxThunkSym = nullptr;
+  DefinedImportData *auxImpCopySym = nullptr;
+  Chunk *auxCopyLocation = nullptr;
+
   // We want to eliminate dllimported symbols if no one actually refers to them.
   // These "Live" bits are used to keep track of which import library members
   // are actually in use.
   //
   // If the Live bit is turned off by MarkLive, Writer will ignore dllimported
-  // symbols provided by this import library member. We also track whether the
-  // imported symbol is used separately from whether the thunk is used in order
-  // to avoid creating unnecessary thunks.
-  bool live = !config->doGC;
-  bool thunkLive = !config->doGC;
+  // symbols provided by this import library member.
+  bool live;
 };
 
 // Used for LTO.
@@ -371,7 +387,7 @@ public:
   ~BitcodeFile();
   static bool classof(const InputFile *f) { return f->kind() == BitcodeKind; }
   ArrayRef<Symbol *> getSymbols() { return symbols; }
-  MachineTypes getMachineType() override;
+  MachineTypes getMachineType() const override;
   void parseLazy();
   std::unique_ptr<llvm::lto::InputFile> obj;
 
@@ -388,7 +404,7 @@ public:
       : InputFile(ctx, DLLKind, m) {}
   static bool classof(const InputFile *f) { return f->kind() == DLLKind; }
   void parse() override;
-  MachineTypes getMachineType() override;
+  MachineTypes getMachineType() const override;
 
   struct Symbol {
     StringRef dllName;
@@ -408,7 +424,8 @@ inline bool isBitcode(MemoryBufferRef mb) {
   return identify_magic(mb.getBuffer()) == llvm::file_magic::bitcode;
 }
 
-std::string replaceThinLTOSuffix(StringRef path);
+std::string replaceThinLTOSuffix(StringRef path, StringRef suffix,
+                                 StringRef repl);
 } // namespace coff
 
 std::string toString(const coff::InputFile *file);

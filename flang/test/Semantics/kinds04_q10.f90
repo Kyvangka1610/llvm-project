@@ -1,4 +1,4 @@
-! RUN: %python %S/test_errors.py %s %flang_fc1
+! RUN: %python %S/test_errors.py %s %flang_fc1 -triple x86_64-unknown-linux-gnu
 ! C716 If both kind-param and exponent-letter appear, exponent-letter
 ! shall be E. (As an extension we also allow an exponent-letter which matches
 ! the kind-param)
@@ -7,15 +7,16 @@
 !
 ! This test is for x86_64, where exponent-letter 'q' is for
 ! 10-byte extended precision
+! UNSUPPORTED: system-windows, system-aix
 ! REQUIRES: x86-registered-target
-! UNSUPPORTED: system-windows
-! XFAIL: *
-!WARNING: THIS TEST HAS BEEN DISABLED UNTIL IT CAN BE PROPERLY CONFIGURED
+
 subroutine s(var)
   real :: realvar1 = 4.0E6_4
   real :: realvar2 = 4.0D6
   real :: realvar3 = 4.0Q6
+  !PORTABILITY: Explicit kind parameter together with non-'E' exponent letter is not standard
   real :: realvar4 = 4.0D6_8
+  !PORTABILITY: Explicit kind parameter together with non-'E' exponent letter is not standard
   real :: realvar5 = 4.0Q6_10
   !WARNING: Explicit kind parameter on real constant disagrees with exponent letter 'q'
   real :: realvar6 = 4.0Q6_16
@@ -28,6 +29,7 @@ subroutine s(var)
   double precision :: doublevar1 = 4.0E6_4
   double precision :: doublevar2 = 4.0D6
   double precision :: doublevar3 = 4.0Q6
+  !PORTABILITY: Explicit kind parameter together with non-'E' exponent letter is not standard
   double precision :: doublevar4 = 4.0D6_8
   !WARNING: Explicit kind parameter on real constant disagrees with exponent letter 'q'
   double precision :: doublevar5 = 4.0Q6_16

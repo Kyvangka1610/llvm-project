@@ -64,7 +64,7 @@ FieldOverlap fo = {{}, {}, {}, {}, 1234};
 
 // CHECK-DAG: @e1 ={{.*}} constant ptr @fo
 Empty1 &e1 = fo.e1;
-// CHECK-DAG: @e2 ={{.*}} constant ptr getelementptr inbounds (i8, ptr @fo, i64 1)
+// CHECK-DAG: @e2 ={{.*}} constant ptr getelementptr (i8, ptr @fo, i64 1)
 Empty1 &e2 = fo.e2;
 
 // CHECK-LABEL: accessE1
@@ -101,3 +101,28 @@ struct HasZeroSizedFieldWithNonTrivialInit {
 HasZeroSizedFieldWithNonTrivialInit testHasZeroSizedFieldWithNonTrivialInit = {.a = 1};
 // CHECK-LABEL: define {{.*}}cxx_global_var_init
 // CHECK: call {{.*}}@_ZN14NonTrivialInitC1Ev({{.*}}@testHasZeroSizedFieldWithNonTrivialInit
+
+void *operator new(unsigned long, void *);
+template <class Ty>
+struct _box {
+  [[no_unique_address]] Ty _value;
+};
+// Make sure this doesn't crash.
+// CHECK-LABEL: define {{.*}}placement_new_struct
+void placement_new_struct() {
+  struct set_value_t {};
+
+  // GH88077
+  struct _tuple : _box<set_value_t>, _box<int> {};
+
+  int _storage[1];
+  new (_storage) _tuple{};
+
+  // GH89547
+  struct _tuple2 {
+    _box<set_value_t> a;
+  };
+
+  int _storage2[1];
+  new (_storage2) _tuple2{};
+}

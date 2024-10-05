@@ -18,17 +18,15 @@
 #include "llvm-c/Types.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/BitmaskEnum.h"
-#include "llvm/ADT/Optional.h"
-#include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Config/llvm-config.h"
 #include "llvm/Support/Alignment.h"
 #include "llvm/Support/CodeGen.h"
+#include "llvm/Support/ModRef.h"
 #include "llvm/Support/PointerLikeTypeTraits.h"
-#include <bitset>
 #include <cassert>
 #include <cstdint>
-#include <set>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -39,11 +37,14 @@ class AttributeMask;
 class AttributeImpl;
 class AttributeListImpl;
 class AttributeSetNode;
+class ConstantRange;
+class ConstantRangeList;
 class FoldingSetNodeID;
 class Function;
 class LLVMContext;
-class MemoryEffects;
 class Type;
+class raw_ostream;
+enum FPClassTest : unsigned;
 
 enum class AllocFnKind : uint64_t {
   Unknown = 0,
@@ -87,7 +88,7 @@ public:
     None,                  ///< No attributes have been set
     #define GET_ATTR_ENUM
     #include "llvm/IR/Attributes.inc"
-    EndAttrKinds,          ///< Sentinal value useful for loops
+    EndAttrKinds,          ///< Sentinel value useful for loops
     EmptyKey,              ///< Use as Empty key for DenseMap of AttrKind
     TombstoneKey,          ///< Use as Tombstone key for DenseMap of AttrKind
   };
@@ -104,10 +105,22 @@ public:
   static bool isTypeAttrKind(AttrKind Kind) {
     return Kind >= FirstTypeAttr && Kind <= LastTypeAttr;
   }
+  static bool isConstantRangeAttrKind(AttrKind Kind) {
+    return Kind >= FirstConstantRangeAttr && Kind <= LastConstantRangeAttr;
+  }
+  static bool isConstantRangeListAttrKind(AttrKind Kind) {
+    return Kind >= FirstConstantRangeListAttr &&
+           Kind <= LastConstantRangeListAttr;
+  }
 
   static bool canUseAsFnAttr(AttrKind Kind);
   static bool canUseAsParamAttr(AttrKind Kind);
   static bool canUseAsRetAttr(AttrKind Kind);
+
+  static bool intersectMustPreserve(AttrKind Kind);
+  static bool intersectWithAnd(AttrKind Kind);
+  static bool intersectWithMin(AttrKind Kind);
+  static bool intersectWithCustom(AttrKind Kind);
 
 private:
   AttributeImpl *pImpl = nullptr;
@@ -126,6 +139,10 @@ public:
   static Attribute get(LLVMContext &Context, StringRef Kind,
                        StringRef Val = StringRef());
   static Attribute get(LLVMContext &Context, AttrKind Kind, Type *Ty);
+  static Attribute get(LLVMContext &Context, AttrKind Kind,
+                       const ConstantRange &CR);
+  static Attribute get(LLVMContext &Context, AttrKind Kind,
+                       ArrayRef<ConstantRange> Val);
 
   /// Return a uniquified Attribute object that has the specific
   /// alignment set.
@@ -135,9 +152,9 @@ public:
                                               uint64_t Bytes);
   static Attribute getWithDereferenceableOrNullBytes(LLVMContext &Context,
                                                      uint64_t Bytes);
-  static Attribute getWithAllocSizeArgs(LLVMContext &Context,
-                                        unsigned ElemSizeArg,
-                                        const Optional<unsigned> &NumElemsArg);
+  static Attribute getWithAllocSizeArgs(
+      LLVMContext &Context, unsigned ElemSizeArg,
+      const std::optional<unsigned> &NumElemsArg);
   static Attribute getWithVScaleRangeArgs(LLVMContext &Context,
                                           unsigned MinValue, unsigned MaxValue);
   static Attribute getWithByValType(LLVMContext &Context, Type *Ty);
@@ -146,6 +163,8 @@ public:
   static Attribute getWithPreallocatedType(LLVMContext &Context, Type *Ty);
   static Attribute getWithInAllocaType(LLVMContext &Context, Type *Ty);
   static Attribute getWithUWTableKind(LLVMContext &Context, UWTableKind Kind);
+  static Attribute getWithMemoryEffects(LLVMContext &Context, MemoryEffects ME);
+  static Attribute getWithNoFPClass(LLVMContext &Context, FPClassTest Mask);
 
   /// For a typed attribute, return the equivalent attribute with the type
   /// changed to \p ReplacementTy.
@@ -179,6 +198,12 @@ public:
   /// Return true if the attribute is a type attribute.
   bool isTypeAttribute() const;
 
+  /// Return true if the attribute is a ConstantRange attribute.
+  bool isConstantRangeAttribute() const;
+
+  /// Return true if the attribute is a ConstantRangeList attribute.
+  bool isConstantRangeListAttribute() const;
+
   /// Return true if the attribute is any kind of attribute.
   bool isValid() const { return pImpl; }
 
@@ -188,8 +213,12 @@ public:
   /// Return true if the target-dependent attribute is present.
   bool hasAttribute(StringRef Val) const;
 
+  /// Returns true if the attribute's kind can be represented as an enum (Enum,
+  /// Integer, Type, ConstantRange, or ConstantRangeList attribute).
+  bool hasKindAsEnum() const { return !isStringAttribute(); }
+
   /// Return the attribute's kind as an enum (Attribute::AttrKind). This
-  /// requires the attribute to be an enum, integer, or type attribute.
+  /// requires the attribute be representable as an enum (see: `hasKindAsEnum`).
   Attribute::AttrKind getKindAsEnum() const;
 
   /// Return the attribute's value as an integer. This requires that the
@@ -212,6 +241,14 @@ public:
   /// a type attribute.
   Type *getValueAsType() const;
 
+  /// Return the attribute's value as a ConstantRange. This requires the
+  /// attribute to be a ConstantRange attribute.
+  const ConstantRange &getValueAsConstantRange() const;
+
+  /// Return the attribute's value as a ConstantRange array. This requires the
+  /// attribute to be a ConstantRangeList attribute.
+  ArrayRef<ConstantRange> getValueAsConstantRangeList() const;
+
   /// Returns the alignment field of an attribute as a byte alignment
   /// value.
   MaybeAlign getAlignment() const;
@@ -229,14 +266,14 @@ public:
   uint64_t getDereferenceableOrNullBytes() const;
 
   /// Returns the argument numbers for the allocsize attribute.
-  std::pair<unsigned, Optional<unsigned>> getAllocSizeArgs() const;
+  std::pair<unsigned, std::optional<unsigned>> getAllocSizeArgs() const;
 
   /// Returns the minimum value for the vscale_range attribute.
   unsigned getVScaleRangeMin() const;
 
-  /// Returns the maximum value for the vscale_range attribute or None when
-  /// unknown.
-  Optional<unsigned> getVScaleRangeMax() const;
+  /// Returns the maximum value for the vscale_range attribute or std::nullopt
+  /// when unknown.
+  std::optional<unsigned> getVScaleRangeMax() const;
 
   // Returns the unwind table kind.
   UWTableKind getUWTableKind() const;
@@ -246,6 +283,15 @@ public:
 
   /// Returns memory effects.
   MemoryEffects getMemoryEffects() const;
+
+  /// Return the FPClassTest for nofpclass
+  FPClassTest getNoFPClass() const;
+
+  /// Returns the value of the range attribute.
+  const ConstantRange &getRange() const;
+
+  /// Returns the value of the initializes attribute.
+  ArrayRef<ConstantRange> getInitializes() const;
 
   /// The Attribute is converted to a string of equivalent mnemonic. This
   /// is, presumably, for writing out the mnemonics for the assembly writer.
@@ -257,6 +303,9 @@ public:
   /// Equality and non-equality operators.
   bool operator==(Attribute A) const { return pImpl == A.pImpl; }
   bool operator!=(Attribute A) const { return pImpl != A.pImpl; }
+
+  /// Used to sort attribute by kind.
+  int cmpKind(Attribute A) const;
 
   /// Less-than operator. Useful for sorting the attributes list.
   bool operator<(Attribute A) const;
@@ -346,6 +395,12 @@ public:
   [[nodiscard]] AttributeSet
   removeAttributes(LLVMContext &C, const AttributeMask &AttrsToRemove) const;
 
+  /// Try to intersect this AttributeSet with Other. Returns std::nullopt if
+  /// the two lists are inherently incompatible (imply different behavior, not
+  /// just analysis).
+  [[nodiscard]] std::optional<AttributeSet>
+  intersectWith(LLVMContext &C, AttributeSet Other) const;
+
   /// Return the number of attributes in this set.
   unsigned getNumAttributes() const;
 
@@ -374,11 +429,14 @@ public:
   Type *getPreallocatedType() const;
   Type *getInAllocaType() const;
   Type *getElementType() const;
-  Optional<std::pair<unsigned, Optional<unsigned>>> getAllocSizeArgs() const;
+  std::optional<std::pair<unsigned, std::optional<unsigned>>> getAllocSizeArgs()
+      const;
   unsigned getVScaleRangeMin() const;
-  Optional<unsigned> getVScaleRangeMax() const;
+  std::optional<unsigned> getVScaleRangeMax() const;
   UWTableKind getUWTableKind() const;
   AllocFnKind getAllocKind() const;
+  MemoryEffects getMemoryEffects() const;
+  FPClassTest getNoFPClass() const;
   std::string getAsString(bool InAttrGrp = false) const;
 
   /// Return true if this attribute set belongs to the LLVMContext.
@@ -724,11 +782,22 @@ public:
   addDereferenceableOrNullParamAttr(LLVMContext &C, unsigned ArgNo,
                                     uint64_t Bytes) const;
 
+  /// Add the range attribute to the attribute set at the return value index.
+  /// Returns a new list because attribute lists are immutable.
+  [[nodiscard]] AttributeList addRangeRetAttr(LLVMContext &C,
+                                              const ConstantRange &CR) const;
+
   /// Add the allocsize attribute to the attribute set at the given arg index.
   /// Returns a new list because attribute lists are immutable.
   [[nodiscard]] AttributeList
   addAllocSizeParamAttr(LLVMContext &C, unsigned ArgNo, unsigned ElemSizeArg,
-                        const Optional<unsigned> &NumElemsArg);
+                        const std::optional<unsigned> &NumElemsArg) const;
+
+  /// Try to intersect this AttributeList with Other. Returns std::nullopt if
+  /// the two lists are inherently incompatible (imply different behavior, not
+  /// just analysis).
+  [[nodiscard]] std::optional<AttributeList>
+  intersectWith(LLVMContext &C, AttributeList Other) const;
 
   //===--------------------------------------------------------------------===//
   // AttributeList Accessors
@@ -825,6 +894,11 @@ public:
     return getAttributeAtIndex(FunctionIndex, Kind);
   }
 
+  /// Return the attribute for the given attribute kind for the return value.
+  Attribute getRetAttr(Attribute::AttrKind Kind) const {
+    return getAttributeAtIndex(ReturnIndex, Kind);
+  }
+
   /// Return the alignment of the return value.
   MaybeAlign getRetAlignment() const;
 
@@ -873,10 +947,19 @@ public:
   /// arg.
   uint64_t getParamDereferenceableOrNullBytes(unsigned ArgNo) const;
 
+  /// Get the disallowed floating-point classes of the return value.
+  FPClassTest getRetNoFPClass() const;
+
+  /// Get the disallowed floating-point classes of the argument value.
+  FPClassTest getParamNoFPClass(unsigned ArgNo) const;
+
   /// Get the unwind table kind requested for the function.
   UWTableKind getUWTableKind() const;
 
   AllocFnKind getAllocKind() const;
+
+  /// Returns memory effects of the function.
+  MemoryEffects getMemoryEffects() const;
 
   /// Return the attributes at the index as a string.
   std::string getAsString(unsigned Index, bool InAttrGrp = false) const;
@@ -967,65 +1050,6 @@ template <> struct DenseMapInfo<AttributeList, void> {
 
 //===----------------------------------------------------------------------===//
 /// \class
-/// This class stores enough information to efficiently remove some attributes
-/// from an existing AttrBuilder, AttributeSet or AttributeList.
-class AttributeMask {
-  std::bitset<Attribute::EndAttrKinds> Attrs;
-  std::set<SmallString<32>, std::less<>> TargetDepAttrs;
-
-public:
-  AttributeMask() = default;
-  AttributeMask(const AttributeMask &) = delete;
-  AttributeMask(AttributeMask &&) = default;
-
-  AttributeMask(AttributeSet AS) {
-    for (Attribute A : AS)
-      addAttribute(A);
-  }
-
-  /// Add an attribute to the mask.
-  AttributeMask &addAttribute(Attribute::AttrKind Val) {
-    assert((unsigned)Val < Attribute::EndAttrKinds &&
-           "Attribute out of range!");
-    Attrs[Val] = true;
-    return *this;
-  }
-
-  /// Add the Attribute object to the builder.
-  AttributeMask &addAttribute(Attribute A) {
-    if (A.isStringAttribute())
-      addAttribute(A.getKindAsString());
-    else
-      addAttribute(A.getKindAsEnum());
-    return *this;
-  }
-
-  /// Add the target-dependent attribute to the builder.
-  AttributeMask &addAttribute(StringRef A) {
-    TargetDepAttrs.insert(A);
-    return *this;
-  }
-
-  /// Return true if the builder has the specified attribute.
-  bool contains(Attribute::AttrKind A) const {
-    assert((unsigned)A < Attribute::EndAttrKinds && "Attribute out of range!");
-    return Attrs[A];
-  }
-
-  /// Return true if the builder has the specified target-dependent
-  /// attribute.
-  bool contains(StringRef A) const { return TargetDepAttrs.count(A); }
-
-  /// Return true if the mask contains the specified attribute.
-  bool contains(Attribute A) const {
-    if (A.isStringAttribute())
-      return contains(A.getKindAsString());
-    return contains(A.getKindAsEnum());
-  }
-};
-
-//===----------------------------------------------------------------------===//
-/// \class
 /// This class is used in conjunction with the Attribute::get method to
 /// create an Attribute object. The object itself is uniquified. The Builder's
 /// value, however, is not. So this can be used as a quick way to test for
@@ -1099,9 +1123,9 @@ public:
   /// invalid if the Kind is not present in the builder.
   Attribute getAttribute(StringRef Kind) const;
 
-  /// Return raw (possibly packed/encoded) value of integer attribute or None if
-  /// not set.
-  Optional<uint64_t> getRawIntAttr(Attribute::AttrKind Kind) const;
+  /// Return raw (possibly packed/encoded) value of integer attribute or
+  /// std::nullopt if not set.
+  std::optional<uint64_t> getRawIntAttr(Attribute::AttrKind Kind) const;
 
   /// Retrieve the alignment attribute, if it exists.
   MaybeAlign getAlignment() const {
@@ -1145,8 +1169,10 @@ public:
   /// Retrieve the inalloca type.
   Type *getInAllocaType() const { return getTypeAttr(Attribute::InAlloca); }
 
-  /// Retrieve the allocsize args, or None if the attribute does not exist.
-  Optional<std::pair<unsigned, Optional<unsigned>>> getAllocSizeArgs() const;
+  /// Retrieve the allocsize args, or std::nullopt if the attribute does not
+  /// exist.
+  std::optional<std::pair<unsigned, std::optional<unsigned>>> getAllocSizeArgs()
+      const;
 
   /// Add integer attribute with raw value (packed/encoded if necessary).
   AttrBuilder &addRawIntAttr(Attribute::AttrKind Kind, uint64_t Value);
@@ -1185,11 +1211,11 @@ public:
 
   /// This turns one (or two) ints into the form used internally in Attribute.
   AttrBuilder &addAllocSizeAttr(unsigned ElemSizeArg,
-                                const Optional<unsigned> &NumElemsArg);
+                                const std::optional<unsigned> &NumElemsArg);
 
   /// This turns two ints into the form used internally in Attribute.
   AttrBuilder &addVScaleRangeAttr(unsigned MinValue,
-                                  Optional<unsigned> MaxValue);
+                                  std::optional<unsigned> MaxValue);
 
   /// Add a type attribute with the given type.
   AttrBuilder &addTypeAttr(Attribute::AttrKind Kind, Type *Ty);
@@ -1227,6 +1253,23 @@ public:
   /// Add memory effect attribute.
   AttrBuilder &addMemoryAttr(MemoryEffects ME);
 
+  // Add nofpclass attribute
+  AttrBuilder &addNoFPClassAttr(FPClassTest NoFPClassMask);
+
+  /// Add a ConstantRange attribute with the given range.
+  AttrBuilder &addConstantRangeAttr(Attribute::AttrKind Kind,
+                                    const ConstantRange &CR);
+
+  /// Add range attribute.
+  AttrBuilder &addRangeAttr(const ConstantRange &CR);
+
+  /// Add a ConstantRangeList attribute with the given ranges.
+  AttrBuilder &addConstantRangeListAttr(Attribute::AttrKind Kind,
+                                        ArrayRef<ConstantRange> Val);
+
+  /// Add initializes attribute.
+  AttrBuilder &addInitializesAttr(const ConstantRangeList &CRL);
+
   ArrayRef<Attribute> attrs() const { return Attrs; }
 
   bool operator==(const AttrBuilder &B) const;
@@ -1240,6 +1283,10 @@ enum AttributeSafetyKind : uint8_t {
   ASK_UNSAFE_TO_DROP = 2,
   ASK_ALL = ASK_SAFE_TO_DROP | ASK_UNSAFE_TO_DROP,
 };
+
+/// Returns true if this is a type legal for the 'nofpclass' attribute. This
+/// follows the same type rules as FPMathOperator.
+bool isNoFPClassCompatibleType(Type *Ty);
 
 /// Which attributes cannot be applied to a type. The argument \p ASK indicates,
 /// if only attributes that are known to be safely droppable are contained in

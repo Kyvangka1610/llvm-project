@@ -24,8 +24,8 @@
 #include "lldb/Host/ConnectionFileDescriptor.h"
 #include "lldb/Host/FileSystem.h"
 #include "lldb/Host/Pipe.h"
-#include "lldb/Host/Socket.h"
 #include "lldb/Host/common/NativeProcessProtocol.h"
+#include "lldb/Host/common/TCPSocket.h"
 #include "lldb/Target/Process.h"
 #include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Status.h"
@@ -34,6 +34,7 @@
 #include "llvm/Option/OptTable.h"
 #include "llvm/Option/Option.h"
 #include "llvm/Support/Errno.h"
+#include "llvm/Support/Error.h"
 #include "llvm/Support/WithColor.h"
 
 #if defined(__linux__)
@@ -62,26 +63,28 @@ using namespace lldb_private::process_gdb_remote;
 
 namespace {
 #if defined(__linux__)
-typedef process_linux::NativeProcessLinux::Factory NativeProcessFactory;
+typedef process_linux::NativeProcessLinux::Manager NativeProcessManager;
 #elif defined(__FreeBSD__)
-typedef process_freebsd::NativeProcessFreeBSD::Factory NativeProcessFactory;
+typedef process_freebsd::NativeProcessFreeBSD::Manager NativeProcessManager;
 #elif defined(__NetBSD__)
-typedef process_netbsd::NativeProcessNetBSD::Factory NativeProcessFactory;
+typedef process_netbsd::NativeProcessNetBSD::Manager NativeProcessManager;
 #elif defined(_WIN32)
-typedef NativeProcessWindows::Factory NativeProcessFactory;
+typedef NativeProcessWindows::Manager NativeProcessManager;
 #else
 // Dummy implementation to make sure the code compiles
-class NativeProcessFactory : public NativeProcessProtocol::Factory {
+class NativeProcessManager : public NativeProcessProtocol::Manager {
 public:
+  NativeProcessManager(MainLoop &mainloop)
+      : NativeProcessProtocol::Manager(mainloop) {}
+
   llvm::Expected<std::unique_ptr<NativeProcessProtocol>>
   Launch(ProcessLaunchInfo &launch_info,
-         NativeProcessProtocol::NativeDelegate &delegate,
-         MainLoop &mainloop) const override {
+         NativeProcessProtocol::NativeDelegate &native_delegate) override {
     llvm_unreachable("Not implemented");
   }
   llvm::Expected<std::unique_ptr<NativeProcessProtocol>>
-  Attach(lldb::pid_t pid, NativeProcessProtocol::NativeDelegate &delegate,
-         MainLoop &mainloop) const override {
+  Attach(lldb::pid_t pid,
+         NativeProcessProtocol::NativeDelegate &native_delegate) override {
     llvm_unreachable("Not implemented");
   }
 };
@@ -192,17 +195,28 @@ void ConnectToRemote(MainLoop &mainloop,
                      bool reverse_connect, llvm::StringRef host_and_port,
                      const char *const progname, const char *const subcommand,
                      const char *const named_pipe_path, pipe_t unnamed_pipe,
-                     int connection_fd) {
+                     shared_fd_t connection_fd) {
   Status error;
 
   std::unique_ptr<Connection> connection_up;
   std::string url;
 
-  if (connection_fd != -1) {
+  if (connection_fd != SharedSocket::kInvalidFD) {
+#ifdef _WIN32
+    NativeSocket sockfd;
+    error = SharedSocket::GetNativeSocket(connection_fd, sockfd);
+    if (error.Fail()) {
+      llvm::errs() << llvm::formatv("error: GetNativeSocket failed: {0}\n",
+                                    error.AsCString());
+      exit(-1);
+    }
+    connection_up =
+        std::unique_ptr<Connection>(new ConnectionFileDescriptor(new TCPSocket(
+            sockfd, /*should_close=*/true, /*child_processes_inherit=*/false)));
+#else
     url = llvm::formatv("fd://{0}", connection_fd).str();
 
     // Create the connection.
-#if LLDB_ENABLE_POSIX && !defined _WIN32
     ::fcntl(connection_fd, F_SETFD, FD_CLOEXEC);
 #endif
   } else if (!host_and_port.empty()) {
@@ -232,7 +246,7 @@ void ConnectToRemote(MainLoop &mainloop,
             Status error = writeSocketIdToPipe(named_pipe_path, socket_id);
             if (error.Fail())
               llvm::errs() << llvm::formatv(
-                  "failed to write to the named peipe '{0}': {1}\n",
+                  "failed to write to the named pipe '{0}': {1}\n",
                   named_pipe_path, error.AsCString());
           }
           // If we have an unnamed pipe to write the socket id back to, do
@@ -269,34 +283,31 @@ void ConnectToRemote(MainLoop &mainloop,
 }
 
 namespace {
+using namespace llvm::opt;
+
 enum ID {
   OPT_INVALID = 0, // This is not an option ID.
-#define OPTION(PREFIX, NAME, ID, KIND, GROUP, ALIAS, ALIASARGS, FLAGS, PARAM,  \
-               HELPTEXT, METAVAR, VALUES)                                      \
-  OPT_##ID,
+#define OPTION(...) LLVM_MAKE_OPT_ID(__VA_ARGS__),
 #include "LLGSOptions.inc"
 #undef OPTION
 };
 
-#define PREFIX(NAME, VALUE) const char *const NAME[] = VALUE;
+#define PREFIX(NAME, VALUE)                                                    \
+  constexpr llvm::StringLiteral NAME##_init[] = VALUE;                         \
+  constexpr llvm::ArrayRef<llvm::StringLiteral> NAME(                          \
+      NAME##_init, std::size(NAME##_init) - 1);
 #include "LLGSOptions.inc"
 #undef PREFIX
 
-const opt::OptTable::Info InfoTable[] = {
-#define OPTION(PREFIX, NAME, ID, KIND, GROUP, ALIAS, ALIASARGS, FLAGS, PARAM,  \
-               HELPTEXT, METAVAR, VALUES)                                      \
-  {                                                                            \
-      PREFIX,      NAME,      HELPTEXT,                                        \
-      METAVAR,     OPT_##ID,  opt::Option::KIND##Class,                        \
-      PARAM,       FLAGS,     OPT_##GROUP,                                     \
-      OPT_##ALIAS, ALIASARGS, VALUES},
+static constexpr opt::OptTable::Info InfoTable[] = {
+#define OPTION(...) LLVM_CONSTRUCT_OPT_INFO(__VA_ARGS__),
 #include "LLGSOptions.inc"
 #undef OPTION
 };
 
-class LLGSOptTable : public opt::OptTable {
+class LLGSOptTable : public opt::GenericOptTable {
 public:
-  LLGSOptTable() : OptTable(InfoTable) {}
+  LLGSOptTable() : opt::GenericOptTable(InfoTable) {}
 
   void PrintHelp(llvm::StringRef Name) {
     std::string Usage =
@@ -338,7 +349,7 @@ int main_gdbserver(int argc, char *argv[]) {
       log_channels; // e.g. "lldb process threads:gdb-remote default:linux all"
   lldb::pipe_t unnamed_pipe = LLDB_INVALID_PIPE;
   bool reverse_connect = false;
-  int connection_fd = -1;
+  shared_fd_t connection_fd = SharedSocket::kInvalidFD;
 
   // ProcessLaunchInfo launch_info;
   ProcessAttachInfo attach_info;
@@ -404,10 +415,12 @@ int main_gdbserver(int argc, char *argv[]) {
     unnamed_pipe = (pipe_t)Arg;
   }
   if (Args.hasArg(OPT_fd)) {
-    if (!llvm::to_integer(Args.getLastArgValue(OPT_fd), connection_fd)) {
+    int64_t fd;
+    if (!llvm::to_integer(Args.getLastArgValue(OPT_fd), fd)) {
       WithColor::error() << "invalid '--fd' argument\n" << HelpText;
       return 1;
     }
+    connection_fd = (shared_fd_t)fd;
   }
 
   if (!LLDBServerUtilities::SetupLogging(
@@ -423,16 +436,16 @@ int main_gdbserver(int argc, char *argv[]) {
     for (const char *Val : Arg->getValues())
       Inputs.push_back(Val);
   }
-  if (Inputs.empty() && connection_fd == -1) {
+  if (Inputs.empty() && connection_fd == SharedSocket::kInvalidFD) {
     WithColor::error() << "no connection arguments\n" << HelpText;
     return 1;
   }
 
-  NativeProcessFactory factory;
-  GDBRemoteCommunicationServerLLGS gdb_server(mainloop, factory);
+  NativeProcessManager manager(mainloop);
+  GDBRemoteCommunicationServerLLGS gdb_server(mainloop, manager);
 
   llvm::StringRef host_and_port;
-  if (!Inputs.empty()) {
+  if (!Inputs.empty() && connection_fd == SharedSocket::kInvalidFD) {
     host_and_port = Inputs.front();
     Inputs.erase(Inputs.begin());
   }

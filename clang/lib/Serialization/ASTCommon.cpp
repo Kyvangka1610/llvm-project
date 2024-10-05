@@ -186,6 +186,9 @@ serialization::TypeIdxFromBuiltin(const BuiltinType *BT) {
   case BuiltinType::Overload:
     ID = PREDEF_TYPE_OVERLOAD_ID;
     break;
+  case BuiltinType::UnresolvedTemplate:
+    ID = PREDEF_TYPE_UNRESOLVED_TEMPLATE;
+    break;
   case BuiltinType::BoundMember:
     ID = PREDEF_TYPE_BOUND_MEMBER;
     break;
@@ -250,14 +253,29 @@ serialization::TypeIdxFromBuiltin(const BuiltinType *BT) {
     ID = PREDEF_TYPE_##Id##_ID;                                                \
     break;
 #include "clang/Basic/RISCVVTypes.def"
+#define WASM_TYPE(Name, Id, SingletonId)                                       \
+  case BuiltinType::Id:                                                        \
+    ID = PREDEF_TYPE_##Id##_ID;                                                \
+    break;
+#include "clang/Basic/WebAssemblyReferenceTypes.def"
+#define AMDGPU_TYPE(Name, Id, SingletonId, Width, Align)                       \
+  case BuiltinType::Id:                                                        \
+    ID = PREDEF_TYPE_##Id##_ID;                                                \
+    break;
+#include "clang/Basic/AMDGPUTypes.def"
+#define HLSL_INTANGIBLE_TYPE(Name, Id, SingletonId)                            \
+  case BuiltinType::Id:                                                        \
+    ID = PREDEF_TYPE_##Id##_ID;                                                \
+    break;
+#include "clang/Basic/HLSLIntangibleTypes.def"
   case BuiltinType::BuiltinFn:
     ID = PREDEF_TYPE_BUILTIN_FN;
     break;
   case BuiltinType::IncompleteMatrixIdx:
     ID = PREDEF_TYPE_INCOMPLETE_MATRIX_IDX;
     break;
-  case BuiltinType::OMPArraySection:
-    ID = PREDEF_TYPE_OMP_ARRAY_SECTION;
+  case BuiltinType::ArraySection:
+    ID = PREDEF_TYPE_ARRAY_SECTION;
     break;
   case BuiltinType::OMPArrayShaping:
     ID = PREDEF_TYPE_OMP_ARRAY_SHAPING;
@@ -270,7 +288,7 @@ serialization::TypeIdxFromBuiltin(const BuiltinType *BT) {
     break;
   }
 
-  return TypeIdx(ID);
+  return TypeIdx(0, ID);
 }
 
 unsigned serialization::ComputeHash(Selector Sel) {
@@ -279,7 +297,7 @@ unsigned serialization::ComputeHash(Selector Sel) {
     ++N;
   unsigned R = 5381;
   for (unsigned I = 0; I != N; ++I)
-    if (IdentifierInfo *II = Sel.getIdentifierInfoForSlot(I))
+    if (const IdentifierInfo *II = Sel.getIdentifierInfoForSlot(I))
       R = llvm::djbHash(II->getName(), R);
   return R;
 }
@@ -333,7 +351,7 @@ serialization::getDefinitiveDeclContext(const DeclContext *DC) {
 
   // FIXME: These are defined in one place, but properties in class extensions
   // end up being back-patched into the main interface. See
-  // Sema::HandlePropertyInClassExtension for the offending code.
+  // SemaObjC::HandlePropertyInClassExtension for the offending code.
   case Decl::ObjCInterface:
     return nullptr;
 
@@ -412,13 +430,13 @@ bool serialization::isRedeclarableDeclKind(unsigned Kind) {
   case Decl::PragmaComment:
   case Decl::PragmaDetectMismatch:
   case Decl::FileScopeAsm:
+  case Decl::TopLevelStmt:
   case Decl::AccessSpec:
   case Decl::Friend:
   case Decl::FriendTemplate:
   case Decl::StaticAssert:
   case Decl::Block:
   case Decl::Captured:
-  case Decl::ClassScopeFunctionSpecialization:
   case Decl::Import:
   case Decl::OMPThreadPrivate:
   case Decl::OMPAllocate:
@@ -474,15 +492,14 @@ bool serialization::needsAnonymousDeclarationNumber(const NamedDecl *D) {
     if (auto *VD = dyn_cast<VarDecl>(D))
       return VD->isStaticLocal();
     // FIXME: What about CapturedDecls (and declarations nested within them)?
-    return isa<TagDecl>(D) || isa<BlockDecl>(D);
+    return isa<TagDecl, BlockDecl>(D);
   }
 
   // Otherwise, we only care about anonymous class members / block-scope decls.
-  // FIXME: We need to handle lambdas and blocks within inline / templated
-  // variables too.
+  // FIXME: We need to handle blocks within inline / templated variables too.
   if (D->getDeclName())
     return false;
   if (!isa<RecordDecl, ObjCInterfaceDecl>(D->getLexicalDeclContext()))
     return false;
-  return isa<TagDecl>(D) || isa<FieldDecl>(D);
+  return isa<TagDecl, FieldDecl>(D);
 }

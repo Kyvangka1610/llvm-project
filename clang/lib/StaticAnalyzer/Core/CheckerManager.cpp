@@ -28,6 +28,7 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FormatVariadic.h"
 #include <cassert>
+#include <optional>
 #include <vector>
 
 using namespace clang;
@@ -35,10 +36,7 @@ using namespace ento;
 
 bool CheckerManager::hasPathSensitiveCheckers() const {
   const auto IfAnyAreNonEmpty = [](const auto &... Callbacks) -> bool {
-    bool Result = false;
-    // FIXME: Use fold expressions in C++17.
-    LLVM_ATTRIBUTE_UNUSED int Unused[]{0, (Result |= !Callbacks.empty())...};
-    return Result;
+    return (!Callbacks.empty() || ...);
   };
   return IfAnyAreNonEmpty(
       StmtCheckers, PreObjCMessageCheckers, ObjCMessageNilCheckers,
@@ -48,16 +46,6 @@ bool CheckerManager::hasPathSensitiveCheckers() const {
       NewAllocatorCheckers, LiveSymbolsCheckers, DeadSymbolsCheckers,
       RegionChangesCheckers, PointerEscapeCheckers, EvalAssumeCheckers,
       EvalCallCheckers, EndOfTranslationUnitCheckers);
-}
-
-void CheckerManager::finishedCheckerRegistration() {
-#ifndef NDEBUG
-  // Make sure that for every event that has listeners, there is at least
-  // one dispatcher registered for it.
-  for (const auto &Event : Events)
-    assert(Event.second.HasDispatcher &&
-           "No dispatcher registered for an event");
-#endif
 }
 
 void CheckerManager::reportInvalidCheckerOptionValue(
@@ -656,7 +644,7 @@ void CheckerManager::runCheckersForEvalCall(ExplodedNodeSet &Dst,
                                             ExprEngine &Eng,
                                             const EvalCallOptions &CallOpts) {
   for (auto *const Pred : Src) {
-    Optional<CheckerNameRef> evaluatorChecker;
+    std::optional<CheckerNameRef> evaluatorChecker;
 
     ExplodedNodeSet checkDst;
     NodeBuilder B(Pred, checkDst, Eng.getBuilderContext());
@@ -681,7 +669,6 @@ void CheckerManager::runCheckersForEvalCall(ExplodedNodeSet &Dst,
           std::string Buf;
           llvm::raw_string_ostream OS(Buf);
           Call.dump(OS);
-          OS.flush();
           return Buf;
         };
         std::string AssertionMessage = llvm::formatv(

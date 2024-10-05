@@ -6,14 +6,15 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/AssumeBundleQueries.h"
+#include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/AsmParser/Parser.h"
-#include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Module.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Regex.h"
 #include "llvm/Support/SourceMgr.h"
-#include "llvm/Support/CommandLine.h"
 #include "llvm/Transforms/Utils/AssumeBundleBuilder.h"
 #include "gtest/gtest.h"
 #include <random>
@@ -22,7 +23,6 @@ using namespace llvm;
 
 namespace llvm {
 extern cl::opt<bool> ShouldPreserveAllAttributes;
-extern cl::opt<bool> EnableKnowledgeRetention;
 } // namespace llvm
 
 static void RunTest(
@@ -232,7 +232,8 @@ static bool FindExactlyAttributes(RetainedKnowledgeMap &Map, Value *WasOn,
        }) {
     bool ShouldHaveAttr = Reg.match(Attr, &Matches) && Matches[0] == Attr;
 
-    if (ShouldHaveAttr != (Map.find(RetainedKnowledgeKey{WasOn, Attribute::getAttrKindFromName(Attr)}) != Map.end()))
+    if (ShouldHaveAttr != (Map.contains(RetainedKnowledgeKey{
+                              WasOn, Attribute::getAttrKindFromName(Attr)})))
       return false;
   }
   return true;
@@ -407,7 +408,6 @@ static void RunRandTest(uint64_t Seed, int Size, int MinCount, int MaxCount,
   LLVMContext C;
   SMDiagnostic Err;
 
-  std::random_device dev;
   std::mt19937 Rng(Seed);
   std::uniform_int_distribution<int> DistCount(MinCount, MaxCount);
   std::uniform_int_distribution<unsigned> DistValue(0, MaxValue);
@@ -420,7 +420,7 @@ static void RunRandTest(uint64_t Seed, int Size, int MinCount, int MaxCount,
 
   std::vector<Type *> TypeArgs;
   for (int i = 0; i < (Size * 2); i++)
-    TypeArgs.push_back(Type::getInt32PtrTy(C));
+    TypeArgs.push_back(PointerType::getUnqual(C));
   FunctionType *FuncType =
       FunctionType::get(Type::getVoidTy(C), TypeArgs, false);
 
@@ -429,7 +429,7 @@ static void RunRandTest(uint64_t Seed, int Size, int MinCount, int MaxCount,
   BasicBlock *BB = BasicBlock::Create(C);
   BB->insertInto(F);
   Instruction *Ret = ReturnInst::Create(C);
-  BB->getInstList().insert(BB->begin(), Ret);
+  Ret->insertInto(BB, BB->begin());
   Function *FnAssume = Intrinsic::getDeclaration(Mod.get(), Intrinsic::assume);
 
   std::vector<Argument *> ShuffledArgs;
@@ -462,7 +462,7 @@ static void RunRandTest(uint64_t Seed, int Size, int MinCount, int MaxCount,
     if (count > 1)
       Args.push_back(ConstantInt::get(Type::getInt32Ty(C), value));
 
-    OpBundle.push_back(OperandBundleDef{ss.str().c_str(), std::move(Args)});
+    OpBundle.push_back(OperandBundleDef{str.c_str(), std::move(Args)});
   }
 
   auto *Assume = cast<AssumeInst>(CallInst::Create(

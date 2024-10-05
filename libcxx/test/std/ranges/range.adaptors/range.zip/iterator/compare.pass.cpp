@@ -26,6 +26,8 @@
 #include <compare>
 
 #include "test_iterators.h"
+#include "test_range.h"
+
 #include "../types.h"
 
 // This is for testing that zip iterator never calls underlying iterator's >, >=, <=, !=.
@@ -41,7 +43,7 @@ struct LessThanIterator {
 
   using iterator_category = std::random_access_iterator_tag;
   using value_type = int;
-  using difference_type = intptr_t;
+  using difference_type = std::intptr_t;
 
   constexpr int& operator*() const { return *it_; }
   constexpr int& operator[](difference_type n) const { return it_[n]; }
@@ -163,7 +165,12 @@ constexpr bool test() {
     using Subrange = std::ranges::subrange<It>;
     static_assert(!std::three_way_comparable<It>);
     using R = std::ranges::zip_view<Subrange, Subrange>;
+#ifdef _LIBCPP_VERSION
+    // libc++ hasn't implemented LWG-3692 "zip_view::iterator's operator<=> is overconstrained"
     static_assert(!std::three_way_comparable<std::ranges::iterator_t<R>>);
+#else
+    static_assert(std::three_way_comparable<std::ranges::iterator_t<R>>);
+#endif
 
     int a[] = {1, 2, 3, 4};
     int b[] = {5, 6, 7, 8, 9};
@@ -235,7 +242,7 @@ constexpr bool test() {
     std::ranges::zip_view r(IterNoEqualView{buffer});
     auto it = r.begin();
     using Iter = decltype(it);
-    static_assert(!std::invocable<std::equal_to<>, Iter, Iter>);
+    static_assert(!weakly_equality_comparable_with<Iter, Iter>);
     inequalityOperatorsDoNotExistTest(it, it);
   }
   return true;

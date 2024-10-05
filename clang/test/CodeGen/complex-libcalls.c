@@ -1,5 +1,5 @@
-// RUN: %clang_cc1 -triple x86_64-unknown-unknown -Wno-implicit-function-declaration -w -S -o - -emit-llvm              %s | FileCheck %s -check-prefix=NO__ERRNO
-// RUN: %clang_cc1 -triple x86_64-unknown-unknown -Wno-implicit-function-declaration -w -S -o - -emit-llvm -fmath-errno %s | FileCheck %s -check-prefix=HAS_ERRNO
+// RUN: %clang_cc1 -triple x86_64-unknown-unknown -Wno-implicit-function-declaration -w -o - -emit-llvm %s | FileCheck %s -check-prefix=NO__ERRNO
+// RUN: %clang_cc1 -triple x86_64-unknown-unknown -Wno-implicit-function-declaration -w -o - -emit-llvm -fmath-errno %s | FileCheck %s -check-prefix=HAS_ERRNO
 
 // Test attributes and builtin codegen of complex library calls.
 
@@ -197,9 +197,9 @@ void foo(float f) {
 // HAS_ERRNO: declare { x86_fp80, x86_fp80 } @ctanhl(ptr noundef byval({ x86_fp80, x86_fp80 }) align 16) [[NOT_READNONE]]
 };
 
-// NO__ERRNO: attributes [[READNONE]] = { {{.*}}readnone{{.*}} }
+// NO__ERRNO: attributes [[READNONE]] = { {{.*}}memory(none){{.*}} }
 // NO__ERRNO: attributes [[NOT_READNONE]] = { nounwind {{.*}} }
 
 // HAS_ERRNO: attributes [[NOT_READNONE]] = { nounwind {{.*}} }
-// HAS_ERRNO: attributes [[READNONE]] = { {{.*}}readnone{{.*}} }
+// HAS_ERRNO: attributes [[READNONE]] = { {{.*}}memory(none){{.*}} }
 // HAS_ERRNO: attributes [[WILLRETURN_NOT_READNONE]] = { nounwind willreturn {{.*}} }

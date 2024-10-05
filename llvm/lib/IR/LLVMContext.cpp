@@ -92,6 +92,11 @@ LLVMContext::LLVMContext() : pImpl(new LLVMContextImpl(*this)) {
          "kcfi operand bundle id drifted!");
   (void)KCFIEntry;
 
+  auto *ConvergenceCtrlEntry = pImpl->getOrInsertBundleTag("convergencectrl");
+  assert(ConvergenceCtrlEntry->second == LLVMContext::OB_convergencectrl &&
+         "convergencectrl operand bundle id drifted!");
+  (void)ConvergenceCtrlEntry;
+
   SyncScope::ID SingleThreadSSID =
       pImpl->getOrInsertSyncScopeID("singlethread");
   assert(SingleThreadSSID == SyncScope::SingleThread &&
@@ -113,6 +118,13 @@ void LLVMContext::addModule(Module *M) {
 
 void LLVMContext::removeModule(Module *M) {
   pImpl->OwnedModules.erase(M);
+  pImpl->MachineFunctionNums.erase(M);
+}
+
+unsigned LLVMContext::generateMachineFunctionNum(Function &F) {
+  Module *M = F.getParent();
+  assert(pImpl->OwnedModules.contains(M) && "Unexpected module!");
+  return pImpl->MachineFunctionNums[M]++;
 }
 
 //===----------------------------------------------------------------------===//
@@ -140,7 +152,7 @@ bool LLVMContext::getDiagnosticsHotnessRequested() const {
   return pImpl->DiagnosticsHotnessRequested;
 }
 
-void LLVMContext::setDiagnosticsHotnessThreshold(Optional<uint64_t> Threshold) {
+void LLVMContext::setDiagnosticsHotnessThreshold(std::optional<uint64_t> Threshold) {
   pImpl->DiagnosticsHotnessThreshold = Threshold;
 }
 void LLVMContext::setMisExpectWarningRequested(bool Requested) {
@@ -153,7 +165,7 @@ uint64_t LLVMContext::getDiagnosticsHotnessThreshold() const {
   return pImpl->DiagnosticsHotnessThreshold.value_or(UINT64_MAX);
 }
 void LLVMContext::setDiagnosticsMisExpectTolerance(
-    Optional<uint32_t> Tolerance) {
+    std::optional<uint32_t> Tolerance) {
   pImpl->DiagnosticsMisExpectTolerance = Tolerance;
 }
 uint32_t LLVMContext::getDiagnosticsMisExpectTolerance() const {
@@ -251,10 +263,13 @@ void LLVMContext::diagnose(const DiagnosticInfo &DI) {
       RS->emit(*OptDiagBase);
 
   // If there is a report handler, use it.
-  if (pImpl->DiagHandler &&
-      (!pImpl->RespectDiagnosticFilters || isDiagnosticEnabled(DI)) &&
-      pImpl->DiagHandler->handleDiagnostics(DI))
-    return;
+  if (pImpl->DiagHandler) {
+    if (DI.getSeverity() == DS_Error)
+      pImpl->DiagHandler->HasErrors = true;
+    if ((!pImpl->RespectDiagnosticFilters || isDiagnosticEnabled(DI)) &&
+        pImpl->DiagHandler->handleDiagnostics(DI))
+      return;
+  }
 
   if (!isDiagnosticEnabled(DI))
     return;
@@ -315,14 +330,12 @@ void LLVMContext::getSyncScopeNames(SmallVectorImpl<StringRef> &SSNs) const {
   pImpl->getSyncScopeNames(SSNs);
 }
 
-void LLVMContext::setGC(const Function &Fn, std::string GCName) {
-  auto It = pImpl->GCNames.find(&Fn);
+std::optional<StringRef> LLVMContext::getSyncScopeName(SyncScope::ID Id) const {
+  return pImpl->getSyncScopeName(Id);
+}
 
-  if (It == pImpl->GCNames.end()) {
-    pImpl->GCNames.insert(std::make_pair(&Fn, std::move(GCName)));
-    return;
-  }
-  It->second = std::move(GCName);
+void LLVMContext::setGC(const Function &Fn, std::string GCName) {
+  pImpl->GCNames[&Fn] = std::move(GCName);
 }
 
 const std::string &LLVMContext::getGC(const Function &Fn) {
@@ -368,14 +381,18 @@ std::unique_ptr<DiagnosticHandler> LLVMContext::getDiagnosticHandler() {
   return std::move(pImpl->DiagHandler);
 }
 
-bool LLVMContext::hasSetOpaquePointersValue() const {
-  return pImpl->hasOpaquePointersValue();
+StringRef LLVMContext::getDefaultTargetCPU() {
+  return pImpl->DefaultTargetCPU;
 }
 
-void LLVMContext::setOpaquePointers(bool Enable) const {
-  pImpl->setOpaquePointers(Enable);
+void LLVMContext::setDefaultTargetCPU(StringRef CPU) {
+  pImpl->DefaultTargetCPU = CPU;
 }
 
-bool LLVMContext::supportsTypedPointers() const {
-  return !pImpl->getOpaquePointers();
+StringRef LLVMContext::getDefaultTargetFeatures() {
+  return pImpl->DefaultTargetFeatures;
+}
+
+void LLVMContext::setDefaultTargetFeatures(StringRef Features) {
+  pImpl->DefaultTargetFeatures = Features;
 }

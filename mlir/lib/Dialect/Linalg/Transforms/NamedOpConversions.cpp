@@ -21,7 +21,7 @@
 #include "llvm/ADT/TypeSwitch.h"
 
 namespace mlir {
-#define GEN_PASS_DEF_LINALGNAMEDOPCONVERSION
+#define GEN_PASS_DEF_LINALGNAMEDOPCONVERSIONPASS
 #include "mlir/Dialect/Linalg/Passes.h.inc"
 } // namespace mlir
 
@@ -39,14 +39,14 @@ matchAndReplaceDepthwiseConv(Operation *operation, Value input, Value kernel,
   Location loc = operation->getLoc();
   auto linalgOp = dyn_cast<LinalgOp>(operation);
   // Exit out on the memref version of this operation.
-  if (!linalgOp || !linalgOp.hasTensorSemantics())
+  if (!linalgOp || !linalgOp.hasPureTensorSemantics())
     return failure();
 
   auto result = operation->getResult(0);
 
-  auto kernelTy = kernel.getType().dyn_cast<RankedTensorType>();
-  auto initTy = init.getType().dyn_cast<RankedTensorType>();
-  auto resultTy = result.getType().template dyn_cast<RankedTensorType>();
+  auto kernelTy = dyn_cast<RankedTensorType>(kernel.getType());
+  auto initTy = dyn_cast<RankedTensorType>(init.getType());
+  auto resultTy = dyn_cast<RankedTensorType>(result.getType());
   if (!kernelTy || !initTy || !resultTy)
     return failure();
 
@@ -108,9 +108,9 @@ struct SimplifyDepthwiseConvOp
   LogicalResult matchAndRewrite(DepthwiseConv2DNhwcHwcmOp op,
                                 PatternRewriter &rewriter) const override {
     Operation *operation = op.getOperation();
-    Value input = op.getInputOperand(0)->get();
-    Value kernel = op.getInputOperand(1)->get();
-    Value init = op.getOutputOperand(0)->get();
+    Value input = op.getDpsInputOperand(0)->get();
+    Value kernel = op.getDpsInputOperand(1)->get();
+    Value init = op.getDpsInitOperand(0)->get();
 
     auto stride = op.getStrides();
     auto dilation = op.getDilations();
@@ -128,11 +128,11 @@ struct SimplifyDepthwiseConvQOp
   LogicalResult matchAndRewrite(DepthwiseConv2DNhwcHwcmQOp op,
                                 PatternRewriter &rewriter) const override {
     Operation *operation = op.getOperation();
-    Value input = op.getInputOperand(0)->get();
-    Value kernel = op.getInputOperand(1)->get();
-    Value iZp = op.getInputOperand(2)->get();
-    Value kZp = op.getInputOperand(3)->get();
-    Value init = op.getOutputOperand(0)->get();
+    Value input = op.getDpsInputOperand(0)->get();
+    Value kernel = op.getDpsInputOperand(1)->get();
+    Value iZp = op.getDpsInputOperand(2)->get();
+    Value kZp = op.getDpsInputOperand(3)->get();
+    Value init = op.getDpsInitOperand(0)->get();
 
     auto stride = op.getStrides();
     auto dilation = op.getDilations();
@@ -143,9 +143,10 @@ struct SimplifyDepthwiseConvQOp
 };
 
 struct LinalgNamedOpConversionPass
-    : public impl::LinalgNamedOpConversionBase<LinalgNamedOpConversionPass> {
-  LinalgNamedOpConversionPass() = default;
-  LinalgNamedOpConversionPass(const LinalgNamedOpConversionPass &) = default;
+    : public impl::LinalgNamedOpConversionPassBase<
+          LinalgNamedOpConversionPass> {
+  using impl::LinalgNamedOpConversionPassBase<
+      LinalgNamedOpConversionPass>::LinalgNamedOpConversionPassBase;
 
   void runOnOperation() override {
     Operation *op = getOperation();
@@ -161,8 +162,4 @@ void mlir::linalg::populateLinalgNamedOpConversionPatterns(
     RewritePatternSet &patterns) {
   patterns.add<SimplifyDepthwiseConvOp, SimplifyDepthwiseConvQOp>(
       patterns.getContext());
-}
-
-std::unique_ptr<Pass> mlir::createLinalgNamedOpConversionPass() {
-  return std::make_unique<LinalgNamedOpConversionPass>();
 }

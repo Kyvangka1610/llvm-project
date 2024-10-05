@@ -1,4 +1,4 @@
-// RUN: mlir-opt %s -vector-bufferize -split-input-file | FileCheck %s
+// RUN: mlir-opt %s --one-shot-bufferize="dialect-filter=vector,bufferization copy-before-write unknown-type-conversion=identity-layout-map" -split-input-file | FileCheck %s
 
 // CHECK-LABEL: func @transfer_read(
 //  CHECK-SAME:     %[[t:.*]]: tensor<?x?xf32>, %[[o1:.*]]: index, %[[o2:.*]]: index, %[[pad:.*]]: f32)
@@ -43,3 +43,6 @@ func.func @gather(%base: tensor<?x?xf32>, %v: vector<16xi32>, %mask: vector<16xi
   %0 = vector.gather %base[%c0, %c0][%v], %mask, %pass_thru : tensor<?x?xf32>, vector<16xi32>, vector<16xi1>, vector<16xf32> into vector<16xf32>
   return %0 : vector<16xf32>
 }
+
+// TODO: Add test case for vector.mask. The masked op can currently not
+// bufferize out-of-place, so the only test case is in one-shot-bufferize.mlir.

@@ -1,7 +1,7 @@
-// RUN: %clang_cc1 -triple x86_64-apple-darwin12 -S -o - -emit-llvm %s | FileCheck %s -check-prefix=CHECK-NOERRNO
-// RUN: %clang_cc1 -triple x86_64-linux-gnu -S -o - -emit-llvm -fmath-errno %s | FileCheck %s -check-prefix=CHECK-ERRNO
-// RUN: %clang_cc1 -triple x86_64-apple-darwin12 -S -o - -emit-llvm -x c++ %s | FileCheck %s -check-prefix=CHECK-NOERRNO
-// RUN: %clang_cc1 -triple x86_64-linux-gnu -S -o - -emit-llvm -x c++ -fmath-errno %s | FileCheck %s -check-prefix=CHECK-ERRNO
+// RUN: %clang_cc1 -triple x86_64-apple-darwin12 -o - -emit-llvm %s | FileCheck %s -check-prefix=CHECK-NOERRNO
+// RUN: %clang_cc1 -triple x86_64 -o - -emit-llvm -fmath-errno %s | FileCheck %s -check-prefix=CHECK-ERRNO
+// RUN: %clang_cc1 -triple x86_64-apple-darwin12 -o - -emit-llvm -x c++ %s | FileCheck %s -check-prefix=CHECK-NOERRNO
+// RUN: %clang_cc1 -triple x86_64 -o - -emit-llvm -x c++ -fmath-errno %s | FileCheck %s -check-prefix=CHECK-ERRNO
 
 // Prototypes.
 #ifdef __cplusplus
@@ -614,8 +614,8 @@ void *use[] = {
 // CHECK-ERRNO: declare { double, double } @ctanh(double noundef, double noundef) [[NONCONST]]
 // CHECK-ERRNO: declare <2 x float> @ctanhf(<2 x float> noundef) [[NONCONST]]
 
-// CHECK-NOERRNO: attributes [[NUWRN]] = { nounwind readnone{{.*}} }
-// CHECK-NOERRNO: attributes [[NUWRO]] = { nounwind readonly{{.*}} }
+// CHECK-NOERRNO: attributes [[NUWRN]] = { nounwind willreturn memory(none){{.*}} }
+// CHECK-NOERRNO: attributes [[NUWRO]] = { nounwind willreturn memory(read){{.*}} }
 
-// CHECK-ERRNO: attributes [[NUWRN]] = { nounwind readnone{{.*}} }
-// CHECK-ERRNO: attributes [[NUWRO]] = { nounwind readonly{{.*}} }
+// CHECK-ERRNO: attributes [[NUWRN]] = { nounwind willreturn memory(none){{.*}} }
+// CHECK-ERRNO: attributes [[NUWRO]] = { nounwind willreturn memory(read){{.*}} }

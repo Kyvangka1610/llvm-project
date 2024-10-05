@@ -24,6 +24,7 @@
 #include "llvm/DebugInfo/PDB/Native/GlobalsStream.h"
 #include "llvm/DebugInfo/PDB/Native/TpiStream.h"
 #include "llvm/DebugInfo/PDB/PDBTypes.h"
+#include <optional>
 
 using namespace llvm::codeview;
 using namespace llvm::pdb;
@@ -46,15 +47,18 @@ UdtRecordCompleter::UdtRecordCompleter(
   CVType cvt = m_index.tpi().getType(m_id.index);
   switch (cvt.kind()) {
   case LF_ENUM:
+    m_cvr.er.Options = ClassOptions::None;
     llvm::cantFail(TypeDeserializer::deserializeAs<EnumRecord>(cvt, m_cvr.er));
     break;
   case LF_UNION:
+    m_cvr.ur.Options = ClassOptions::None;
     llvm::cantFail(TypeDeserializer::deserializeAs<UnionRecord>(cvt, m_cvr.ur));
     m_layout.bit_size = m_cvr.ur.getSize() * 8;
     m_record.record.kind = Member::Union;
     break;
   case LF_CLASS:
   case LF_STRUCTURE:
+    m_cvr.cr.Options = ClassOptions::None;
     llvm::cantFail(TypeDeserializer::deserializeAs<ClassRecord>(cvt, m_cvr.cr));
     m_layout.bit_size = m_cvr.cr.getSize() * 8;
     m_record.record.kind = Member::Struct;
@@ -66,7 +70,7 @@ UdtRecordCompleter::UdtRecordCompleter(
 
 clang::QualType UdtRecordCompleter::AddBaseClassForTypeIndex(
     llvm::codeview::TypeIndex ti, llvm::codeview::MemberAccess access,
-    llvm::Optional<uint64_t> vtable_idx) {
+    std::optional<uint64_t> vtable_idx) {
   PdbTypeSymId type_id(ti);
   clang::QualType qt = m_ast_builder.GetOrCreateType(type_id);
 
@@ -92,9 +96,10 @@ void UdtRecordCompleter::AddMethod(llvm::StringRef name, TypeIndex type_idx,
       m_ast_builder.GetOrCreateType(PdbTypeSymId(type_idx));
   if (method_qt.isNull())
     return;
-  m_ast_builder.CompleteType(method_qt);
   CompilerType method_ct = m_ast_builder.ToCompilerType(method_qt);
-  lldb::opaque_compiler_type_t derived_opaque_ty = m_derived_ct.GetOpaqueQualType();
+  TypeSystemClang::RequireCompleteType(method_ct);
+  lldb::opaque_compiler_type_t derived_opaque_ty =
+      m_derived_ct.GetOpaqueQualType();
   auto iter = m_cxx_record_map.find(derived_opaque_ty);
   if (iter != m_cxx_record_map.end()) {
     if (iter->getSecond().contains({name, method_ct})) {
@@ -253,7 +258,7 @@ Error UdtRecordCompleter::visitKnownMember(CVMemberRecord &cvr,
   clang::QualType member_qt = m_ast_builder.GetOrCreateType(PdbTypeSymId(ti));
   if (member_qt.isNull())
     return Error::success();
-  m_ast_builder.CompleteType(member_qt);
+  TypeSystemClang::RequireCompleteType(m_ast_builder.ToCompilerType(member_qt));
   lldb::AccessType access = TranslateMemberAccess(data_member.getAccess());
   size_t field_size =
       bitfield_width ? bitfield_width : GetSizeOfType(ti, m_index.tpi()) * 8;
@@ -310,6 +315,18 @@ void UdtRecordCompleter::complete() {
     bases.push_back(std::move(ib.second));
 
   TypeSystemClang &clang = m_ast_builder.clang();
+  // Make sure all base classes refer to complete types and not forward
+  // declarations. If we don't do this, clang will crash with an
+  // assertion in the call to clang_type.TransferBaseClasses()
+  for (const auto &base_class : bases) {
+    clang::TypeSourceInfo *type_source_info =
+        base_class->getTypeSourceInfo();
+    if (type_source_info) {
+      TypeSystemClang::RequireCompleteType(
+          clang.GetType(type_source_info->getType()));
+    }
+  }
+
   clang.TransferBaseClasses(m_derived_ct.GetOpaqueQualType(), std::move(bases));
 
   clang.AddMethodOverridesForCXXRecordType(m_derived_ct.GetOpaqueQualType());
@@ -342,14 +359,14 @@ UdtRecordCompleter::AddMember(TypeSystemClang &clang, Member *field,
   case Member::Struct:
   case Member::Union: {
     clang::TagTypeKind kind = field->kind == Member::Struct
-                                  ? clang::TagTypeKind::TTK_Struct
-                                  : clang::TagTypeKind::TTK_Union;
+                                  ? clang::TagTypeKind::Struct
+                                  : clang::TagTypeKind::Union;
     ClangASTMetadata metadata;
     metadata.SetUserID(pdb->anonymous_id);
     metadata.SetIsDynamicCXXType(false);
     CompilerType record_ct = clang.CreateRecordType(
-        parent_decl_ctx, OptionalClangModuleID(), lldb::eAccessPublic, "", kind,
-        lldb::eLanguageTypeC_plus_plus, &metadata);
+        parent_decl_ctx, OptionalClangModuleID(), lldb::eAccessPublic, "",
+        llvm::to_underlying(kind), lldb::eLanguageTypeC_plus_plus, metadata);
     TypeSystemClang::StartTagDeclarationDefinition(record_ct);
     ClangASTImporter::LayoutInfo layout;
     clang::DeclContext *decl_ctx = clang.GetDeclContextForType(record_ct);

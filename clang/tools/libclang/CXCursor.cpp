@@ -335,6 +335,9 @@ CXCursor cxcursor::MakeCXCursor(const Stmt *S, const Decl *Parent,
   case Stmt::ObjCSubscriptRefExprClass:
   case Stmt::RecoveryExprClass:
   case Stmt::SYCLUniqueStableNameExprClass:
+  case Stmt::EmbedExprClass:
+  case Stmt::HLSLOutArgExprClass:
+  case Stmt::OpenACCAsteriskSizeExprClass:
     K = CXCursor_UnexposedExpr;
     break;
 
@@ -423,8 +426,8 @@ CXCursor cxcursor::MakeCXCursor(const Stmt *S, const Decl *Parent,
     K = CXCursor_UnexposedExpr;
     break;
 
-  case Stmt::OMPArraySectionExprClass:
-    K = CXCursor_OMPArraySectionExpr;
+  case Stmt::ArraySectionExprClass:
+    K = CXCursor_ArraySectionExpr;
     break;
 
   case Stmt::OMPArrayShapingExprClass:
@@ -567,6 +570,10 @@ CXCursor cxcursor::MakeCXCursor(const Stmt *S, const Decl *Parent,
     K = CXCursor_SizeOfPackExpr;
     break;
 
+  case Stmt::PackIndexingExprClass:
+    K = CXCursor_PackIndexingExpr;
+    break;
+
   case Stmt::DeclRefExprClass:
     if (const ImplicitParamDecl *IPD = dyn_cast_or_null<ImplicitParamDecl>(
             cast<DeclRefExpr>(S)->getDecl())) {
@@ -643,6 +650,10 @@ CXCursor cxcursor::MakeCXCursor(const Stmt *S, const Decl *Parent,
     K = CXCursor_RequiresExpr;
     break;
 
+  case Stmt::CXXParenListInitExprClass:
+    K = CXCursor_CXXParenListInitExpr;
+    break;
+
   case Stmt::MSDependentExistsStmtClass:
     K = CXCursor_UnexposedStmt;
     break;
@@ -664,6 +675,12 @@ CXCursor cxcursor::MakeCXCursor(const Stmt *S, const Decl *Parent,
   case Stmt::OMPUnrollDirectiveClass:
     K = CXCursor_OMPUnrollDirective;
     break;
+  case Stmt::OMPReverseDirectiveClass:
+    K = CXCursor_OMPReverseDirective;
+    break;
+  case Stmt::OMPInterchangeDirectiveClass:
+    K = CXCursor_OMPTileDirective;
+    break;
   case Stmt::OMPForDirectiveClass:
     K = CXCursor_OMPForDirective;
     break;
@@ -675,6 +692,9 @@ CXCursor cxcursor::MakeCXCursor(const Stmt *S, const Decl *Parent,
     break;
   case Stmt::OMPSectionDirectiveClass:
     K = CXCursor_OMPSectionDirective;
+    break;
+  case Stmt::OMPScopeDirectiveClass:
+    K = CXCursor_OMPScopeDirective;
     break;
   case Stmt::OMPSingleDirectiveClass:
     K = CXCursor_OMPSingleDirective;
@@ -711,6 +731,9 @@ CXCursor cxcursor::MakeCXCursor(const Stmt *S, const Decl *Parent,
     break;
   case Stmt::OMPTaskwaitDirectiveClass:
     K = CXCursor_OMPTaskwaitDirective;
+    break;
+  case Stmt::OMPErrorDirectiveClass:
+    K = CXCursor_OMPErrorDirective;
     break;
   case Stmt::OMPTaskgroupDirectiveClass:
     K = CXCursor_OMPTaskgroupDirective;
@@ -856,11 +879,21 @@ CXCursor cxcursor::MakeCXCursor(const Stmt *S, const Decl *Parent,
   case Stmt::OMPParallelGenericLoopDirectiveClass:
     K = CXCursor_OMPParallelGenericLoopDirective;
     break;
+  case Stmt::OpenACCComputeConstructClass:
+    K = CXCursor_OpenACCComputeConstruct;
+    break;
+  case Stmt::OpenACCLoopConstructClass:
+    K = CXCursor_OpenACCLoopConstruct;
+    break;
   case Stmt::OMPTargetParallelGenericLoopDirectiveClass:
     K = CXCursor_OMPTargetParallelGenericLoopDirective;
     break;
   case Stmt::BuiltinBitCastExprClass:
     K = CXCursor_BuiltinBitCastExpr;
+    break;
+  case Stmt::OMPAssumeDirectiveClass:
+    K = CXCursor_OMPAssumeDirective;
+    break;
   }
 
   CXCursor C = {K, 0, {Parent, S, TU}};
@@ -1456,6 +1489,9 @@ enum CXTemplateArgumentKind clang_Cursor_getTemplateArgumentKind(CXCursor C,
     return CXTemplateArgumentKind_NullPtr;
   case TemplateArgument::Integral:
     return CXTemplateArgumentKind_Integral;
+  case TemplateArgument::StructuralValue:
+    // FIXME: Expose these values.
+    return CXTemplateArgumentKind_Invalid;
   case TemplateArgument::Template:
     return CXTemplateArgumentKind_Template;
   case TemplateArgument::TemplateExpansion:

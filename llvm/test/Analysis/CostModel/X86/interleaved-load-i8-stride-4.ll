@@ -26,7 +26,7 @@ define void @test() {
 ; AVX1:  LV: Found an estimated cost of 33 for VF 4 For instruction: %v0 = load i8, ptr %in0, align 1
 ; AVX1:  LV: Found an estimated cost of 66 for VF 8 For instruction: %v0 = load i8, ptr %in0, align 1
 ; AVX1:  LV: Found an estimated cost of 132 for VF 16 For instruction: %v0 = load i8, ptr %in0, align 1
-; AVX1:  LV: Found an estimated cost of 272 for VF 32 For instruction: %v0 = load i8, ptr %in0, align 1
+; AVX1:  LV: Found an estimated cost of 268 for VF 32 For instruction: %v0 = load i8, ptr %in0, align 1
 ;
 ; AVX2-LABEL: 'test'
 ; AVX2:  LV: Found an estimated cost of 1 for VF 1 For instruction: %v0 = load i8, ptr %in0, align 1
@@ -43,7 +43,7 @@ define void @test() {
 ; AVX512DQ:  LV: Found an estimated cost of 13 for VF 8 For instruction: %v0 = load i8, ptr %in0, align 1
 ; AVX512DQ:  LV: Found an estimated cost of 25 for VF 16 For instruction: %v0 = load i8, ptr %in0, align 1
 ; AVX512DQ:  LV: Found an estimated cost of 58 for VF 32 For instruction: %v0 = load i8, ptr %in0, align 1
-; AVX512DQ:  LV: Found an estimated cost of 544 for VF 64 For instruction: %v0 = load i8, ptr %in0, align 1
+; AVX512DQ:  LV: Found an estimated cost of 540 for VF 64 For instruction: %v0 = load i8, ptr %in0, align 1
 ;
 ; AVX512BW-LABEL: 'test'
 ; AVX512BW:  LV: Found an estimated cost of 1 for VF 1 For instruction: %v0 = load i8, ptr %in0, align 1
@@ -80,7 +80,7 @@ for.body:
   %reduce.add.2 = add i8 %reduce.add.1, %v3
 
   %out = getelementptr inbounds [1024 x i8], ptr @B, i64 0, i64 %iv.0
-  store i8 %reduce.add.2, i8* %out
+  store i8 %reduce.add.2, ptr %out
 
   %iv.next = add nuw nsw i64 %iv.0, 4
   %cmp = icmp ult i64 %iv.next, 1024

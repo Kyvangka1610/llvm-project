@@ -41,6 +41,7 @@ protected:
     EXPECT_TRUE(testMap.begin() == testMap.end());
 
     // Lookup tests
+    EXPECT_FALSE(testMap.contains(testKey));
     EXPECT_EQ(0u, testMap.count(testKey));
     EXPECT_EQ(0u, testMap.count(StringRef(testKeyFirst, testKeyLength)));
     EXPECT_EQ(0u, testMap.count(testKeyStr));
@@ -64,6 +65,7 @@ protected:
     EXPECT_TRUE(it == testMap.end());
 
     // Lookup tests
+    EXPECT_TRUE(testMap.contains(testKey));
     EXPECT_EQ(1u, testMap.count(testKey));
     EXPECT_EQ(1u, testMap.count(StringRef(testKeyFirst, testKeyLength)));
     EXPECT_EQ(1u, testMap.count(testKeyStr));
@@ -205,6 +207,18 @@ TEST_F(StringMapTest, CopyCtorTest) {
   EXPECT_EQ(5, Map2.lookup("funf"));
 }
 
+TEST_F(StringMapTest, AtTest) {
+  llvm::StringMap<int> Map;
+
+  // keys both found and not found on non-empty map
+  Map["a"] = 1;
+  Map["b"] = 2;
+  Map["c"] = 3;
+  EXPECT_EQ(1, Map.at("a"));
+  EXPECT_EQ(2, Map.at("b"));
+  EXPECT_EQ(3, Map.at("c"));
+}
+
 // A more complex iteration test.
 TEST_F(StringMapTest, IterationTest) {
   bool visited[100];
@@ -236,7 +250,7 @@ TEST_F(StringMapTest, IterationTest) {
 TEST_F(StringMapTest, StringMapEntryTest) {
   MallocAllocator Allocator;
   StringMap<uint32_t>::value_type *entry =
-      StringMap<uint32_t>::value_type::Create(
+      StringMap<uint32_t>::value_type::create(
           StringRef(testKeyFirst, testKeyLength), Allocator, 1u);
   EXPECT_STREQ(testKey, entry->first().data());
   EXPECT_EQ(1u, entry->second);
@@ -246,7 +260,7 @@ TEST_F(StringMapTest, StringMapEntryTest) {
 // Test insert() method.
 TEST_F(StringMapTest, InsertTest) {
   SCOPED_TRACE("InsertTest");
-  testMap.insert(StringMap<uint32_t>::value_type::Create(
+  testMap.insert(StringMap<uint32_t>::value_type::create(
       StringRef(testKeyFirst, testKeyLength), testMap.getAllocator(), 1u));
   assertSingleItemMap();
 }
@@ -376,14 +390,14 @@ TEST_F(StringMapTest, MoveOnly) {
   StringMap<MoveOnly> t;
   t.insert(std::make_pair("Test", MoveOnly(42)));
   StringRef Key = "Test";
-  StringMapEntry<MoveOnly>::Create(Key, t.getAllocator(), MoveOnly(42))
+  StringMapEntry<MoveOnly>::create(Key, t.getAllocator(), MoveOnly(42))
       ->Destroy(t.getAllocator());
 }
 
 TEST_F(StringMapTest, CtorArg) {
   StringRef Key = "Test";
   MallocAllocator Allocator;
-  StringMapEntry<MoveOnly>::Create(Key, Allocator, Immovable())
+  StringMapEntry<MoveOnly>::create(Key, Allocator, Immovable())
       ->Destroy(Allocator);
 }
 
@@ -473,6 +487,17 @@ TEST_F(StringMapTest, NotEqualWithDifferentValues) {
   ASSERT_TRUE(B != A);
 }
 
+TEST_F(StringMapTest, PrecomputedHash) {
+  StringMap<int> A;
+  StringRef Key = "foo";
+  int Value = 42;
+  uint64_t Hash = StringMap<int>::hash(Key);
+  A.insert({"foo", Value}, Hash);
+  auto I = A.find(Key, Hash);
+  ASSERT_NE(I, A.end());
+  ASSERT_EQ(I->second, Value);
+}
+
 struct Countable {
   int &InstanceCount;
   int Number;
@@ -515,6 +540,16 @@ TEST_F(StringMapTest, MoveDtor) {
   B = StringMap<Countable>();
   ASSERT_EQ(InstanceCount, 0);
   ASSERT_TRUE(B.empty());
+}
+
+TEST_F(StringMapTest, StructuredBindings) {
+  StringMap<int> A;
+  A["a"] = 42;
+
+  for (auto &[Key, Value] : A) {
+    EXPECT_EQ("a", Key);
+    EXPECT_EQ(42, Value);
+  }
 }
 
 namespace {

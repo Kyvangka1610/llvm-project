@@ -59,7 +59,7 @@ static bool isZeroImm(const MachineOperand &op) {
 /// the destination along with the FrameIndex of the loaded stack slot.  If
 /// not, return 0.  This predicate must return 0 if the instruction has
 /// any side effects other than loading from the stack slot.
-unsigned XCoreInstrInfo::isLoadFromStackSlot(const MachineInstr &MI,
+Register XCoreInstrInfo::isLoadFromStackSlot(const MachineInstr &MI,
                                              int &FrameIndex) const {
   int Opcode = MI.getOpcode();
   if (Opcode == XCore::LDWFI)
@@ -79,7 +79,7 @@ unsigned XCoreInstrInfo::isLoadFromStackSlot(const MachineInstr &MI,
   /// the source reg along with the FrameIndex of the loaded stack slot.  If
   /// not, return 0.  This predicate must return 0 if the instruction has
   /// any side effects other than storing to the stack slot.
-unsigned XCoreInstrInfo::isStoreToStackSlot(const MachineInstr &MI,
+Register XCoreInstrInfo::isStoreToStackSlot(const MachineInstr &MI,
                                             int &FrameIndex) const {
   int Opcode = MI.getOpcode();
   if (Opcode == XCore::STWFI)
@@ -331,7 +331,8 @@ XCoreInstrInfo::removeBranch(MachineBasicBlock &MBB, int *BytesRemoved) const {
 void XCoreInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
                                  MachineBasicBlock::iterator I,
                                  const DebugLoc &DL, MCRegister DestReg,
-                                 MCRegister SrcReg, bool KillSrc) const {
+                                 MCRegister SrcReg, bool KillSrc,
+                                 bool RenamableDest, bool RenamableSrc) const {
   bool GRDest = XCore::GRRegsRegClass.contains(DestReg);
   bool GRSrc  = XCore::GRRegsRegClass.contains(SrcReg);
 
@@ -355,13 +356,10 @@ void XCoreInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
   llvm_unreachable("Impossible reg-to-reg copy");
 }
 
-void XCoreInstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,
-                                         MachineBasicBlock::iterator I,
-                                         Register SrcReg, bool isKill,
-                                         int FrameIndex,
-                                         const TargetRegisterClass *RC,
-                                         const TargetRegisterInfo *TRI) const
-{
+void XCoreInstrInfo::storeRegToStackSlot(
+    MachineBasicBlock &MBB, MachineBasicBlock::iterator I, Register SrcReg,
+    bool isKill, int FrameIndex, const TargetRegisterClass *RC,
+    const TargetRegisterInfo *TRI, Register VReg) const {
   DebugLoc DL;
   if (I != MBB.end() && !I->isDebugInstr())
     DL = I->getDebugLoc();
@@ -382,8 +380,8 @@ void XCoreInstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
                                           MachineBasicBlock::iterator I,
                                           Register DestReg, int FrameIndex,
                                           const TargetRegisterClass *RC,
-                                          const TargetRegisterInfo *TRI) const
-{
+                                          const TargetRegisterInfo *TRI,
+                                          Register VReg) const {
   DebugLoc DL;
   if (I != MBB.end() && !I->isDebugInstr())
     DL = I->getDebugLoc();
@@ -419,7 +417,7 @@ static bool isImmMskBitp(unsigned val) {
   if (!isMask_32(val)) {
     return false;
   }
-  int N = Log2_32(val) + 1;
+  int N = llvm::bit_width(val);
   return (N >= 1 && N <= 8) || N == 16 || N == 24 || N == 32;
 }
 
@@ -431,7 +429,7 @@ MachineBasicBlock::iterator XCoreInstrInfo::loadImmediate(
   if (MI != MBB.end() && !MI->isDebugInstr())
     dl = MI->getDebugLoc();
   if (isImmMskBitp(Value)) {
-    int N = Log2_32(Value) + 1;
+    int N = llvm::bit_width(Value);
     return BuildMI(MBB, MI, dl, get(XCore::MKMSK_rus), Reg)
         .addImm(N)
         .getInstr();

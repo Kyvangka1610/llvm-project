@@ -1,8 +1,6 @@
 add_mlir_unittest(MLIRSupportTests
-  DebugActionTest.cpp
-  DebugCounterTest.cpp
+  CyclicReplacerCacheTest.cpp
   IndentedOstreamTest.cpp
-  MathExtrasTest.cpp
   StorageUniquerTest.cpp
 )
 

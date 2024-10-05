@@ -17,12 +17,18 @@
 #include "llvm/DebugInfo/LogicalView/Core/LVElement.h"
 #include "llvm/DebugInfo/LogicalView/Core/LVLocation.h"
 #include "llvm/DebugInfo/LogicalView/Core/LVSort.h"
+#include "llvm/Object/ObjectFile.h"
 #include <list>
 #include <map>
 #include <set>
 
 namespace llvm {
 namespace logicalview {
+
+// Name address, Code size.
+using LVNameInfo = std::pair<LVAddress, uint64_t>;
+using LVPublicNames = std::map<LVScope *, LVNameInfo>;
+using LVPublicAddresses = std::map<LVAddress, LVNameInfo>;
 
 class LVRange;
 
@@ -57,12 +63,11 @@ using LVScopeKindSet = std::set<LVScopeKind>;
 using LVScopeDispatch = std::map<LVScopeKind, LVScopeGetFunction>;
 using LVScopeRequest = std::vector<LVScopeGetFunction>;
 
-using LVOffsetList = std::list<LVOffset>;
 using LVOffsetElementMap = std::map<LVOffset, LVElement *>;
-using LVOffsetLinesMap = std::map<LVOffset, LVLines *>;
-using LVOffsetLocationsMap = std::map<LVOffset, LVLocations *>;
+using LVOffsetLinesMap = std::map<LVOffset, LVLines>;
+using LVOffsetLocationsMap = std::map<LVOffset, LVLocations>;
 using LVOffsetSymbolMap = std::map<LVOffset, LVSymbol *>;
-using LVTagOffsetsMap = std::map<dwarf::Tag, LVOffsetList *>;
+using LVTagOffsetsMap = std::map<dwarf::Tag, LVOffsets>;
 
 // Class to represent a DWARF Scope.
 class LVScope : public LVElement {
@@ -94,7 +99,8 @@ class LVScope : public LVElement {
   // Calculate coverage factor.
   void calculateCoverage() {
     float CoveragePercentage = 0;
-    LVLocation::calculateCoverage(Ranges, CoverageFactor, CoveragePercentage);
+    LVLocation::calculateCoverage(Ranges.get(), CoverageFactor,
+                                  CoveragePercentage);
   }
 
   // Decide if the scope will be printed, using some conditions given by:
@@ -111,11 +117,11 @@ class LVScope : public LVElement {
 
 protected:
   // Types, Symbols, Scopes, Lines, Locations in this scope.
-  LVAutoTypes *Types = nullptr;
-  LVAutoSymbols *Symbols = nullptr;
-  LVAutoScopes *Scopes = nullptr;
-  LVAutoLines *Lines = nullptr;
-  LVAutoLocations *Ranges = nullptr;
+  std::unique_ptr<LVTypes> Types;
+  std::unique_ptr<LVSymbols> Symbols;
+  std::unique_ptr<LVScopes> Scopes;
+  std::unique_ptr<LVLines> Lines;
+  std::unique_ptr<LVLocations> Ranges;
 
   // Vector of elements (types, scopes and symbols).
   // It is the union of (*Types, *Symbols and *Scopes) to be used for
@@ -123,7 +129,7 @@ protected:
   // - Preserve the order the logical elements are read in.
   // - To have a single container with all the logical elements, when
   //   the traversal does not require any specific element kind.
-  LVElements *Children = nullptr;
+  std::unique_ptr<LVElements> Children;
 
   // Resolve the template parameters/arguments relationship.
   void resolveTemplate();
@@ -144,7 +150,7 @@ public:
   }
   LVScope(const LVScope &) = delete;
   LVScope &operator=(const LVScope &) = delete;
-  virtual ~LVScope();
+  virtual ~LVScope() = default;
 
   static bool classof(const LVElement *Element) {
     return Element->getSubclassID() == LVSubclassID::LV_SCOPE;
@@ -196,12 +202,12 @@ public:
   const char *kind() const override;
 
   // Get the specific children.
-  const LVLines *getLines() const { return Lines; }
-  const LVLocations *getRanges() const { return Ranges; }
-  const LVScopes *getScopes() const { return Scopes; }
-  const LVSymbols *getSymbols() const { return Symbols; }
-  const LVTypes *getTypes() const { return Types; }
-  const LVElements *getChildren() const { return Children; }
+  const LVLines *getLines() const { return Lines.get(); }
+  const LVLocations *getRanges() const { return Ranges.get(); }
+  const LVScopes *getScopes() const { return Scopes.get(); }
+  const LVSymbols *getSymbols() const { return Symbols.get(); }
+  const LVTypes *getTypes() const { return Types.get(); }
+  const LVElements *getChildren() const { return Children.get(); }
 
   void addElement(LVElement *Element);
   void addElement(LVLine *Line);
@@ -392,11 +398,20 @@ class LVScopeCompileUnit final : public LVScope {
   // Names (files and directories) used by the Compile Unit.
   std::vector<size_t> Filenames;
 
+  // As the .debug_pubnames section has been removed in DWARF5, we have a
+  // similar functionality, which is used by the decoded functions. We use
+  // the low-pc and high-pc for those scopes that are marked as public, in
+  // order to support DWARF and CodeView.
+  LVPublicNames PublicNames;
+
   // Toolchain producer.
   size_t ProducerIndex = 0;
 
   // Compilation directory name.
   size_t CompilationDirectoryIndex = 0;
+
+  // Used by the CodeView Reader.
+  codeview::CPUType CompilationCPUType = codeview::CPUType::X64;
 
   // Keep record of elements. They are needed at the compilation unit level
   // to print the summary at the end of the printing.
@@ -410,9 +425,10 @@ class LVScopeCompileUnit final : public LVScope {
 
   // It records the mapping between logical lines representing a debug line
   // entry and its address in the text section. It is used to find a line
-  // giving its exact or closest address.
+  // giving its exact or closest address. To support comdat functions, all
+  // addresses for the same section are recorded in the same map.
   using LVAddressToLine = std::map<LVAddress, LVLine *>;
-  LVAddressToLine AddressToLine;
+  LVDoubleMap<LVSectionIndex, LVAddress, LVLine *> SectionMappings;
 
   // DWARF Tags (Tag, Element list).
   LVTagOffsetsMap DebugTags;
@@ -443,8 +459,8 @@ class LVScopeCompileUnit final : public LVScope {
                                  LVOffsetLocationsMap *Map) {
     LVOffset Offset = Element->getOffset();
     addInvalidOffset(Offset, Element);
-    addItem<LVOffsetLocationsMap, LVLocations, LVOffset, LVLocation *>(
-        Map, Offset, Location);
+    addItem<LVOffsetLocationsMap, LVOffset, LVLocation *>(Map, Offset,
+                                                          Location);
   }
 
   // Record scope sizes indexed by lexical level.
@@ -455,6 +471,10 @@ class LVScopeCompileUnit final : public LVScope {
   // Maximum seen lexical level. It is used to control how many entries
   // in the 'Totals' vector are valid values.
   LVLevel MaxSeenLevel = 0;
+
+  // Get the line located at the given address.
+  LVLine *lineLowerBound(LVAddress Address, LVScope *Scope) const;
+  LVLine *lineUpperBound(LVAddress Address, LVScope *Scope) const;
 
   void printScopeSize(const LVScope *Scope, raw_ostream &OS);
   void printScopeSize(const LVScope *Scope, raw_ostream &OS) const {
@@ -472,20 +492,34 @@ public:
   }
   LVScopeCompileUnit(const LVScopeCompileUnit &) = delete;
   LVScopeCompileUnit &operator=(const LVScopeCompileUnit &) = delete;
-  ~LVScopeCompileUnit() {
-    deleteList<LVTagOffsetsMap>(DebugTags);
-    deleteList<LVOffsetLocationsMap>(InvalidLocations);
-    deleteList<LVOffsetLocationsMap>(InvalidRanges);
-    deleteList<LVOffsetLinesMap>(LinesZero);
-  }
+  ~LVScopeCompileUnit() = default;
 
   LVScope *getCompileUnitParent() const override {
     return static_cast<LVScope *>(const_cast<LVScopeCompileUnit *>(this));
   }
 
-  // Get the line located at the given address.
-  LVLine *lineLowerBound(LVAddress Address) const;
-  LVLine *lineUpperBound(LVAddress Address) const;
+  // Add line to address mapping.
+  void addMapping(LVLine *Line, LVSectionIndex SectionIndex);
+  LVLineRange lineRange(LVLocation *Location) const;
+
+  LVNameInfo NameNone = {UINT64_MAX, 0};
+  void addPublicName(LVScope *Scope, LVAddress LowPC, LVAddress HighPC) {
+    PublicNames.emplace(std::piecewise_construct, std::forward_as_tuple(Scope),
+                        std::forward_as_tuple(LowPC, HighPC - LowPC));
+  }
+  const LVNameInfo &findPublicName(LVScope *Scope) {
+    LVPublicNames::iterator Iter = PublicNames.find(Scope);
+    return (Iter != PublicNames.end()) ? Iter->second : NameNone;
+  }
+  const LVPublicNames &getPublicNames() const { return PublicNames; }
+
+  // The base address of the scope for any of the debugging information
+  // entries listed, is given by either the DW_AT_low_pc attribute or the
+  // first address in the first range entry in the list of ranges given by
+  // the DW_AT_ranges attribute.
+  LVAddress getBaseAddress() const {
+    return Ranges ? Ranges->front()->getLowerAddress() : 0;
+  }
 
   StringRef getCompilationDirectory() const {
     return getStringPool().getString(CompilationDirectoryIndex);
@@ -506,6 +540,9 @@ public:
     ProducerIndex = getStringPool().getIndex(ProducerName);
   }
 
+  void setCPUType(codeview::CPUType Type) { CompilationCPUType = Type; }
+  codeview::CPUType getCPUType() { return CompilationCPUType; }
+
   // Record DWARF tags.
   void addDebugTag(dwarf::Tag Target, LVOffset Offset);
   // Record elements with invalid offsets.
@@ -519,16 +556,16 @@ public:
   // Record line zero.
   void addLineZero(LVLine *Line);
 
-  const LVTagOffsetsMap getDebugTags() const { return DebugTags; }
-  const LVOffsetElementMap getWarningOffsets() const { return WarningOffsets; }
-  const LVOffsetLocationsMap getInvalidLocations() const {
+  const LVTagOffsetsMap &getDebugTags() const { return DebugTags; }
+  const LVOffsetElementMap &getWarningOffsets() const { return WarningOffsets; }
+  const LVOffsetLocationsMap &getInvalidLocations() const {
     return InvalidLocations;
   }
-  const LVOffsetSymbolMap getInvalidCoverages() const {
+  const LVOffsetSymbolMap &getInvalidCoverages() const {
     return InvalidCoverages;
   }
-  const LVOffsetLocationsMap getInvalidRanges() const { return InvalidRanges; }
-  const LVOffsetLinesMap getLinesZero() const { return LinesZero; }
+  const LVOffsetLocationsMap &getInvalidRanges() const { return InvalidRanges; }
+  const LVOffsetLinesMap &getLinesZero() const { return LinesZero; }
 
   // Process ranges, locations and calculate coverage.
   void processRangeLocationCoverage(
@@ -757,6 +794,10 @@ public:
   void setFileFormatName(StringRef FileFormatName) {
     FileFormatNameIndex = getStringPool().getIndex(FileFormatName);
   }
+
+  // The CodeView Reader uses scoped names. Recursively transform the
+  // element name to use just the most inner component.
+  void transformScopedName();
 
   // Process the collected location, ranges and calculate coverage.
   void processRangeInformation();

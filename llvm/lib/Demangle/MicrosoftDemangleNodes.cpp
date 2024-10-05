@@ -120,7 +120,7 @@ static void outputCallingConvention(OutputBuffer &OB, CallingConv CC) {
 std::string Node::toString(OutputFlags Flags) const {
   OutputBuffer OB;
   this->output(OB, Flags);
-  StringView SV = OB;
+  std::string_view SV = OB;
   std::string Owned(SV.begin(), SV.end());
   std::free(OB.getBuffer());
   return Owned;
@@ -149,6 +149,8 @@ void PrimitiveTypeNode::outputPre(OutputBuffer &OB, OutputFlags Flags) const {
     OUTPUT_ENUM_CLASS_VALUE(PrimitiveKind, Double, "double");
     OUTPUT_ENUM_CLASS_VALUE(PrimitiveKind, Ldouble, "long double");
     OUTPUT_ENUM_CLASS_VALUE(PrimitiveKind, Nullptr, "std::nullptr_t");
+    OUTPUT_ENUM_CLASS_VALUE(PrimitiveKind, Auto, "auto");
+    OUTPUT_ENUM_CLASS_VALUE(PrimitiveKind, DecltypeAuto, "decltype(auto)");
   }
   outputQualifiers(OB, Quals, true, false);
 }
@@ -158,7 +160,7 @@ void NodeArrayNode::output(OutputBuffer &OB, OutputFlags Flags) const {
 }
 
 void NodeArrayNode::output(OutputBuffer &OB, OutputFlags Flags,
-                           StringView Separator) const {
+                           std::string_view Separator) const {
   if (Count == 0)
     return;
   if (Nodes[0])

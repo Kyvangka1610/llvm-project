@@ -411,8 +411,6 @@ func.func @test_trivially_false_returning_two_results(%arg0: index) -> (index, i
   // CHECK: %[[c13:.*]] = arith.constant 13 : index
   %c7 = arith.constant 7 : index
   %c13 = arith.constant 13 : index
-  // CHECK: %[[c2:.*]] = arith.constant 2 : index
-  // CHECK: %[[c3:.*]] = arith.constant 3 : index
   %res:2 = affine.if affine_set<(d0, d1) : (5 >= 0, -2 >= 0)> (%c7, %c13) -> (index, index) {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
@@ -522,7 +520,7 @@ func.func @semiaffine_simplification_floordiv_and_ceildiv(%arg0: index, %arg1: i
 
 // Test simplification of product expressions.
 // CHECK-DAG:   #[[$PRODUCT:.*]] = affine_map<()[s0, s1, s2, s3, s4] -> (s3 + s4 + (s0 - s1) * s2)>
-// CHECK-DAG:   #[[$SUM_OF_PRODUCTS:.*]] = affine_map<()[s0, s1, s2, s3, s4] -> (s2 * s0 + s2 + s3 * s0 + s3 * s1 + s3 + s4 * s1 + s4)>
+// CHECK-DAG:   #[[$SUM_OF_PRODUCTS:.*]] = affine_map<()[s0, s1, s2, s3, s4] -> (s2 + s2 * s0 + s3 + s3 * s0 + s3 * s1 + s4 + s4 * s1)>
 // CHECK-LABEL: func @semiaffine_simplification_product
 // CHECK-SAME:  (%[[ARG0:.*]]: index, %[[ARG1:.*]]: index, %[[ARG2:.*]]: index, %[[ARG3:.*]]: index, %[[ARG4:.*]]: index, %[[ARG5:.*]]: index)
 func.func @semiaffine_simplification_product(%arg0: index, %arg1: index, %arg2: index, %arg3: index, %arg4: index, %arg5: index) -> (index, index) {
@@ -547,3 +545,23 @@ func.func @semi_affine_simplification_euclidean_lemma(%arg0: index, %arg1: index
 // CHECK-NEXT: %[[ZERO:.*]] = arith.constant 0 : index
 // CHECK-NEXT: %[[RESULT:.*]] = affine.apply #[[$SIMPLIFIED_MAP]]()[%[[ARG2]], %[[ARG3]], %[[ARG0]], %[[ARG1]]]
 // CHECK-NEXT: return %[[ZERO]], %[[RESULT]]
+
+// -----
+
+// CHECK-DAG: #[[$MAP:.*]] = affine_map<()[s0] -> (s0 mod 2 + (s0 floordiv 2) * s0)>
+// CHECK-LABEL: func @semiaffine_modulo
+func.func @semiaffine_modulo(%arg0: index) -> index {
+  %a = affine.apply affine_map<()[s0] -> (s0 mod 2 + (s0 floordiv 2) * s0)> ()[%arg0]
+  // CHECK: affine.apply #[[$MAP]]()[%{{.*}}]
+  return %a : index
+}
+
+// -----
+
+// CHECK-DAG: #[[$MAP:.*]] = affine_map<()[s0, s1, s2] -> (s2 mod 2 + (s1 floordiv 2) * 2 + ((s2 floordiv 2) * s0) * 2)>
+// CHECK-LABEL: func @semiaffine_modulo_dim
+func.func @semiaffine_modulo_dim(%arg0: index, %arg1: index, %arg2: index) -> index {
+  %a = affine.apply affine_map<(d0)[s0, s1] -> (((d0 floordiv 2) * s0 + s1 floordiv 2) * 2 + d0 mod 2)> (%arg0)[%arg1, %arg2]
+  //CHECK: affine.apply #[[$MAP]]()[%{{.*}}, %{{.*}}, %{{.*}}]
+  return %a : index
+}

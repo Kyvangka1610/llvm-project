@@ -238,7 +238,7 @@ Option *Options::GetLongOptions() {
               llvm::formatv(
                   "option[{0}] --{1} has a short option {2:x} that "
                   "conflicts with option[{3}] --{4}, short option won't "
-                  "be used for --{5}n",
+                  "be used for --{5}",
                   (int)i, defs[i].long_option, short_opt, pos->second,
                   m_getopt_table[pos->second].definition->long_option,
                   defs[i].long_option)
@@ -636,7 +636,7 @@ bool Options::HandleOptionCompletion(CompletionRequest &request,
         // upper level code will know this is a full match and add the " ".
         const OptionDefinition &opt = opt_defs[opt_defs_index];
         llvm::StringRef long_option = opt.long_option;
-        if (cur_opt_str.startswith("--") && cur_opt_str != long_option) {
+        if (cur_opt_str.starts_with("--") && cur_opt_str != long_option) {
           request.AddCompletion("--" + long_option.str(), opt.usage_text);
           return true;
         } else
@@ -652,7 +652,7 @@ bool Options::HandleOptionCompletion(CompletionRequest &request,
         if (cur_opt_str.consume_front("--")) {
           for (auto &def : opt_defs) {
             llvm::StringRef long_option(def.long_option);
-            if (long_option.startswith(cur_opt_str))
+            if (long_option.starts_with(cur_opt_str))
               request.AddCompletion("--" + long_option.str(), def.usage_text);
           }
         }
@@ -661,7 +661,9 @@ bool Options::HandleOptionCompletion(CompletionRequest &request,
 
     } else if (opt_arg_pos == request.GetCursorIndex()) {
       // Okay the cursor is on the completion of an argument. See if it has a
-      // completion, otherwise return no matches.
+      // completion, otherwise return no matches.  Note, opt_defs_index == -1
+      // means we're after an option, but that option doesn't exist.  We'll
+      // end up treating that as an argument.  Not sure we can do much better.
       if (opt_defs_index != -1) {
         HandleOptionArgumentCompletion(request, opt_element_vector, i,
                                        interpreter);
@@ -688,7 +690,6 @@ void Options::HandleOptionArgumentCompletion(
   int opt_defs_index = opt_element_vector[opt_element_index].opt_defs_index;
 
   // See if this is an enumeration type option, and if so complete it here:
-
   const auto &enum_values = opt_defs[opt_defs_index].enum_values;
   if (!enum_values.empty())
     for (const auto &enum_value : enum_values)
@@ -714,8 +715,8 @@ void Options::HandleOptionArgumentCompletion(
     }
   }
 
-  if (completion_mask & CommandCompletions::eSourceFileCompletion ||
-      completion_mask & CommandCompletions::eSymbolCompletion) {
+  if (completion_mask & lldb::eSourceFileCompletion ||
+      completion_mask & lldb::eSymbolCompletion) {
     for (size_t i = 0; i < opt_element_vector.size(); i++) {
       int cur_defs_index = opt_element_vector[i].opt_defs_index;
 
@@ -748,7 +749,7 @@ void Options::HandleOptionArgumentCompletion(
     }
   }
 
-  CommandCompletions::InvokeCommonCompletionCallbacks(
+  lldb_private::CommandCompletions::InvokeCommonCompletionCallbacks(
       interpreter, completion_mask, request, filter_up.get());
 }
 
@@ -781,6 +782,19 @@ void OptionGroupOptions::Append(OptionGroup *group, uint32_t src_mask,
   }
 }
 
+void OptionGroupOptions::Append(
+    OptionGroup *group, llvm::ArrayRef<llvm::StringRef> exclude_long_options) {
+  auto group_option_defs = group->GetDefinitions();
+  for (uint32_t i = 0; i < group_option_defs.size(); ++i) {
+    const auto &definition = group_option_defs[i];
+    if (llvm::is_contained(exclude_long_options, definition.long_option))
+      continue;
+
+    m_option_infos.push_back(OptionInfo(group, i));
+    m_option_defs.push_back(definition);
+  }
+}
+
 void OptionGroupOptions::Finalize() {
   m_did_finalize = true;
 }
@@ -798,7 +812,8 @@ Status OptionGroupOptions::SetOptionValue(uint32_t option_idx,
         execution_context);
 
   } else {
-    error.SetErrorString("invalid option index"); // Shouldn't happen...
+    error =
+        Status::FromErrorString("invalid option index"); // Shouldn't happen...
   }
   return error;
 }
@@ -877,8 +892,8 @@ static size_t FindArgumentIndexForOption(const Args &args,
   std::string long_opt =
       std::string(llvm::formatv("--{0}", long_option.definition->long_option));
   for (const auto &entry : llvm::enumerate(args)) {
-    if (entry.value().ref().startswith(short_opt) ||
-        entry.value().ref().startswith(long_opt))
+    if (entry.value().ref().starts_with(short_opt) ||
+        entry.value().ref().starts_with(long_opt))
       return entry.index();
   }
 
@@ -909,7 +924,7 @@ static std::string BuildShortOptions(const Option *long_options) {
       }
     }
   }
-  return std::move(sstr.str());
+  return storage;
 }
 
 llvm::Expected<Args> Options::ParseAlias(const Args &args,
@@ -918,8 +933,7 @@ llvm::Expected<Args> Options::ParseAlias(const Args &args,
   Option *long_options = GetLongOptions();
 
   if (long_options == nullptr) {
-    return llvm::make_error<llvm::StringError>("Invalid long options",
-                                               llvm::inconvertibleErrorCode());
+    return llvm::createStringError("Invalid long options");
   }
 
   std::string short_options = BuildShortOptions(long_options);
@@ -944,8 +958,7 @@ llvm::Expected<Args> Options::ParseAlias(const Args &args,
       break;
 
     if (val == '?') {
-      return llvm::make_error<llvm::StringError>(
-          "Unknown or ambiguous option", llvm::inconvertibleErrorCode());
+      return llvm::createStringError("Unknown or ambiguous option");
     }
 
     if (val == 0)
@@ -967,9 +980,8 @@ llvm::Expected<Args> Options::ParseAlias(const Args &args,
 
     // See if the option takes an argument, and see if one was supplied.
     if (long_options_index == -1) {
-      return llvm::make_error<llvm::StringError>(
-          llvm::formatv("Invalid option with value '{0}'.", char(val)).str(),
-          llvm::inconvertibleErrorCode());
+      return llvm::createStringError(
+          llvm::formatv("Invalid option with value '{0}'.", char(val)).str());
     }
 
     StreamString option_str;
@@ -982,11 +994,10 @@ llvm::Expected<Args> Options::ParseAlias(const Args &args,
     switch (has_arg) {
     case OptionParser::eRequiredArgument:
       if (OptionParser::GetOptionArgument() == nullptr) {
-        return llvm::make_error<llvm::StringError>(
+        return llvm::createStringError(
             llvm::formatv("Option '{0}' is missing argument specifier.",
                           option_str.GetString())
-                .str(),
-            llvm::inconvertibleErrorCode());
+                .str());
       }
       [[fallthrough]];
     case OptionParser::eOptionalArgument:
@@ -995,19 +1006,18 @@ llvm::Expected<Args> Options::ParseAlias(const Args &args,
     case OptionParser::eNoArgument:
       break;
     default:
-      return llvm::make_error<llvm::StringError>(
+      return llvm::createStringError(
           llvm::formatv("error with options table; invalid value in has_arg "
                         "field for option '{0}'.",
                         char(val))
-              .str(),
-          llvm::inconvertibleErrorCode());
+              .str());
     }
     // Find option in the argument list; also see if it was supposed to take an
     // argument and if one was supplied.  Remove option (and argument, if
     // given) from the argument list.  Also remove them from the
     // raw_input_string, if one was passed in.
     // Note: We also need to preserve any option argument values that were
-    // surrounded by backticks, as we lose track of them in the 
+    // surrounded by backticks, as we lose track of them in the
     // option_args_vector.
     size_t idx =
         FindArgumentIndexForOption(args_copy, long_options[long_options_index]);
@@ -1189,21 +1199,12 @@ OptionElementVector Options::ParseForCompletion(const Args &args,
         }
         break;
       case OptionParser::eOptionalArgument:
-        if (OptionParser::GetOptionArgument() != nullptr) {
-          option_element_vector.push_back(OptionArgElement(
-              opt_defs_index,
-              FindOriginalIndex(dummy_vec[OptionParser::GetOptionIndex() - 2],
-                                args),
-              FindOriginalIndex(dummy_vec[OptionParser::GetOptionIndex() - 1],
-                                args)));
-        } else {
-          option_element_vector.push_back(OptionArgElement(
-              opt_defs_index,
-              FindOriginalIndex(dummy_vec[OptionParser::GetOptionIndex() - 2],
-                                args),
-              FindOriginalIndex(dummy_vec[OptionParser::GetOptionIndex() - 1],
-                                args)));
-        }
+        option_element_vector.push_back(OptionArgElement(
+            opt_defs_index,
+            FindOriginalIndex(dummy_vec[OptionParser::GetOptionIndex() - 2],
+                              args),
+            FindOriginalIndex(dummy_vec[OptionParser::GetOptionIndex() - 1],
+                              args)));
         break;
       default:
         // The options table is messed up.  Here we'll just continue
@@ -1248,8 +1249,7 @@ llvm::Expected<Args> Options::Parse(const Args &args,
   Status error;
   Option *long_options = GetLongOptions();
   if (long_options == nullptr) {
-    return llvm::make_error<llvm::StringError>("Invalid long options.",
-                                               llvm::inconvertibleErrorCode());
+    return llvm::createStringError("Invalid long options.");
   }
 
   std::string short_options = BuildShortOptions(long_options);
@@ -1263,7 +1263,7 @@ llvm::Expected<Args> Options::Parse(const Args &args,
                               &long_options_index);
 
     if (val == ':') {
-      error.SetErrorString("last option requires an argument");
+      error = Status::FromErrorString("last option requires an argument");
       break;
     }
 
@@ -1272,7 +1272,7 @@ llvm::Expected<Args> Options::Parse(const Args &args,
 
     // Did we get an error?
     if (val == '?') {
-      error.SetErrorString("unknown or ambiguous option");
+      error = Status::FromErrorString("unknown or ambiguous option");
       break;
     }
     // The option auto-set itself
@@ -1309,9 +1309,8 @@ llvm::Expected<Args> Options::Parse(const Args &args,
       if (!platform_sp && require_validation) {
         // Caller requires validation but we cannot validate as we don't have
         // the mandatory platform against which to validate.
-        return llvm::make_error<llvm::StringError>(
-            "cannot validate options: no platform available",
-            llvm::inconvertibleErrorCode());
+        return llvm::createStringError(
+            "cannot validate options: no platform available");
       }
 
       bool validation_failed = false;
@@ -1322,9 +1321,9 @@ llvm::Expected<Args> Options::Parse(const Args &args,
             execution_context ? execution_context : &dummy_context;
         if (validator && !validator->IsValid(*platform_sp, *exe_ctx_p)) {
           validation_failed = true;
-          error.SetErrorStringWithFormat("Option \"%s\" invalid.  %s",
-                                         def->long_option,
-                                         def->validator->LongConditionString());
+          error = Status::FromErrorStringWithFormat(
+              "Option \"%s\" invalid.  %s", def->long_option,
+              def->validator->LongConditionString());
         }
       }
 
@@ -1339,9 +1338,10 @@ llvm::Expected<Args> Options::Parse(const Args &args,
       // If the Option setting returned an error, we should stop parsing
       // and return the error.
       if (error.Fail())
-        break;      
+        break;
     } else {
-      error.SetErrorStringWithFormat("invalid option with value '%i'", val);
+      error = Status::FromErrorStringWithFormat(
+          "invalid option with value '%i'", val);
     }
   }
 
@@ -1351,4 +1351,17 @@ llvm::Expected<Args> Options::Parse(const Args &args,
   argv.pop_back();
   argv.erase(argv.begin(), argv.begin() + OptionParser::GetOptionIndex());
   return ReconstituteArgsAfterParsing(argv, args);
+}
+
+llvm::Error lldb_private::CreateOptionParsingError(
+    llvm::StringRef option_arg, const char short_option,
+    llvm::StringRef long_option, llvm::StringRef additional_context) {
+  std::string buffer;
+  llvm::raw_string_ostream stream(buffer);
+  stream << "Invalid value ('" << option_arg << "') for -" << short_option;
+  if (!long_option.empty())
+    stream << " (" << long_option << ")";
+  if (!additional_context.empty())
+    stream << ": " << additional_context;
+  return llvm::createStringError(llvm::inconvertibleErrorCode(), buffer);
 }

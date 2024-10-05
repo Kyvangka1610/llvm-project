@@ -2,6 +2,7 @@ add_flang_library(FortranSemantics
   assignment.cpp
   attr.cpp
   canonicalize-acc.cpp
+  canonicalize-directives.cpp
   canonicalize-do.cpp
   canonicalize-omp.cpp
   check-acc-structure.cpp
@@ -10,6 +11,7 @@ add_flang_library(FortranSemantics
   check-call.cpp
   check-case.cpp
   check-coarray.cpp
+  check-cuda.cpp
   check-data.cpp
   check-deallocate.cpp
   check-declarations.cpp
@@ -26,6 +28,7 @@ add_flang_library(FortranSemantics
   check-stop.cpp
   compute-offsets.cpp
   data-to-inits.cpp
+  definable.cpp
   expression.cpp
   mod-file.cpp
   pointer-assignment.cpp
@@ -34,6 +37,7 @@ add_flang_library(FortranSemantics
   resolve-directives.cpp
   resolve-names-utils.cpp
   resolve-names.cpp
+  rewrite-directives.cpp
   rewrite-parse-tree.cpp
   runtime-type-info.cpp
   scope.cpp
@@ -56,4 +60,5 @@ add_flang_library(FortranSemantics
   Support
   FrontendOpenMP
   FrontendOpenACC
+  TargetParser
 )

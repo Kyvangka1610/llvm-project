@@ -13,7 +13,12 @@
 #include "LoongArchInstrInfo.h"
 #include "LoongArch.h"
 #include "LoongArchMachineFunctionInfo.h"
+#include "LoongArchRegisterInfo.h"
+#include "MCTargetDesc/LoongArchMCTargetDesc.h"
 #include "MCTargetDesc/LoongArchMatInt.h"
+#include "llvm/CodeGen/RegisterScavenging.h"
+#include "llvm/CodeGen/StackMaps.h"
+#include "llvm/MC/MCInstBuilder.h"
 
 using namespace llvm;
 
@@ -25,14 +30,60 @@ LoongArchInstrInfo::LoongArchInstrInfo(LoongArchSubtarget &STI)
                             LoongArch::ADJCALLSTACKUP),
       STI(STI) {}
 
+MCInst LoongArchInstrInfo::getNop() const {
+  return MCInstBuilder(LoongArch::ANDI)
+      .addReg(LoongArch::R0)
+      .addReg(LoongArch::R0)
+      .addImm(0);
+}
+
 void LoongArchInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
                                      MachineBasicBlock::iterator MBBI,
                                      const DebugLoc &DL, MCRegister DstReg,
-                                     MCRegister SrcReg, bool KillSrc) const {
+                                     MCRegister SrcReg, bool KillSrc,
+                                     bool RenamableDest,
+                                     bool RenamableSrc) const {
   if (LoongArch::GPRRegClass.contains(DstReg, SrcReg)) {
     BuildMI(MBB, MBBI, DL, get(LoongArch::OR), DstReg)
         .addReg(SrcReg, getKillRegState(KillSrc))
         .addReg(LoongArch::R0);
+    return;
+  }
+
+  // VR->VR copies.
+  if (LoongArch::LSX128RegClass.contains(DstReg, SrcReg)) {
+    BuildMI(MBB, MBBI, DL, get(LoongArch::VORI_B), DstReg)
+        .addReg(SrcReg, getKillRegState(KillSrc))
+        .addImm(0);
+    return;
+  }
+
+  // XR->XR copies.
+  if (LoongArch::LASX256RegClass.contains(DstReg, SrcReg)) {
+    BuildMI(MBB, MBBI, DL, get(LoongArch::XVORI_B), DstReg)
+        .addReg(SrcReg, getKillRegState(KillSrc))
+        .addImm(0);
+    return;
+  }
+
+  // GPR->CFR copy.
+  if (LoongArch::CFRRegClass.contains(DstReg) &&
+      LoongArch::GPRRegClass.contains(SrcReg)) {
+    BuildMI(MBB, MBBI, DL, get(LoongArch::MOVGR2CF), DstReg)
+        .addReg(SrcReg, getKillRegState(KillSrc));
+    return;
+  }
+  // CFR->GPR copy.
+  if (LoongArch::GPRRegClass.contains(DstReg) &&
+      LoongArch::CFRRegClass.contains(SrcReg)) {
+    BuildMI(MBB, MBBI, DL, get(LoongArch::MOVCF2GR), DstReg)
+        .addReg(SrcReg, getKillRegState(KillSrc));
+    return;
+  }
+  // CFR->CFR copy.
+  if (LoongArch::CFRRegClass.contains(DstReg, SrcReg)) {
+    BuildMI(MBB, MBBI, DL, get(LoongArch::PseudoCopyCFR), DstReg)
+        .addReg(SrcReg, getKillRegState(KillSrc));
     return;
   }
 
@@ -42,6 +93,14 @@ void LoongArchInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
     Opc = LoongArch::FMOV_S;
   } else if (LoongArch::FPR64RegClass.contains(DstReg, SrcReg)) {
     Opc = LoongArch::FMOV_D;
+  } else if (LoongArch::GPRRegClass.contains(DstReg) &&
+             LoongArch::FPR32RegClass.contains(SrcReg)) {
+    // FPR32 -> GPR copies
+    Opc = LoongArch::MOVFR2GR_S;
+  } else if (LoongArch::GPRRegClass.contains(DstReg) &&
+             LoongArch::FPR64RegClass.contains(SrcReg)) {
+    // FPR64 -> GPR copies
+    Opc = LoongArch::MOVFR2GR_D;
   } else {
     // TODO: support other copies.
     llvm_unreachable("Impossible reg-to-reg copy");
@@ -54,10 +113,7 @@ void LoongArchInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
 void LoongArchInstrInfo::storeRegToStackSlot(
     MachineBasicBlock &MBB, MachineBasicBlock::iterator I, Register SrcReg,
     bool IsKill, int FI, const TargetRegisterClass *RC,
-    const TargetRegisterInfo *TRI) const {
-  DebugLoc DL;
-  if (I != MBB.end())
-    DL = I->getDebugLoc();
+    const TargetRegisterInfo *TRI, Register VReg) const {
   MachineFunction *MF = MBB.getParent();
   MachineFrameInfo &MFI = MF->getFrameInfo();
 
@@ -70,6 +126,12 @@ void LoongArchInstrInfo::storeRegToStackSlot(
     Opcode = LoongArch::FST_S;
   else if (LoongArch::FPR64RegClass.hasSubClassEq(RC))
     Opcode = LoongArch::FST_D;
+  else if (LoongArch::LSX128RegClass.hasSubClassEq(RC))
+    Opcode = LoongArch::VST;
+  else if (LoongArch::LASX256RegClass.hasSubClassEq(RC))
+    Opcode = LoongArch::XVST;
+  else if (LoongArch::CFRRegClass.hasSubClassEq(RC))
+    Opcode = LoongArch::PseudoST_CFR;
   else
     llvm_unreachable("Can't store this register to stack slot");
 
@@ -77,20 +139,19 @@ void LoongArchInstrInfo::storeRegToStackSlot(
       MachinePointerInfo::getFixedStack(*MF, FI), MachineMemOperand::MOStore,
       MFI.getObjectSize(FI), MFI.getObjectAlign(FI));
 
-  BuildMI(MBB, I, DL, get(Opcode))
+  BuildMI(MBB, I, DebugLoc(), get(Opcode))
       .addReg(SrcReg, getKillRegState(IsKill))
       .addFrameIndex(FI)
       .addImm(0)
       .addMemOperand(MMO);
 }
 
-void LoongArchInstrInfo::loadRegFromStackSlot(
-    MachineBasicBlock &MBB, MachineBasicBlock::iterator I, Register DstReg,
-    int FI, const TargetRegisterClass *RC,
-    const TargetRegisterInfo *TRI) const {
-  DebugLoc DL;
-  if (I != MBB.end())
-    DL = I->getDebugLoc();
+void LoongArchInstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
+                                              MachineBasicBlock::iterator I,
+                                              Register DstReg, int FI,
+                                              const TargetRegisterClass *RC,
+                                              const TargetRegisterInfo *TRI,
+                                              Register VReg) const {
   MachineFunction *MF = MBB.getParent();
   MachineFrameInfo &MFI = MF->getFrameInfo();
 
@@ -103,6 +164,12 @@ void LoongArchInstrInfo::loadRegFromStackSlot(
     Opcode = LoongArch::FLD_S;
   else if (LoongArch::FPR64RegClass.hasSubClassEq(RC))
     Opcode = LoongArch::FLD_D;
+  else if (LoongArch::LSX128RegClass.hasSubClassEq(RC))
+    Opcode = LoongArch::VLD;
+  else if (LoongArch::LASX256RegClass.hasSubClassEq(RC))
+    Opcode = LoongArch::XVLD;
+  else if (LoongArch::CFRRegClass.hasSubClassEq(RC))
+    Opcode = LoongArch::PseudoLD_CFR;
   else
     llvm_unreachable("Can't load this register from stack slot");
 
@@ -110,7 +177,7 @@ void LoongArchInstrInfo::loadRegFromStackSlot(
       MachinePointerInfo::getFixedStack(*MF, FI), MachineMemOperand::MOLoad,
       MFI.getObjectSize(FI), MFI.getObjectAlign(FI));
 
-  BuildMI(MBB, I, DL, get(Opcode), DstReg)
+  BuildMI(MBB, I, DebugLoc(), get(Opcode), DstReg)
       .addFrameIndex(FI)
       .addImm(0)
       .addMemOperand(MMO);
@@ -144,6 +211,14 @@ void LoongArchInstrInfo::movImm(MachineBasicBlock &MBB,
           .addImm(Inst.Imm)
           .setMIFlag(Flag);
       break;
+    case LoongArch::BSTRINS_D:
+      BuildMI(MBB, MBBI, DL, get(Inst.Opc), DstReg)
+          .addReg(SrcReg, RegState::Kill)
+          .addReg(SrcReg, RegState::Kill)
+          .addImm(Inst.Imm >> 32)
+          .addImm(Inst.Imm & 0xFF)
+          .setMIFlag(Flag);
+      break;
     default:
       assert(false && "Unknown insn emitted by LoongArchMatInt");
     }
@@ -154,7 +229,48 @@ void LoongArchInstrInfo::movImm(MachineBasicBlock &MBB,
 }
 
 unsigned LoongArchInstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
-  return MI.getDesc().getSize();
+  unsigned Opcode = MI.getOpcode();
+
+  if (Opcode == TargetOpcode::INLINEASM ||
+      Opcode == TargetOpcode::INLINEASM_BR) {
+    const MachineFunction *MF = MI.getParent()->getParent();
+    const MCAsmInfo *MAI = MF->getTarget().getMCAsmInfo();
+    return getInlineAsmLength(MI.getOperand(0).getSymbolName(), *MAI);
+  }
+
+  unsigned NumBytes = 0;
+  const MCInstrDesc &Desc = MI.getDesc();
+
+  // Size should be preferably set in
+  // llvm/lib/Target/LoongArch/LoongArch*InstrInfo.td (default case).
+  // Specific cases handle instructions of variable sizes.
+  switch (Desc.getOpcode()) {
+  default:
+    return Desc.getSize();
+  case TargetOpcode::STATEPOINT:
+    NumBytes = StatepointOpers(&MI).getNumPatchBytes();
+    assert(NumBytes % 4 == 0 && "Invalid number of NOP bytes requested!");
+    // No patch bytes means a normal call inst (i.e. `bl`) is emitted.
+    if (NumBytes == 0)
+      NumBytes = 4;
+    break;
+  }
+  return NumBytes;
+}
+
+bool LoongArchInstrInfo::isAsCheapAsAMove(const MachineInstr &MI) const {
+  const unsigned Opcode = MI.getOpcode();
+  switch (Opcode) {
+  default:
+    break;
+  case LoongArch::ADDI_D:
+  case LoongArch::ORI:
+  case LoongArch::XORI:
+    return (MI.getOperand(1).isReg() &&
+            MI.getOperand(1).getReg() == LoongArch::R0) ||
+           (MI.getOperand(2).isImm() && MI.getOperand(2).getImm() == 0);
+  }
+  return MI.isAsCheapAsAMove();
 }
 
 MachineBasicBlock *
@@ -237,6 +353,106 @@ bool LoongArchInstrInfo::analyzeBranch(MachineBasicBlock &MBB,
   return true;
 }
 
+bool LoongArchInstrInfo::isBranchOffsetInRange(unsigned BranchOp,
+                                               int64_t BrOffset) const {
+  switch (BranchOp) {
+  default:
+    llvm_unreachable("Unknown branch instruction!");
+  case LoongArch::BEQ:
+  case LoongArch::BNE:
+  case LoongArch::BLT:
+  case LoongArch::BGE:
+  case LoongArch::BLTU:
+  case LoongArch::BGEU:
+    return isInt<18>(BrOffset);
+  case LoongArch::BEQZ:
+  case LoongArch::BNEZ:
+  case LoongArch::BCEQZ:
+  case LoongArch::BCNEZ:
+    return isInt<23>(BrOffset);
+  case LoongArch::B:
+  case LoongArch::PseudoBR:
+    return isInt<28>(BrOffset);
+  }
+}
+
+bool LoongArchInstrInfo::isSchedulingBoundary(const MachineInstr &MI,
+                                              const MachineBasicBlock *MBB,
+                                              const MachineFunction &MF) const {
+  if (TargetInstrInfo::isSchedulingBoundary(MI, MBB, MF))
+    return true;
+
+  auto MII = MI.getIterator();
+  auto MIE = MBB->end();
+
+  // According to psABI v2.30:
+  //
+  // https://github.com/loongson/la-abi-specs/releases/tag/v2.30
+  //
+  // The following instruction patterns are prohibited from being reordered:
+  //
+  // * pcaddu18 $ra, %call36(s)
+  //   jirl     $ra, $ra, 0
+  //
+  // * pcalau12i $a0, %pc_hi20(s)
+  //   addi.d $a1, $zero, %pc_lo12(s)
+  //   lu32i.d $a1, %pc64_lo20(s)
+  //   lu52i.d $a1, $a1, %pc64_hi12(s)
+  //
+  // * pcalau12i $a0, %got_pc_hi20(s) | %ld_pc_hi20(s) | %gd_pc_hi20(s)
+  //   addi.d $a1, $zero, %got_pc_lo12(s)
+  //   lu32i.d $a1, %got64_pc_lo20(s)
+  //   lu52i.d $a1, $a1, %got64_pc_hi12(s)
+  //
+  // * pcalau12i $a0, %ie_pc_hi20(s)
+  //   addi.d $a1, $zero, %ie_pc_lo12(s)
+  //   lu32i.d $a1, %ie64_pc_lo20(s)
+  //   lu52i.d $a1, $a1, %ie64_pc_hi12(s)
+  //
+  // For simplicity, only pcalau12i and lu52i.d are marked as scheduling
+  // boundaries, and the instructions between them are guaranteed to be
+  // ordered according to data dependencies.
+  switch (MI.getOpcode()) {
+  case LoongArch::PCADDU18I:
+    if (MI.getOperand(1).getTargetFlags() == LoongArchII::MO_CALL36)
+      return true;
+    break;
+  case LoongArch::PCALAU12I: {
+    auto AddI = std::next(MII);
+    if (AddI == MIE || AddI->getOpcode() != LoongArch::ADDI_D)
+      break;
+    auto Lu32I = std::next(AddI);
+    if (Lu32I == MIE || Lu32I->getOpcode() != LoongArch::LU32I_D)
+      break;
+    auto MO0 = MI.getOperand(1).getTargetFlags();
+    auto MO1 = AddI->getOperand(2).getTargetFlags();
+    auto MO2 = Lu32I->getOperand(2).getTargetFlags();
+    if (MO0 == LoongArchII::MO_PCREL_HI && MO1 == LoongArchII::MO_PCREL_LO &&
+        MO2 == LoongArchII::MO_PCREL64_LO)
+      return true;
+    if ((MO0 == LoongArchII::MO_GOT_PC_HI || MO0 == LoongArchII::MO_LD_PC_HI ||
+         MO0 == LoongArchII::MO_GD_PC_HI) &&
+        MO1 == LoongArchII::MO_GOT_PC_LO && MO2 == LoongArchII::MO_GOT_PC64_LO)
+      return true;
+    if (MO0 == LoongArchII::MO_IE_PC_HI && MO1 == LoongArchII::MO_IE_PC_LO &&
+        MO2 == LoongArchII::MO_IE_PC64_LO)
+      return true;
+    break;
+  }
+  case LoongArch::LU52I_D: {
+    auto MO = MI.getOperand(2).getTargetFlags();
+    if (MO == LoongArchII::MO_PCREL64_HI || MO == LoongArchII::MO_GOT_PC64_HI ||
+        MO == LoongArchII::MO_IE_PC64_HI)
+      return true;
+    break;
+  }
+  default:
+    break;
+  }
+
+  return false;
+}
+
 unsigned LoongArchInstrInfo::removeBranch(MachineBasicBlock &MBB,
                                           int *BytesRemoved) const {
   if (BytesRemoved)
@@ -308,6 +524,71 @@ unsigned LoongArchInstrInfo::insertBranch(
   return 2;
 }
 
+void LoongArchInstrInfo::insertIndirectBranch(MachineBasicBlock &MBB,
+                                              MachineBasicBlock &DestBB,
+                                              MachineBasicBlock &RestoreBB,
+                                              const DebugLoc &DL,
+                                              int64_t BrOffset,
+                                              RegScavenger *RS) const {
+  assert(RS && "RegScavenger required for long branching");
+  assert(MBB.empty() &&
+         "new block should be inserted for expanding unconditional branch");
+  assert(MBB.pred_size() == 1);
+
+  MachineFunction *MF = MBB.getParent();
+  MachineRegisterInfo &MRI = MF->getRegInfo();
+  const TargetRegisterInfo *TRI = MF->getSubtarget().getRegisterInfo();
+  LoongArchMachineFunctionInfo *LAFI =
+      MF->getInfo<LoongArchMachineFunctionInfo>();
+
+  if (!isInt<32>(BrOffset))
+    report_fatal_error(
+        "Branch offsets outside of the signed 32-bit range not supported");
+
+  Register ScratchReg = MRI.createVirtualRegister(&LoongArch::GPRRegClass);
+  auto II = MBB.end();
+
+  MachineInstr &PCALAU12I =
+      *BuildMI(MBB, II, DL, get(LoongArch::PCALAU12I), ScratchReg)
+           .addMBB(&DestBB, LoongArchII::MO_PCREL_HI);
+  MachineInstr &ADDI =
+      *BuildMI(MBB, II, DL,
+               get(STI.is64Bit() ? LoongArch::ADDI_D : LoongArch::ADDI_W),
+               ScratchReg)
+           .addReg(ScratchReg)
+           .addMBB(&DestBB, LoongArchII::MO_PCREL_LO);
+  BuildMI(MBB, II, DL, get(LoongArch::PseudoBRIND))
+      .addReg(ScratchReg, RegState::Kill)
+      .addImm(0);
+
+  RS->enterBasicBlockEnd(MBB);
+  Register Scav = RS->scavengeRegisterBackwards(
+      LoongArch::GPRRegClass, PCALAU12I.getIterator(), /*RestoreAfter=*/false,
+      /*SPAdj=*/0, /*AllowSpill=*/false);
+  if (Scav != LoongArch::NoRegister)
+    RS->setRegUsed(Scav);
+  else {
+    // When there is no scavenged register, it needs to specify a register.
+    // Specify t8 register because it won't be used too often.
+    Scav = LoongArch::R20;
+    int FrameIndex = LAFI->getBranchRelaxationSpillFrameIndex();
+    if (FrameIndex == -1)
+      report_fatal_error("The function size is incorrectly estimated.");
+    storeRegToStackSlot(MBB, PCALAU12I, Scav, /*IsKill=*/true, FrameIndex,
+                        &LoongArch::GPRRegClass, TRI, Register());
+    TRI->eliminateFrameIndex(std::prev(PCALAU12I.getIterator()),
+                             /*SpAdj=*/0, /*FIOperandNum=*/1);
+    PCALAU12I.getOperand(1).setMBB(&RestoreBB);
+    ADDI.getOperand(2).setMBB(&RestoreBB);
+    loadRegFromStackSlot(RestoreBB, RestoreBB.end(), Scav, FrameIndex,
+                         &LoongArch::GPRRegClass, TRI, Register());
+    TRI->eliminateFrameIndex(RestoreBB.back(),
+                             /*SpAdj=*/0, /*FIOperandNum=*/1);
+  }
+  MRI.replaceRegWith(ScratchReg, Scav);
+  MRI.clearVirtRegs();
+}
+
 static unsigned getOppositeBranchOpc(unsigned Opc) {
   switch (Opc) {
   default:
@@ -340,4 +621,49 @@ bool LoongArchInstrInfo::reverseBranchCondition(
   assert((Cond.size() && Cond.size() <= 3) && "Invalid branch condition!");
   Cond[0].setImm(getOppositeBranchOpc(Cond[0].getImm()));
   return false;
+}
+
+std::pair<unsigned, unsigned>
+LoongArchInstrInfo::decomposeMachineOperandsTargetFlags(unsigned TF) const {
+  return std::make_pair(TF, 0u);
+}
+
+ArrayRef<std::pair<unsigned, const char *>>
+LoongArchInstrInfo::getSerializableDirectMachineOperandTargetFlags() const {
+  using namespace LoongArchII;
+  // TODO: Add more target flags.
+  static const std::pair<unsigned, const char *> TargetFlags[] = {
+      {MO_CALL, "loongarch-call"},
+      {MO_CALL_PLT, "loongarch-call-plt"},
+      {MO_PCREL_HI, "loongarch-pcrel-hi"},
+      {MO_PCREL_LO, "loongarch-pcrel-lo"},
+      {MO_PCREL64_LO, "loongarch-pcrel64-lo"},
+      {MO_PCREL64_HI, "loongarch-pcrel64-hi"},
+      {MO_GOT_PC_HI, "loongarch-got-pc-hi"},
+      {MO_GOT_PC_LO, "loongarch-got-pc-lo"},
+      {MO_GOT_PC64_LO, "loongarch-got-pc64-lo"},
+      {MO_GOT_PC64_HI, "loongarch-got-pc64-hi"},
+      {MO_LE_HI, "loongarch-le-hi"},
+      {MO_LE_LO, "loongarch-le-lo"},
+      {MO_LE64_LO, "loongarch-le64-lo"},
+      {MO_LE64_HI, "loongarch-le64-hi"},
+      {MO_IE_PC_HI, "loongarch-ie-pc-hi"},
+      {MO_IE_PC_LO, "loongarch-ie-pc-lo"},
+      {MO_IE_PC64_LO, "loongarch-ie-pc64-lo"},
+      {MO_IE_PC64_HI, "loongarch-ie-pc64-hi"},
+      {MO_DESC_PC_HI, "loongarch-desc-pc-hi"},
+      {MO_DESC_PC_LO, "loongarch-desc-pc-lo"},
+      {MO_DESC64_PC_LO, "loongarch-desc64-pc-lo"},
+      {MO_DESC64_PC_HI, "loongarch-desc64-pc-hi"},
+      {MO_DESC_LD, "loongarch-desc-ld"},
+      {MO_DESC_CALL, "loongarch-desc-call"},
+      {MO_LD_PC_HI, "loongarch-ld-pc-hi"},
+      {MO_GD_PC_HI, "loongarch-gd-pc-hi"}};
+  return ArrayRef(TargetFlags);
+}
+
+// Returns true if this is the sext.w pattern, addi.w rd, rs, 0.
+bool LoongArch::isSEXT_W(const MachineInstr &MI) {
+  return MI.getOpcode() == LoongArch::ADDI_W && MI.getOperand(1).isReg() &&
+         MI.getOperand(2).isImm() && MI.getOperand(2).getImm() == 0;
 }

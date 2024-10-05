@@ -4,6 +4,7 @@ add_lldb_unittest(UtilityTests
   OptionsWithRawTest.cpp
   ArchSpecTest.cpp
   BroadcasterTest.cpp
+  ChecksumTest.cpp
   ConstStringTest.cpp
   CompletionRequestTest.cpp
   DataBufferTest.cpp
@@ -11,6 +12,7 @@ add_lldb_unittest(UtilityTests
   DataExtractorTest.cpp
   EnvironmentTest.cpp
   EventTest.cpp
+  FileSpecListTest.cpp
   FileSpecTest.cpp
   FlagsTest.cpp
   ListenerTest.cpp
@@ -21,6 +23,7 @@ add_lldb_unittest(UtilityTests
   ProcessInstanceInfoTest.cpp
   RangeMapTest.cpp
   RangeTest.cpp
+  RealpathPrefixesTest.cpp
   RegisterValueTest.cpp
   RegularExpressionTest.cpp
   ScalarTest.cpp
@@ -35,6 +38,7 @@ add_lldb_unittest(UtilityTests
   StringListTest.cpp
   StructuredDataTest.cpp
   SubsystemRAIITest.cpp
+  SupportFileTest.cpp
   TildeExpressionResolverTest.cpp
   TimeoutTest.cpp
   TimerTest.cpp
@@ -47,13 +51,19 @@ add_lldb_unittest(UtilityTests
   XcodeSDKTest.cpp
 
   LINK_LIBS
+      lldbTarget
       lldbUtility
       lldbUtilityHelpers
       LLVMTestingSupport
   LINK_COMPONENTS
     Support
+    TargetParser
   )
 
-add_unittest_inputs(UtilityTests
+set(test_inputs
   StructuredData-basic.json
+  StructuredData-nested.json
+  StructuredData-full.json
   )
+
+add_unittest_inputs(UtilityTests "${test_inputs}")

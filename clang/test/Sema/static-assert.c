@@ -25,8 +25,12 @@ void foo(void) {
 #endif
 }
 
-_Static_assert(1, invalid); // expected-error {{expected string literal for diagnostic message in static_assert}} \
-                            // ext-warning {{'_Static_assert' is a C11 extension}}
+_Static_assert(1, invalid); // ext-warning {{'_Static_assert' is a C11 extension}}
+#ifndef __cplusplus
+// expected-error@-2 {{expected string literal for diagnostic message in static_assert}}
+#endif
+// cxx-error@-4 {{use of undeclared identifier 'invalid'}}
+// cxx-warning@-5 {{'static_assert' with a user-generated message is a C++26 extension}}
 
 struct A {
   int a;
@@ -94,3 +98,20 @@ _Static_assert(__builtin_strlen("1"), "");  // ext-warning {{'_Static_assert' is
 // __builtin_strlen(literal) is considered an integer constant expression
 // and doesn't cause a pedantic warning
 #endif
+
+
+_Static_assert(0, L"\xFFFFFFFF"); // expected-warning {{encoding prefix 'L' on an unevaluated string literal has no effect}} \
+                                  // expected-error {{invalid escape sequence '\xFFFFFFFF' in an unevaluated string literal}} \
+                                  // expected-error {{hex escape sequence out of range}} \
+                                  // ext-warning {{'_Static_assert' is a C11 extension}}
+_Static_assert(0, L"\u1234"); // expected-warning {{encoding prefix 'L' on an unevaluated string literal has no effect}} \
+                              // expected-error {{static assertion failed: ሴ}} \
+                              // ext-warning {{'_Static_assert' is a C11 extension}}
+
+_Static_assert(0, L"\x1ff"      // expected-warning {{encoding prefix 'L' on an unevaluated string literal has no effect}} \
+                                // expected-error {{hex escape sequence out of range}} \
+                                // expected-error {{invalid escape sequence '\x1ff' in an unevaluated string literal}} \
+                                // ext-warning {{'_Static_assert' is a C11 extension}}
+                   "0\x123"     // expected-error {{invalid escape sequence '\x123' in an unevaluated string literal}}
+                   "fx\xfffff"  // expected-error {{invalid escape sequence '\xfffff' in an unevaluated string literal}}
+                   "goop");

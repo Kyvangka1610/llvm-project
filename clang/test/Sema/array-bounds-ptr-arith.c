@@ -1,6 +1,7 @@
 // RUN: %clang_cc1 -verify=expected        -Warray-bounds-pointer-arithmetic %s
 // RUN: %clang_cc1 -verify=expected        -Warray-bounds-pointer-arithmetic %s -fstrict-flex-arrays=0
 // RUN: %clang_cc1 -verify=expected,strict -Warray-bounds-pointer-arithmetic %s -fstrict-flex-arrays=2
+// RUN: %clang_cc1 -verify=expected,strict -Warray-bounds-pointer-arithmetic %s -fstrict-flex-arrays=3
 
 // Test case from PR10615
 struct ext2_super_block{
@@ -25,9 +26,8 @@ void pr11594(struct S *s) {
   int *p = a - s->n;
 }
 
-// Test case reduced from <rdar://problem/11387038>.  This resulted in
-// an assertion failure because of the typedef instead of an explicit
-// constant array type.
+// This resulted in an assertion failure because of the typedef instead of an
+// explicit constant array type.
 struct RDar11387038 {};
 typedef struct RDar11387038 RDar11387038Array[1];
 struct RDar11387038_Table {

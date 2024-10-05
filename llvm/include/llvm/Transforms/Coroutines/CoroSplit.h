@@ -21,12 +21,25 @@
 
 namespace llvm {
 
+namespace coro {
+class BaseABI;
+struct Shape;
+} // namespace coro
+
 struct CoroSplitPass : PassInfoMixin<CoroSplitPass> {
-  CoroSplitPass(bool OptimizeFrame = false) : OptimizeFrame(OptimizeFrame) {}
+
+  CoroSplitPass(bool OptimizeFrame = false);
+  CoroSplitPass(std::function<bool(Instruction &)> MaterializableCallback,
+                bool OptimizeFrame = false);
 
   PreservedAnalyses run(LazyCallGraph::SCC &C, CGSCCAnalysisManager &AM,
                         LazyCallGraph &CG, CGSCCUpdateResult &UR);
   static bool isRequired() { return true; }
+
+  using BaseABITy =
+      std::function<std::unique_ptr<coro::BaseABI>(Function &, coro::Shape &)>;
+  // Generator for an ABI transformer
+  BaseABITy CreateAndInitABI;
 
   // Would be true if the Optimization level isn't O0.
   bool OptimizeFrame;

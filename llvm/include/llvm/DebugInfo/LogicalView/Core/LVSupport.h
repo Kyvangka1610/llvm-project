@@ -14,36 +14,26 @@
 #define LLVM_DEBUGINFO_LOGICALVIEW_CORE_LVSUPPORT_H
 
 #include "llvm/ADT/SmallBitVector.h"
-#include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/DebugInfo/LogicalView/Core/LVStringPool.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 #include <cctype>
+#include <map>
 #include <sstream>
 
 namespace llvm {
 namespace logicalview {
 
-template <typename T>
-using TypeIsValid = std::bool_constant<std::is_pointer<T>::value>;
+// Returns the unique string pool instance.
+LVStringPool &getStringPool();
 
-// Utility class to help memory management and perform an automatic cleaning.
-template <typename T, unsigned N = 8>
-class LVAutoSmallVector : public SmallVector<T, N> {
-  static_assert(TypeIsValid<T>::value, "T must be a pointer type");
-
-public:
-  using iterator = typename SmallVector<T, N>::iterator;
-  LVAutoSmallVector() : SmallVector<T, N>::SmallVector() {}
-
-  ~LVAutoSmallVector() {
-    // Destroy the constructed elements in the vector.
-    for (auto *Item : *this)
-      delete Item;
-  }
-};
+using LVStringRefs = std::vector<StringRef>;
+using LVLexicalComponent = std::tuple<StringRef, StringRef>;
+using LVLexicalIndex =
+    std::tuple<LVStringRefs::size_type, LVStringRefs::size_type>;
 
 // Used to record specific characteristics about the objects.
 template <typename T> class LVProperties {
@@ -120,7 +110,7 @@ inline std::string hexString(uint64_t Value, size_t Width = HEX_WIDTH) {
   std::string String;
   raw_string_ostream Stream(String);
   Stream << hexValue(Value, Width, false);
-  return Stream.str();
+  return String;
 }
 
 // Get a hexadecimal string representation for the given value.
@@ -142,26 +132,82 @@ std::string formatAttributes(const StringRef First, Args... Others) {
   return Stream.str();
 }
 
-// Add an item to a map with second being a list.
-template <typename MapType, typename ListType, typename KeyType,
-          typename ValueType>
+// Add an item to a map with second being a small vector.
+template <typename MapType, typename KeyType, typename ValueType>
 void addItem(MapType *Map, KeyType Key, ValueType Value) {
-  ListType *List = nullptr;
-  typename MapType::const_iterator Iter = Map->find(Key);
-  if (Iter != Map->end())
-    List = Iter->second;
-  else {
-    List = new ListType();
-    Map->emplace(Key, List);
-  }
-  List->push_back(Value);
+  (*Map)[Key].push_back(Value);
 }
 
-// Delete the map contained list.
-template <typename MapType> void deleteList(MapType &Map) {
-  for (typename MapType::const_reference Entry : Map)
-    delete Entry.second;
-}
+// Double map data structure.
+template <typename FirstKeyType, typename SecondKeyType, typename ValueType>
+class LVDoubleMap {
+  static_assert(std::is_pointer<ValueType>::value,
+                "ValueType must be a pointer.");
+  using LVSecondMapType = std::map<SecondKeyType, ValueType>;
+  using LVFirstMapType =
+      std::map<FirstKeyType, std::unique_ptr<LVSecondMapType>>;
+  using LVAuxMapType = std::map<SecondKeyType, FirstKeyType>;
+  using LVValueTypes = std::vector<ValueType>;
+  LVFirstMapType FirstMap;
+  LVAuxMapType AuxMap;
+
+public:
+  void add(FirstKeyType FirstKey, SecondKeyType SecondKey, ValueType Value) {
+    typename LVFirstMapType::iterator FirstIter = FirstMap.find(FirstKey);
+    if (FirstIter == FirstMap.end()) {
+      auto SecondMapSP = std::make_unique<LVSecondMapType>();
+      SecondMapSP->emplace(SecondKey, Value);
+      FirstMap.emplace(FirstKey, std::move(SecondMapSP));
+    } else {
+      LVSecondMapType *SecondMap = FirstIter->second.get();
+      if (SecondMap->find(SecondKey) == SecondMap->end())
+        SecondMap->emplace(SecondKey, Value);
+    }
+
+    typename LVAuxMapType::iterator AuxIter = AuxMap.find(SecondKey);
+    if (AuxIter == AuxMap.end()) {
+      AuxMap.emplace(SecondKey, FirstKey);
+    }
+  }
+
+  LVSecondMapType *findMap(FirstKeyType FirstKey) const {
+    typename LVFirstMapType::const_iterator FirstIter = FirstMap.find(FirstKey);
+    if (FirstIter == FirstMap.end())
+      return nullptr;
+
+    return FirstIter->second.get();
+  }
+
+  ValueType find(FirstKeyType FirstKey, SecondKeyType SecondKey) const {
+    LVSecondMapType *SecondMap = findMap(FirstKey);
+    if (!SecondMap)
+      return nullptr;
+
+    typename LVSecondMapType::const_iterator SecondIter =
+        SecondMap->find(SecondKey);
+    return (SecondIter != SecondMap->end()) ? SecondIter->second : nullptr;
+  }
+
+  ValueType find(SecondKeyType SecondKey) const {
+    typename LVAuxMapType::const_iterator AuxIter = AuxMap.find(SecondKey);
+    if (AuxIter == AuxMap.end())
+      return nullptr;
+    return find(AuxIter->second, SecondKey);
+  }
+
+  // Return a vector with all the 'ValueType' values.
+  LVValueTypes find() const {
+    LVValueTypes Values;
+    if (FirstMap.empty())
+      return Values;
+    for (typename LVFirstMapType::const_reference FirstEntry : FirstMap) {
+      LVSecondMapType &SecondMap = *FirstEntry.second;
+      for (typename LVSecondMapType::const_reference SecondEntry : SecondMap)
+        Values.push_back(SecondEntry.second);
+    }
+    return Values;
+  }
+};
 
 // Unified and flattened pathnames.
 std::string transformPath(StringRef Path);
@@ -178,6 +224,15 @@ inline std::string formattedName(StringRef Name) {
 inline std::string formattedNames(StringRef Name1, StringRef Name2) {
   return (Twine("'") + Twine(Name1) + Twine(Name2) + Twine("'")).str();
 }
+
+// The given string represents a symbol or type name with optional enclosing
+// scopes, such as: name, name<..>, scope::name, scope::..::name, etc.
+// The string can have multiple references to template instantiations.
+// It returns the inner most component.
+LVLexicalComponent getInnerComponent(StringRef Name);
+LVStringRefs getAllLexicalComponents(StringRef Name);
+std::string getScopedName(const LVStringRefs &Components,
+                          StringRef BaseName = {});
 
 // These are the values assigned to the debug location record IDs.
 // See DebugInfo/CodeView/CodeViewSymbols.def.

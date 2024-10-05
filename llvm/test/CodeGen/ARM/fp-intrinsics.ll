@@ -77,13 +77,13 @@ define i32 @fptosi_f32(float %x) #0 {
 ; CHECK-NOSP: bl __aeabi_f2iz
 ; CHECK-SP: vcvt.s32.f32
 ; FIXME-CHECK-SP: vcvt.s32.f32
-define void @fptosi_f32_twice(float %arg, i32* %ptr) #0 {
+define void @fptosi_f32_twice(float %arg, ptr %ptr) #0 {
 entry:
   %conv = call i32 @llvm.experimental.constrained.fptosi.f32(float %arg, metadata !"fpexcept.strict") #0
-  store i32 %conv, i32* %ptr, align 4
+  store i32 %conv, ptr %ptr, align 4
   %conv1 = call i32 @llvm.experimental.constrained.fptosi.f32(float %arg, metadata !"fpexcept.strict") #0
-  %idx = getelementptr inbounds i32, i32* %ptr, i32 1
-  store i32 %conv1, i32* %idx, align 4
+  %idx = getelementptr inbounds i32, ptr %ptr, i32 1
+  store i32 %conv1, ptr %idx, align 4
   ret void
 }
 
@@ -100,13 +100,13 @@ define i32 @fptoui_f32(float %x) #0 {
 ; CHECK-NOSP: bl __aeabi_f2uiz
 ; FIXME-CHECK-SP: vcvt.u32.f32
 ; FIXME-CHECK-SP: vcvt.u32.f32
-define void @fptoui_f32_twice(float %arg, i32* %ptr) #0 {
+define void @fptoui_f32_twice(float %arg, ptr %ptr) #0 {
 entry:
   %conv = call i32 @llvm.experimental.constrained.fptoui.f32(float %arg, metadata !"fpexcept.strict") #0
-  store i32 %conv, i32* %ptr, align 4
+  store i32 %conv, ptr %ptr, align 4
   %conv1 = call i32 @llvm.experimental.constrained.fptoui.f32(float %arg, metadata !"fpexcept.strict") #0
-  %idx = getelementptr inbounds i32, i32* %ptr, i32 1
-  store i32 %conv1, i32* %idx, align 4
+  %idx = getelementptr inbounds i32, ptr %ptr, i32 1
+  store i32 %conv1, ptr %idx, align 4
   ret void
 }
 
@@ -136,6 +136,13 @@ define float @sin_f32(float %x) #0 {
 ; CHECK: bl cosf
 define float @cos_f32(float %x) #0 {
   %val = call float @llvm.experimental.constrained.cos.f32(float %x, metadata !"round.tonearest", metadata !"fpexcept.strict") #0
+  ret float %val
+}
+
+; CHECK-LABEL: tan_f32:
+; CHECK: bl tanf
+define float @tan_f32(float %x) #0 {
+  %val = call float @llvm.experimental.constrained.tan.f32(float %x, metadata !"round.tonearest", metadata !"fpexcept.strict") #0
   ret float %val
 }
 
@@ -596,6 +603,13 @@ define double @cos_f64(double %x) #0 {
   ret double %val
 }
 
+; CHECK-LABEL: tan_f64:
+; CHECK: bl tan
+define double @tan_f64(double %x) #0 {
+  %val = call double @llvm.experimental.constrained.tan.f64(double %x, metadata !"round.tonearest", metadata !"fpexcept.strict") #0
+  ret double %val
+}
+
 ; CHECK-LABEL: pow_f64:
 ; CHECK: bl pow
 define double @pow_f64(double %x, double %y) #0 {
@@ -982,13 +996,13 @@ define double @fpext_f32(float %x) #0 {
 ; CHECK-NODP: bl __aeabi_f2d
 ; CHECK-DP: vcvt.f64.f32
 ; FIXME-CHECK-DP: vcvt.f64.f32
-define void @fpext_f32_twice(float %arg, double* %ptr) #0 {
+define void @fpext_f32_twice(float %arg, ptr %ptr) #0 {
 entry:
   %conv1 = call double @llvm.experimental.constrained.fpext.f64.f32(float %arg, metadata !"fpexcept.strict") #0
-  store double %conv1, double* %ptr, align 8
+  store double %conv1, ptr %ptr, align 8
   %conv2 = call double @llvm.experimental.constrained.fpext.f64.f32(float %arg, metadata !"fpexcept.strict") #0
-  %idx = getelementptr inbounds double, double* %ptr, i32 1
-  store double %conv2, double* %idx, align 8
+  %idx = getelementptr inbounds double, ptr %ptr, i32 1
+  store double %conv2, ptr %idx, align 8
   ret void
 }
 
@@ -1023,6 +1037,7 @@ declare float @llvm.experimental.constrained.sqrt.f32(float, metadata, metadata)
 declare float @llvm.experimental.constrained.powi.f32(float, i32, metadata, metadata)
 declare float @llvm.experimental.constrained.sin.f32(float, metadata, metadata)
 declare float @llvm.experimental.constrained.cos.f32(float, metadata, metadata)
+declare float @llvm.experimental.constrained.tan.f32(float, metadata, metadata)
 declare float @llvm.experimental.constrained.pow.f32(float, float, metadata, metadata)
 declare float @llvm.experimental.constrained.log.f32(float, metadata, metadata)
 declare float @llvm.experimental.constrained.log10.f32(float, metadata, metadata)
@@ -1056,6 +1071,7 @@ declare double @llvm.experimental.constrained.sqrt.f64(double, metadata, metadat
 declare double @llvm.experimental.constrained.powi.f64(double, i32, metadata, metadata)
 declare double @llvm.experimental.constrained.sin.f64(double, metadata, metadata)
 declare double @llvm.experimental.constrained.cos.f64(double, metadata, metadata)
+declare double @llvm.experimental.constrained.tan.f64(double, metadata, metadata)
 declare double @llvm.experimental.constrained.pow.f64(double, double, metadata, metadata)
 declare double @llvm.experimental.constrained.log.f64(double, metadata, metadata)
 declare double @llvm.experimental.constrained.log10.f64(double, metadata, metadata)

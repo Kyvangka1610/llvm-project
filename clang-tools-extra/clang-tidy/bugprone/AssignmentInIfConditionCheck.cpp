@@ -13,9 +13,7 @@
 
 using namespace clang::ast_matchers;
 
-namespace clang {
-namespace tidy {
-namespace bugprone {
+namespace clang::tidy::bugprone {
 
 void AssignmentInIfConditionCheck::registerMatchers(MatchFinder *Finder) {
   Finder->addMatcher(translationUnitDecl(), this);
@@ -38,6 +36,12 @@ void AssignmentInIfConditionCheck::check(
 
         // Dont traverse into any lambda expressions.
         bool TraverseLambdaExpr(LambdaExpr *, DataRecursionQueue * = nullptr) {
+          return true;
+        }
+
+        // Dont traverse into any requires expressions.
+        bool TraverseRequiresExpr(RequiresExpr *,
+                                  DataRecursionQueue * = nullptr) {
           return true;
         }
 
@@ -76,6 +80,4 @@ void AssignmentInIfConditionCheck::report(const Expr *AssignmentExpr) {
        DiagnosticIDs::Note);
 }
 
-} // namespace bugprone
-} // namespace tidy
-} // namespace clang
+} // namespace clang::tidy::bugprone

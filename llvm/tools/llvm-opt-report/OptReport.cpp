@@ -14,6 +14,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm-c/Remarks.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Demangle/Demangle.h"
 #include "llvm/Remarks/Remark.h"
 #include "llvm/Remarks/RemarkFormat.h"
@@ -32,6 +33,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include <cstdlib>
 #include <map>
+#include <optional>
 #include <set>
 
 using namespace llvm;
@@ -208,7 +210,7 @@ static bool readLocationInfo(LocationInfoTy &LocationInfo) {
         Arg.Val.getAsInteger(10, UnrollCount);
     }
 
-    const Optional<remarks::RemarkLocation> &Loc = Remark.Loc;
+    const std::optional<remarks::RemarkLocation> &Loc = Remark.Loc;
     if (!Loc)
       continue;
 
@@ -337,16 +339,11 @@ static bool writeReport(LocationInfoTy &LocationInfo) {
 
             bool Printed = false;
             if (!NoDemangle) {
-              int Status = 0;
-              char *Demangled =
-                itaniumDemangle(FuncName.c_str(), nullptr, nullptr, &Status);
-              if (Demangled && Status == 0) {
+              if (char *Demangled = itaniumDemangle(FuncName)) {
                 OS << Demangled;
                 Printed = true;
-              }
-
-              if (Demangled)
                 std::free(Demangled);
+              }
             }
 
             if (!Printed)
@@ -373,10 +370,10 @@ static bool writeReport(LocationInfoTy &LocationInfo) {
 
           if (!Succinct) {
             RS << LLI.UnrollCount;
-            RS << std::string(UCDigits - RS.str().size(), ' ');
+            RS << std::string(UCDigits - R.size(), ' ');
           }
 
-          return RS.str();
+          return R;
         };
 
         auto VStr = [VFDigits,
@@ -386,10 +383,10 @@ static bool writeReport(LocationInfoTy &LocationInfo) {
 
           if (!Succinct) {
             RS << LLI.VectorizationFactor << "," << LLI.InterleaveCount;
-            RS << std::string(VFDigits + ICDigits + 1 - RS.str().size(), ' ');
+            RS << std::string(VFDigits + ICDigits + 1 - R.size(), ' ');
           }
 
-          return RS.str();
+          return R;
         };
 
         OS << llvm::format_decimal(L, LNDigits) << " ";

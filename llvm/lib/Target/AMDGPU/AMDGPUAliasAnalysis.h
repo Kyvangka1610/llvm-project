@@ -13,6 +13,7 @@
 #define LLVM_LIB_TARGET_AMDGPU_AMDGPUALIASANALYSIS_H
 
 #include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/IR/Module.h"
 
 namespace llvm {
 
@@ -37,9 +38,9 @@ public:
   }
 
   AliasResult alias(const MemoryLocation &LocA, const MemoryLocation &LocB,
-                    AAQueryInfo &AAQI);
-  bool pointsToConstantMemory(const MemoryLocation &Loc, AAQueryInfo &AAQI,
-                              bool OrLocal);
+                    AAQueryInfo &AAQI, const Instruction *CtxI);
+  ModRefInfo getModRefInfoMask(const MemoryLocation &Loc, AAQueryInfo &AAQI,
+                               bool IgnoreLocals);
 };
 
 /// Analysis pass providing a never-invalidated alias analysis result.
@@ -52,7 +53,7 @@ public:
   using Result = AMDGPUAAResult;
 
   AMDGPUAAResult run(Function &F, AnalysisManager<Function> &AM) {
-    return AMDGPUAAResult(F.getParent()->getDataLayout());
+    return AMDGPUAAResult(F.getDataLayout());
   }
 };
 

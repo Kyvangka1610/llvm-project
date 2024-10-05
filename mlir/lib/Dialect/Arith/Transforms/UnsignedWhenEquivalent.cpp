@@ -31,7 +31,7 @@ using namespace mlir::dataflow;
 /// non-negative.
 static LogicalResult staticallyNonNegative(DataFlowSolver &solver, Value v) {
   auto *result = solver.lookupState<IntegerValueRangeLattice>(v);
-  if (!result)
+  if (!result || result->getValue().isUninitialized())
     return failure();
   const ConstantIntRanges &range = result->getValue().getValue();
   return success(range.smin().isNonNegative());
@@ -125,14 +125,13 @@ struct ArithUnsignedWhenEquivalentPass
 
     ConversionTarget target(*ctx);
     target.addLegalDialect<ArithDialect>();
-    target
-        .addDynamicallyLegalOp<DivSIOp, CeilDivSIOp, CeilDivUIOp, FloorDivSIOp,
-                               RemSIOp, MinSIOp, MaxSIOp, ExtSIOp>(
-            [&solver](Operation *op) -> Optional<bool> {
-              return failed(staticallyNonNegative(solver, op));
-            });
+    target.addDynamicallyLegalOp<DivSIOp, CeilDivSIOp, FloorDivSIOp, RemSIOp,
+                                 MinSIOp, MaxSIOp, ExtSIOp>(
+        [&solver](Operation *op) -> std::optional<bool> {
+          return failed(staticallyNonNegative(solver, op));
+        });
     target.addDynamicallyLegalOp<CmpIOp>(
-        [&solver](CmpIOp op) -> Optional<bool> {
+        [&solver](CmpIOp op) -> std::optional<bool> {
           return failed(isCmpIConvertable(solver, op));
         });
 

@@ -26,32 +26,26 @@ Non-comprehensive list of changes in this release
 ELF Improvements
 ----------------
 
-* ``ELFCOMPRESS_ZSTD`` compressed input sections are now supported.
-  (`D129406 <https://reviews.llvm.org/D129406>`_)
-* ``--compress-debug-sections=zstd`` is now available to compress debug
-  sections with zstd (``ELFCOMPRESS_ZSTD``).
-  (`D133548 <https://reviews.llvm.org/D133548>`_)
+* ``-z nosectionheader`` has been implemented to omit the section header table.
+  The operation is similar to ``llvm-objcopy --strip-sections``.
+  (`#101286 <https://github.com/llvm/llvm-project/pull/101286>`_)
+* Section ``CLASS`` linker script syntax binds input sections to named classes,
+  which are referenced later one or more times. This provides access to the
+  automatic spilling mechanism of `--enable-non-contiguous-regions` without
+  globally changing the semantics of section matching. It also independently
+  increases the expressive power of linker scripts.
+  (`#95323 <https://github.com/llvm/llvm-project/pull/95323>`_)
 
 Breaking changes
 ----------------
 
 COFF Improvements
 -----------------
-
-* ...
+* ``/includeglob`` has been implemented to match the behavior of ``--undefined-glob`` available for ELF.
 
 MinGW Improvements
 ------------------
-
-* The lld-specific options ``--guard-cf``, ``--no-guard-cf``,
-  ``--guard-longjmp`` and ``--no-guard-longjmp`` has been added to allow
-  enabling Control Flow Guard and long jump hardening. These options are
-  disabled by default, but enabling ``--guard-cf`` will also enable
-  ``--guard-longjmp`` unless ``--no-guard-longjmp`` is also specified.
-  ``--guard-longjmp`` depends on ``--guard-cf`` and cannot be used by itself.
-  Note that these features require the ``_load_config_used`` symbol to contain
-  the load config directory and be filled with the required symbols.
-  (`D132808 <https://reviews.llvm.org/D132808>`_)
+* ``--undefined-glob`` is now supported by translating into the ``/includeglob`` flag.
 
 MachO Improvements
 ------------------
@@ -59,3 +53,5 @@ MachO Improvements
 WebAssembly Improvements
 ------------------------
 
+Fixes
+#####

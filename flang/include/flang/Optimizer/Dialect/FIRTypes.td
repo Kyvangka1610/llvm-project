@@ -22,7 +22,7 @@ include "flang/Optimizer/Dialect/FIRDialect.td"
 
 class FIR_Type<string name, string typeMnemonic, list<Trait> traits = [],
                string baseCppClass = "::mlir::Type">
-    : TypeDef<fir_Dialect, name, traits, baseCppClass> {
+    : TypeDef<FIROpsDialect, name, traits, baseCppClass> {
   let mnemonic = typeMnemonic;
 }
 
@@ -128,7 +128,7 @@ def fir_CharacterType : FIR_Type<"Character", "char"> {
     static constexpr LenType singleton() { return 1; }
 
     /// Character has a LEN value which is not a compile-time known constant.
-    static constexpr LenType unknownLen() { return mlir::ShapedType::kDynamicSize; }
+    static constexpr LenType unknownLen() { return mlir::ShapedType::kDynamic; }
 
     /// Character LEN is a runtime value.
     bool hasDynamicLen() { return getLen() == unknownLen(); }
@@ -156,26 +156,6 @@ def fir_ClassType : FIR_Type<"Class", "class", [], "BaseBoxType"> {
 
   let genVerifyDecl = 1;
   let assemblyFormat = "`<` $eleTy `>`";
-}
-
-def fir_ComplexType : FIR_Type<"Complex", "complex"> {
-  let summary = "Complex type";
-
-  let description = [{
-    Model of a Fortran COMPLEX intrinsic type, including the KIND type
-    parameter. COMPLEX is a floating point type with a real and imaginary
-    member.
-  }];
-
-  let parameters = (ins "KindTy":$fKind);
-  let hasCustomAssemblyFormat = 1;
-
-  let extraClassDeclaration = [{
-    using KindTy = unsigned;
-
-    mlir::Type getElementType() const;
-    mlir::Type getEleType(const fir::KindMapping &kindMap) const;
-  }];
 }
 
 def fir_FieldType : FIR_Type<"Field", "field"> {
@@ -211,6 +191,10 @@ def fir_HeapType : FIR_Type<"Heap", "heap"> {
       return Base::get(elementType.getContext(), elementType);
     }]>,
   ];
+
+  let extraClassDeclaration = [{
+    mlir::Type getElementType() const { return getEleTy(); }
+  }];
 }
 
 def fir_IntegerType : FIR_Type<"Integer", "int"> {
@@ -275,6 +259,10 @@ def fir_LLVMPointerType : FIR_Type<"LLVMPointer", "llvm_ptr"> {
       return Base::get(elementType.getContext(), elementType);
     }]>,
   ];
+
+  let extraClassDeclaration = [{
+    mlir::Type getElementType() const { return getEleTy(); }
+  }];
 }
 
 def fir_PointerType : FIR_Type<"Pointer", "ptr"> {
@@ -303,24 +291,6 @@ def fir_PointerType : FIR_Type<"Pointer", "ptr"> {
   let extraClassDeclaration = [{
     mlir::Type getElementType() const { return getEleTy(); }
   }];
-}
-
-def fir_RealType : FIR_Type<"Real", "real"> {
-  let summary = "FIR real type";
-
-  let description = [{
-    Model of a Fortran REAL (and DOUBLE PRECISION) intrinsic type, including the
-    KIND type parameter.
-  }];
-
-  let parameters = (ins "KindTy":$fKind);
-  let hasCustomAssemblyFormat = 1;
-
-  let extraClassDeclaration = [{
-    using KindTy = unsigned;
-  }];
-
-  let genVerifyDecl = 1;
 }
 
 def fir_RecordType : FIR_Type<"Record", "type"> {
@@ -356,6 +326,7 @@ def fir_RecordType : FIR_Type<"Record", "type"> {
     unsigned getNumLenParams() { return getLenParamList().size(); }
     bool isDependentType() { return getNumLenParams(); }
 
+    bool isFinalized() const;
     void finalize(llvm::ArrayRef<TypePair> lenPList,
                   llvm::ArrayRef<TypePair> typeList);
 
@@ -482,9 +453,17 @@ def fir_SequenceType : FIR_Type<"Sequence", "array"> {
     // Does the sequence have unknown shape? (`array<* x T>`)
     bool hasUnknownShape() const { return getShape().empty(); }
 
-    // The value `kDynamicSize` represents an unknown extent for a dimension
+    // The value `kDynamic` represents an unknown extent for a dimension
     static constexpr Extent getUnknownExtent() {
-      return mlir::ShapedType::kDynamicSize;
+      return mlir::ShapedType::kDynamic;
+    }
+
+    std::uint64_t getConstantArraySize() {
+      assert(!hasDynamicExtents() && "array type must have constant shape");
+      std::uint64_t size = 1;
+      for (Extent extent : getShape())
+        size = size * static_cast<std::uint64_t>(extent);
+      return size;
     }
   }];
 }
@@ -557,25 +536,38 @@ def fir_VoidType : FIR_Type<"Void", "void"> {
   let genStorageClass = 0;
 }
 
+def fir_DummyScopeType : FIR_Type<"DummyScope", "dscope"> {
+  let summary = "Dummy scope type";
+
+  let description = [{
+    `fir.dscope` is a type returned by fir.dummy_scope operation.
+    It defines a unique identifier for a runtime instance of a subroutine
+    that is used by the [hl]fir.declare operations representing
+    the dummy arguments' declarations.
+  }];
+}
+
 // Whether a type is a BaseBoxType
 def IsBaseBoxTypePred
-        : CPred<"$_self.isa<::fir::BaseBoxType>()">;
+        : CPred<"mlir::isa<::fir::BaseBoxType>($_self)">;
+def fir_BaseBoxType : Type<IsBaseBoxTypePred, "fir.box or fir.class type">;
 
 // Generalized FIR and standard dialect types representing intrinsic types
 def AnyIntegerLike : TypeConstraint<Or<[SignlessIntegerLike.predicate,
     AnySignedInteger.predicate, fir_IntegerType.predicate]>, "any integer">;
 def AnyLogicalLike : TypeConstraint<Or<[BoolLike.predicate,
     fir_LogicalType.predicate]>, "any logical">;
-def AnyRealLike : TypeConstraint<Or<[FloatLike.predicate,
-    fir_RealType.predicate]>, "any real">;
+def AnyRealLike : TypeConstraint<FloatLike.predicate, "any real">;
 def AnyIntegerType : Type<AnyIntegerLike.predicate, "any integer">;
 
+def AnyFirComplexLike :  TypeConstraint<CPred<"::fir::isa_complex($_self)">,
+  "any floating point complex type">;
+def AnyFirComplex : Type<AnyFirComplexLike.predicate,
+  "any floating point complex type">;
+
 // Composable types
-// Note that we include both fir_ComplexType and AnyComplex, so we can use both
-// the FIR ComplexType and the MLIR ComplexType (the former is used to represent
-// Fortran complex and the latter for C++ std::complex).
 def AnyCompositeLike : TypeConstraint<Or<[fir_RecordType.predicate,
-    fir_SequenceType.predicate, fir_ComplexType.predicate, AnyComplex.predicate,
+    fir_SequenceType.predicate, AnyFirComplexLike.predicate,
     fir_VectorType.predicate, IsTupleTypePred, fir_CharacterType.predicate]>,
     "any composite">;
 
@@ -605,6 +597,7 @@ def AnyRefOrBoxLike : TypeConstraint<Or<[AnyReferenceLike.predicate,
 def AnyRefOrBox : TypeConstraint<Or<[fir_ReferenceType.predicate,
     fir_HeapType.predicate, fir_PointerType.predicate,
     IsBaseBoxTypePred]>, "any reference or box">;
+def AnyRefOrBoxType : Type<AnyRefOrBox.predicate, "any legal ref or box type">;
 
 def AnyShapeLike : TypeConstraint<Or<[fir_ShapeType.predicate,
     fir_ShapeShiftType.predicate]>, "any legal shape type">;
@@ -635,7 +628,7 @@ def AnyAddressableLike : TypeConstraint<Or<[fir_ReferenceType.predicate,
     FunctionType.predicate]>, "any addressable">;
 
 def ArrayOrBoxOrRecord : TypeConstraint<Or<[fir_SequenceType.predicate,
-    fir_BoxType.predicate, fir_RecordType.predicate]>,
+    IsBaseBoxTypePred, fir_RecordType.predicate]>,
     "fir.box, fir.array or fir.type">;
 
 

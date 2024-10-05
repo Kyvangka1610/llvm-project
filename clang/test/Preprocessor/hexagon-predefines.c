@@ -117,6 +117,26 @@
 // CHECK-V69HVX-128B: #define __HVX__ 1
 // CHECK-V69HVX-128B: #define __hexagon__ 1
 
+// RUN: %clang_cc1 -E -dM -triple hexagon-unknown-elf -target-cpu hexagonv71 \
+// RUN: -target-feature +hvxv71 -target-feature +hvx-length128b %s | FileCheck \
+// RUN: %s -check-prefix CHECK-V71HVX-128B
+// CHECK-V71HVX-128B: #define __HEXAGON_ARCH__ 71
+// CHECK-V71HVX-128B: #define __HEXAGON_V71__ 1
+// CHECK-V71HVX-128B: #define __HVX_ARCH__ 71
+// CHECK-V71HVX-128B: #define __HVX_LENGTH__ 128
+// CHECK-V71HVX-128B: #define __HVX__ 1
+// CHECK-V71HVX-128B: #define __hexagon__ 1
+
+// RUN: %clang_cc1 -E -dM -triple hexagon-unknown-elf -target-cpu hexagonv73 \
+// RUN: -target-feature +hvxv73 -target-feature +hvx-length128b %s | FileCheck \
+// RUN: %s -check-prefix CHECK-V73HVX-128B
+// CHECK-V73HVX-128B: #define __HEXAGON_ARCH__ 73
+// CHECK-V73HVX-128B: #define __HEXAGON_V73__ 1
+// CHECK-V73HVX-128B: #define __HVX_ARCH__ 73
+// CHECK-V73HVX-128B: #define __HVX_LENGTH__ 128
+// CHECK-V73HVX-128B: #define __HVX__ 1
+// CHECK-V73HVX-128B: #define __hexagon__ 1
+
 
 // RUN: %clang_cc1 -E -dM -triple hexagon-unknown-elf -target-cpu hexagonv67 \
 // RUN: -target-feature +hvxv67 -target-feature +hvx-length128b %s | FileCheck \
@@ -149,3 +169,20 @@
 // CHECK-ATOMIC: #define __CLANG_ATOMIC_POINTER_LOCK_FREE 2
 // CHECK-ATOMIC: #define __CLANG_ATOMIC_SHORT_LOCK_FREE 2
 // CHECK-ATOMIC: #define __CLANG_ATOMIC_WCHAR_T_LOCK_FREE 2
+
+// RUN: %clang_cc1 -E -dM -triple hexagon-unknown-linux-musl \
+// RUN: -target-cpu hexagonv67 | FileCheck \
+// RUN: %s -check-prefix CHECK-INTERFERENCE
+// RUN: %clang_cc1 -E -dM -triple hexagon-unknown-none-elf \
+// RUN: -target-cpu hexagonv67 | FileCheck \
+// RUN: %s -check-prefix CHECK-INTERFERENCE
+// RUN: %clang_cc1 -E -dM -triple hexagon-unknown-none-elf \
+// RUN: -target-cpu hexagonv71t | FileCheck \
+// RUN: %s -check-prefix CHECK-INTERFERENCE
+// CHECK-INTERFERENCE: #define __GCC_CONSTRUCTIVE_SIZE 32
+// CHECK-INTERFERENCE: #define __GCC_DESTRUCTIVE_SIZE 32
+// RUN: %clang_cc1 -E -dM -triple hexagon-unknown-none-elf \
+// RUN: -target-cpu hexagonv73 | FileCheck \
+// RUN: %s -check-prefix CHECK-INTERFERENCE-73
+// CHECK-INTERFERENCE-73: #define __GCC_CONSTRUCTIVE_SIZE 64
+// CHECK-INTERFERENCE-73: #define __GCC_DESTRUCTIVE_SIZE 64

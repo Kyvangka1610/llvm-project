@@ -23,6 +23,7 @@
 
 using namespace llvm;
 
+namespace llvm {
 cl::opt<InlinerFunctionImportStatsOpts> InlinerFunctionImportStats(
     "inliner-function-import-stats",
     cl::init(InlinerFunctionImportStatsOpts::No),
@@ -31,6 +32,7 @@ cl::opt<InlinerFunctionImportStatsOpts> InlinerFunctionImportStats(
                clEnumValN(InlinerFunctionImportStatsOpts::Verbose, "verbose",
                           "printing of statistics for each inlined function")),
     cl::Hidden, cl::desc("Enable inliner stats for imported functions"));
+} // namespace llvm
 
 ImportedFunctionsInliningStatistics::InlineGraphNode &
 ImportedFunctionsInliningStatistics::createInlineGraphNode(const Function &F) {
@@ -173,9 +175,8 @@ void ImportedFunctionsInliningStatistics::dump(const bool Verbose) {
 void ImportedFunctionsInliningStatistics::calculateRealInlines() {
   // Removing duplicated Callers.
   llvm::sort(NonImportedCallers);
-  NonImportedCallers.erase(
-      std::unique(NonImportedCallers.begin(), NonImportedCallers.end()),
-      NonImportedCallers.end());
+  NonImportedCallers.erase(llvm::unique(NonImportedCallers),
+                           NonImportedCallers.end());
 
   for (const auto &Name : NonImportedCallers) {
     auto &Node = *NodesMap[Name];

@@ -23,6 +23,7 @@
 #include "lldb/lldb-types.h"
 
 #include <cstring>
+#include <optional>
 namespace lldb_private {
 class Declaration;
 }
@@ -84,17 +85,20 @@ ConstString ValueObjectDynamicValue::GetDisplayTypeName() {
   return m_parent->GetDisplayTypeName();
 }
 
-size_t ValueObjectDynamicValue::CalculateNumChildren(uint32_t max) {
+llvm::Expected<uint32_t>
+ValueObjectDynamicValue::CalculateNumChildren(uint32_t max) {
   const bool success = UpdateValueIfNeeded(false);
   if (success && m_dynamic_type_info.HasType()) {
     ExecutionContext exe_ctx(GetExecutionContextRef());
     auto children_count = GetCompilerType().GetNumChildren(true, &exe_ctx);
-    return children_count <= max ? children_count : max;
+    if (!children_count)
+      return children_count;
+    return *children_count <= max ? *children_count : max;
   } else
     return m_parent->GetNumChildren(max);
 }
 
-llvm::Optional<uint64_t> ValueObjectDynamicValue::GetByteSize() {
+std::optional<uint64_t> ValueObjectDynamicValue::GetByteSize() {
   const bool success = UpdateValueIfNeeded(false);
   if (success && m_dynamic_type_info.HasType()) {
     ExecutionContext exe_ctx(GetExecutionContextRef());
@@ -114,7 +118,7 @@ bool ValueObjectDynamicValue::UpdateValue() {
   if (!m_parent->UpdateValueIfNeeded(false)) {
     // The dynamic value failed to get an error, pass the error along
     if (m_error.Success() && m_parent->GetError().Fail())
-      m_error = m_parent->GetError();
+      m_error = m_parent->GetError().Clone();
     return false;
   }
 
@@ -148,7 +152,18 @@ bool ValueObjectDynamicValue::UpdateValue() {
   if (known_type != lldb::eLanguageTypeUnknown &&
       known_type != lldb::eLanguageTypeC) {
     runtime = process->GetLanguageRuntime(known_type);
-    if (runtime)
+    if (auto *preferred_runtime =
+            runtime->GetPreferredLanguageRuntime(*m_parent)) {
+      // Try the preferred runtime first.
+      found_dynamic_type = preferred_runtime->GetDynamicTypeAndAddress(
+          *m_parent, m_use_dynamic, class_type_or_name, dynamic_address,
+          value_type);
+      if (found_dynamic_type)
+        // Set the operative `runtime` for later use in this function.
+        runtime = preferred_runtime;
+    }
+    if (!found_dynamic_type)
+      // Fallback to the runtime for `known_type`.
       found_dynamic_type = runtime->GetDynamicTypeAndAddress(
           *m_parent, m_use_dynamic, class_type_or_name, dynamic_address,
           value_type);
@@ -186,17 +201,19 @@ bool ValueObjectDynamicValue::UpdateValue() {
     m_type_impl.Clear();
   }
 
-  // If we don't have a dynamic type, then make ourselves just a echo of our
-  // parent. Or we could return false, and make ourselves an echo of our
-  // parent?
+  // If we don't have a dynamic type, set ourselves to be invalid and return
+  // false.  We used to try to produce a dynamic ValueObject that behaved "like"
+  // its parent, but that failed for ValueObjectConstResult, which is too 
+  // complex a beast to try to emulate.  If we return an invalid ValueObject,
+  // clients will end up getting the static value instead, which behaves
+  // correctly.
   if (!found_dynamic_type) {
     if (m_dynamic_type_info)
       SetValueDidChange(true);
     ClearDynamicTypeInformation();
     m_dynamic_type_info.Clear();
-    m_value = m_parent->GetValue();
-    m_error = m_value.GetValueAsData(&exe_ctx, m_data, GetModule().get());
-    return m_error.Success();
+    m_error = Status::FromErrorString("no dynamic type found");
+    return false;
   }
 
   Value old_value(m_value);
@@ -269,7 +286,7 @@ bool ValueObjectDynamicValue::IsInScope() { return m_parent->IsInScope(); }
 bool ValueObjectDynamicValue::SetValueFromCString(const char *value_str,
                                                   Status &error) {
   if (!UpdateValueIfNeeded(false)) {
-    error.SetErrorString("unable to read value");
+    error = Status::FromErrorString("unable to read value");
     return false;
   }
 
@@ -277,7 +294,7 @@ bool ValueObjectDynamicValue::SetValueFromCString(const char *value_str,
   uint64_t parent_value = m_parent->GetValueAsUnsigned(UINT64_MAX);
 
   if (my_value == UINT64_MAX || parent_value == UINT64_MAX) {
-    error.SetErrorString("unable to read value");
+    error = Status::FromErrorString("unable to read value");
     return false;
   }
 
@@ -289,7 +306,7 @@ bool ValueObjectDynamicValue::SetValueFromCString(const char *value_str,
   if (my_value != parent_value) {
     // but NULL'ing out a value should always be allowed
     if (strcmp(value_str, "0")) {
-      error.SetErrorString(
+      error = Status::FromErrorString(
           "unable to modify dynamic value, use 'expression' command");
       return false;
     }
@@ -302,7 +319,7 @@ bool ValueObjectDynamicValue::SetValueFromCString(const char *value_str,
 
 bool ValueObjectDynamicValue::SetData(DataExtractor &data, Status &error) {
   if (!UpdateValueIfNeeded(false)) {
-    error.SetErrorString("unable to read value");
+    error = Status::FromErrorString("unable to read value");
     return false;
   }
 
@@ -310,7 +327,7 @@ bool ValueObjectDynamicValue::SetData(DataExtractor &data, Status &error) {
   uint64_t parent_value = m_parent->GetValueAsUnsigned(UINT64_MAX);
 
   if (my_value == UINT64_MAX || parent_value == UINT64_MAX) {
-    error.SetErrorString("unable to read value");
+    error = Status::FromErrorString("unable to read value");
     return false;
   }
 
@@ -324,7 +341,7 @@ bool ValueObjectDynamicValue::SetData(DataExtractor &data, Status &error) {
     lldb::offset_t offset = 0;
 
     if (data.GetAddress(&offset) != 0) {
-      error.SetErrorString(
+      error = Status::FromErrorString(
           "unable to modify dynamic value, use 'expression' command");
       return false;
     }
